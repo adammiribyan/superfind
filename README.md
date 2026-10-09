@@ -2,7 +2,7 @@
 
 Fuzzy-search every Claude Code session on your Mac, then jump into its directory and resume it.
 
-Press Cmd-Shift-O in Ghostty, or Ctrl-X c in any zsh. Type to filter by title, project, or branch; space-separated words must all match. Enter runs `cd <dir> && claude --resume <id>` in the current pane and saves it to your shell history.
+Press Cmd-Shift-O in Ghostty, or Ctrl-X c in any zsh. Type to search titles, projects, branches, and the conversations themselves: your prompts and Claude's replies. Every word must match; title matches come first, and the preview shows the passage that matched. Press Option-Enter (⌥↩) to ask Claude instead: it ranks sessions by meaning, so a question like "where did we automate QA notes?" finds the right session even when the words differ. Asking takes a few seconds and costs under a cent per question. Enter runs `cd <dir> && claude --resume <id>` in the current pane and saves it to your shell history.
 
 Each session is one line: its title, then how long ago it was active and its project. Sessions from the directory you're in come first; everything else follows, newest first.
 
@@ -23,5 +23,5 @@ The installer links `claude-sessions` into `~/.local/bin`, sources the zsh widge
 - Sessions come from `~/.claude/projects`, plus every `~/.claude-*` directory, `$CLAUDE_CONFIG_DIR`, and any directories in colon-separated `$CLAUDE_SESSIONS_DIRS`. When more than one directory has sessions, each row shows which one it came from, and resume sets `CLAUDE_CONFIG_DIR` to match.
 - Accounts you switch between with `/login` share one directory, so their sessions all appear. Resume uses whichever account is logged in now.
 - Sessions whose directory was deleted (common with worktrees) are marked `folder removed`. Resume runs from the nearest parent that still exists.
-- The index is cached in `~/.cache/claude-sessions/index.json`. Only transcripts that changed since the last run get re-read.
+- The index is cached in `~/.cache/claude-sessions/`: session details in `index.json`, conversation text in a SQLite full-text index, `search.db`. Only transcripts that changed since the last run get re-read.
 - Run `ccs` to use the picker without the keybind.

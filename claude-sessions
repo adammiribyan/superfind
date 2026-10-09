@@ -5,9 +5,12 @@
                              shell command that resumes it
   claude-sessions preview F  pinned header, then where the session left off, or the recent
                              conversation when fzf's preview label says so
+  claude-sessions search Q   fzf lines for sessions whose title or conversation contains Q
+  claude-sessions ask Q      fzf lines for the sessions Claude judges most relevant to Q
 """
 import json
 import shlex
+import sqlite3
 import subprocess
 import re
 import textwrap
@@ -23,7 +26,8 @@ from pathlib import Path
 
 HOME = Path.home()
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "claude-sessions" / "index.json"
-CACHE_VERSION = 6
+CACHE_VERSION = 7
+SEARCH_DB = CACHE.with_name("search.db")
 
 ACCENT, DIM, BOLD, RESET = "\033[34m", "\033[2m", "\033[1m", "\033[0m"
 
@@ -92,8 +96,10 @@ def message_text(entry):
 
 
 def parse(path, mtime):
+    """(Session or None, the conversation's readable text: prompts and Claude's replies)."""
     cwd = relocated = custom = ai = last_prompt = first_prompt = branch = ""
     prompts = 0
+    body = []
     with open(path, "rb") as f:
         for raw in f:
             if b'"type":"user"' in raw and b'"tool_use_id"' not in raw:
@@ -104,6 +110,9 @@ def parse(path, mtime):
                 if not e.get("isMeta") and text:
                     prompts += 1
                     first_prompt = first_prompt or text
+                    body.append(text)
+            elif b'"type":"assistant"' in raw and b'"type":"text"' in raw:
+                body.append(message_text(json.loads(raw)))
             elif not cwd and b'"cwd":"' in raw:
                 cwd = json.loads(raw).get("cwd") or ""
             elif b'"type":"custom-title"' in raw:
@@ -116,9 +125,9 @@ def parse(path, mtime):
                 relocated = json.loads(raw).get("relocatedCwd") or relocated
     cwd = relocated or cwd
     if not cwd or not (first_prompt or last_prompt):
-        return None
+        return None, ""
     title = custom or ai or first_prompt or last_prompt
-    return Session(path.stem, cwd, title, last_prompt or first_prompt, branch, max(prompts, 1), mtime)
+    return Session(path.stem, cwd, title, last_prompt or first_prompt, branch, max(prompts, 1), mtime), "\n".join(body)
 
 
 def one_line(text, width):
@@ -146,9 +155,18 @@ def save_cache(files):
     tmp.replace(CACHE)
 
 
+def search_db():
+    SEARCH_DB.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(SEARCH_DB)
+    db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')")
+    return db
+
+
 def index():
+    """Every session as (Session, config dir, path), re-parsing only transcripts that changed.
+    The JSON cache and the full-text index are updated together, so they always describe the same files."""
     old, new = load_cache(), {}
-    rows = []
+    rows, changed = [], []
     for config_dir in config_dirs():
         for path in (config_dir / "projects").glob("*/*.jsonl"):
             st = path.stat()
@@ -158,15 +176,111 @@ def index():
                 session = Session(**hit["session"]) if hit["session"] else None
             else:
                 try:
-                    session = parse(path, st.st_mtime)
+                    session, body = parse(path, st.st_mtime)
                 except (OSError, ValueError):
-                    session = None
+                    session, body = None, ""
+                changed.append((key, session, body))
             new[key] = {"mtime": st.st_mtime, "size": st.st_size, "session": session and asdict(session)}
             if session:
                 rows.append((session, config_dir, path))
+    gone = old.keys() - new.keys()
+    if changed or gone or not SEARCH_DB.exists():
+        with search_db() as db:
+            for key in [k for k, _, _ in changed] + list(gone):
+                db.execute("DELETE FROM docs WHERE path = ?", (key,))
+            db.executemany(
+                "INSERT INTO docs (path, title, body) VALUES (?, ?, ?)",
+                [(k, f"{s.title} {s.project} {s.branch}", body) for k, s, body in changed if s],
+            )
     if new != old:
         save_cache(new)
     return rows
+
+
+def cached_rows():
+    """The sessions as last indexed, without touching transcripts: fast enough to run on every keystroke."""
+    dirs = config_dirs()
+    rows = []
+    for key, entry in load_cache().items():
+        if entry["session"]:
+            path = Path(key)
+            config_dir = next((d for d in dirs if key.startswith(str(d) + "/")), path.parents[2])
+            rows.append((Session(**entry["session"]), config_dir, path))
+    return rows
+
+
+def fts_query(query):
+    """Every meaningful word must match, as a prefix, so "autom" finds "automation" while you type."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS]
+    return " ".join(f'"{w}"*' for w in words)
+
+
+def matches(query):
+    """Transcript paths matching the query: every title match first, then conversation matches, each by relevance."""
+    match = fts_query(query)
+    if not match:
+        return None
+    found = []
+    with search_db() as db:
+        for scoped in (f"title : ({match})", match):
+            for (path,) in db.execute("SELECT path FROM docs WHERE docs MATCH ? ORDER BY rank LIMIT 200", (scoped,)):
+                if path not in found:
+                    found.append(path)
+    return found
+
+
+STOPWORDS = set("""a about all an and any are as at be been but by can could did do does for from had has have
+how i if in into is it its me my of on or our so that the their them then there these they this those to
+up us was we were what when where which who why will with would you your""".split())
+
+ASK_PROMPT = (
+    "You rank a developer's past coding sessions by how relevant they are to a search. Each session is one "
+    "numbered line: title | project | age | last request | a passage from the conversation. Judge by meaning, "
+    "not shared words. Reply with only a JSON array of the numbers of up to 15 relevant sessions, best first, "
+    "or [] if none are relevant."
+)
+
+
+def ask(query, rows):
+    """Paths of the sessions Claude ranks as most relevant to the query, best first."""
+    rows = recent_first(rows)
+    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS]
+    any_word = " OR ".join(f'"{w}"*' for w in words)
+    with search_db() as db:
+        passages = dict(db.execute("SELECT path, substr(body, 1, 240) FROM docs"))
+        if any_word:
+            passages.update(db.execute(
+                "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?", (any_word,)))
+    lines = [
+        f"{i}. {s.title} | {s.project} | {ago(s.mtime)} | {one_line(s.last_prompt, 160)} | "
+        f"{one_line(passages.get(str(path), ''), 300)}"
+        for i, (s, _, path) in enumerate(rows)
+    ]
+    request = f"Search: {query}\n\nSessions:\n" + "\n".join(lines)
+    base = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
+            "--output-format", "json", "--system-prompt", ASK_PROMPT]
+    ranked = None
+    for command in (base + ["--bare"], base):
+        reply = subprocess.run(command, input=request, capture_output=True, text=True, timeout=90)
+        try:
+            ranked = json.loads(re.search(r"\[[\d,\s]*\]", json.loads(reply.stdout)["result"]).group())
+            break
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+    if ranked is None:
+        return []
+    return [str(rows[i][2]) for i in ranked if isinstance(i, int) and 0 <= i < len(rows)]
+
+
+def snippet(path, query):
+    match = fts_query(query)
+    if not match:
+        return ""
+    with search_db() as db:
+        row = db.execute(
+            "SELECT snippet(docs, 2, ?, ?, '…', 10) FROM docs WHERE docs MATCH ? AND path = ?",
+            (f"{BOLD}{ACCENT}", RESET, match, path)).fetchone()
+    return " ".join(row[0].split()) if row and row[0] else ""
 
 
 def ago(mtime, now=None):
@@ -193,9 +307,18 @@ def meta_parts(s, config_dir, show_account):
     return parts
 
 
-def items():
+def recent_first(rows):
+    """Sessions from the directory the picker was opened in first, then everything by recency."""
+    return sorted(rows, key=lambda r: (is_here(r[0]), r[0].mtime), reverse=True)
+
+
+def in_order(rows, paths):
+    by_path = {str(r[2]): r for r in rows}
+    return [by_path[p] for p in paths if p in by_path]
+
+
+def items(rows):
     """Tab-separated fzf lines: path, cwd, session id, config dir, title, then the display."""
-    rows = sorted(index(), key=lambda r: (is_here(r[0]), r[0].mtime), reverse=True)
     show_account = len({r[1] for r in rows}) > 1
     out = []
     for s, config_dir, path in rows:
@@ -293,6 +416,8 @@ def preview(path):
         print(f"{BOLD}{one_line(s.title, width)}{RESET}")
         print(f"{SECONDARY}{one_line(' · '.join(meta_parts(s, config_dir, len(dirs) > 1)), width)}{RESET}")
         print(f"{SECONDARY}{one_line(where, width)}{RESET}")
+        found = snippet(path, os.environ.get("FZF_QUERY", ""))
+        print(f"{SECONDARY}{found}{RESET}" if found else "")
         print()
     turns = conversation(path)
     if recent:
@@ -346,17 +471,19 @@ def luminance(rgb):
 
 
 def theme():
-    """(fzf --color spec for the selected row and matches, secondary text hex or "")."""
+    """(fzf --color spec for the selected row and matches, secondary text hex, background hex), hexes "" if unknown."""
     palette = query_palette()
     if not palette:
-        return "fg+:-1:reverse,bg+:-1,hl:blue,hl+:-1:reverse:bold", ""
+        return "fg+:-1:reverse,bg+:-1,hl:blue,hl+:-1:reverse:bold", "", ""
     bg, fg, blue = palette["11"], palette["10"], palette["4;4"]
     accent = hexcolor(blue)
     tint = hexcolor(mix(bg, blue, 0.16 if luminance(bg) < 0.5 else 0.10))
-    return f"fg+:-1,bg+:{tint},hl:{accent},hl+:{accent}:bold", hexcolor(mix(bg, fg, 0.70))
+    return f"fg+:-1,bg+:{tint},hl:{accent},hl+:{accent}:bold", hexcolor(mix(bg, fg, 0.70)), hexcolor(bg)
 
 
 MARK = "\033[38;2;215;119;87m✻\033[0m"
+INPUT_LABEL = f" {MARK} Claude sessions "
+ASKING_LABEL = f" {MARK} Asking Claude… "
 def footer(*pairs):
     key, word = "\033[22;39m", SECONDARY
     hints = " · ".join(f"{key}{k}{RESET}{word} {action}{RESET}" for k, action in pairs)
@@ -365,16 +492,13 @@ def footer(*pairs):
 
 def pick():
     global SECONDARY
-    selection, secondary = theme()
+    selection, secondary, background = theme()
     os.environ["CLAUDE_SESSIONS_SECONDARY"] = secondary
     SECONDARY = truecolor(secondary, DIM)
-    hints = footer(("enter", "resume"), ("tab", "conversation"), ("esc", "cancel"))
-    hints_back = footer(("enter", "resume"), ("tab", "where you left off"), ("esc", "cancel"))
-    recover = footer(("ctrl-u", "clear search"), ("esc", "cancel"))
+    hints = footer(("enter", "resume"), ("tab", "view"), ("⌥ enter", "ask Claude"))
+    recover = footer(("⌥ enter", "ask Claude"), ("ctrl-u", "clear search"))
     q = shlex.quote
-    footer_cmd = (f'if [ "$FZF_MATCH_COUNT" -eq 0 ]; then printf %s {q(recover)}; '
-                  f'else case "$FZF_PREVIEW_LABEL" in *Recent*) printf %s {q(hints_back)};; '
-                  f'*) printf %s {q(hints)};; esac; fi')
+    footer_cmd = f'[ "$FZF_MATCH_COUNT" -eq 0 ] && printf %s {q(recover)} || printf %s {q(hints)}'
     header_cmd = '[ "$FZF_MATCH_COUNT" -eq 0 ] && printf "No sessions match “%s”" "$FZF_QUERY" || printf " "'
     flip_label = 'case "$FZF_PREVIEW_LABEL" in *Recent*) echo " Where you left off ";; *) echo " Recent conversation ";; esac'
     self_path = q(os.path.abspath(sys.argv[0]))
@@ -382,22 +506,26 @@ def pick():
 
     fzf = [
         "fzf", "--ansi", "--delimiter=\t", "--with-nth=6..",
-        "--exact", "--tiebreak=index", "--layout=reverse", "--height=90%", "--min-height=20",
+        "--disabled", "--layout=reverse", "--height=90%", "--min-height=20",
         "--margin=0,1", "--highlight-line", "--no-hscroll", "--scrollbar= │", "--ellipsis=…",
-        "--pointer=", "--marker=", "--prompt=› ", "--ghost=Search titles, projects, branches",
-        "--input-border=rounded", f"--input-label= {MARK} Claude sessions ", "--input-label-pos=3",
+        "--pointer=", "--marker=", "--prompt=› ", "--ghost=Search sessions and conversations",
+        "--input-border=rounded", f"--input-label={INPUT_LABEL}", "--input-label-pos=3",
         "--info=inline-right", "--header= ", f"--footer={hints}", "--footer-border=none",
         f"--preview={self_path} preview {{1}}", "--preview-label= Where you left off ",
         "--preview-window=right,55%,border-left,wrap,follow,noinfo,~4,<50(down,45%,border-top,wrap,follow,noinfo,~4)",
         f"--bind=result:transform-header({header_cmd})+transform-footer:{footer_cmd}",
-        f"--bind=tab:transform-preview-label~{flip_label}~+refresh-preview+transform-footer:{footer_cmd}",
+        f"--bind=tab:transform-preview-label~{flip_label}~+refresh-preview",
+        f"--bind=change:reload-sync({self_path} search {{q}})+refresh-preview",
+        f"--bind=alt-enter:change-input-label({ASKING_LABEL})+reload({self_path} ask {{q}})+refresh-preview",
+        f"--bind=load:change-input-label({INPUT_LABEL})",
         "--bind=ctrl-u:clear-query,ctrl-/:toggle-preview,alt-up:preview-page-up,alt-down:preview-page-down",
         f"--color=fg:-1,bg:-1,{selection}",
         f"--color=prompt:blue,info:-1:dim,border:dim,input-border:dim,scrollbar:dim,preview-scrollbar:dim,"
-        f"input-label:-1:bold,header:{secondary_color},preview-label:{secondary_color}",
+        f"input-label:-1:bold,header:{secondary_color},preview-label:{secondary_color},"
+        f"spinner:{background or '-1'}",
         "--color=footer:-1,ghost:dim,query:-1:regular,preview-fg:-1,preview-bg:-1,separator:dim",
     ]
-    chosen = subprocess.run(fzf, input=items().encode(), stdout=subprocess.PIPE).stdout.decode()
+    chosen = subprocess.run(fzf, input=items(recent_first(index())).encode(), stdout=subprocess.PIPE).stdout.decode()
     if not chosen:
         sys.exit(1)
     _, cwd, session_id, config_dir, title = chosen.split("\t")[:5]
@@ -416,5 +544,13 @@ if __name__ == "__main__":
         preview(sys.argv[2])
     elif command == ["pick"]:
         pick()
+    elif command == ["search"]:
+        rows = cached_rows()
+        found = matches(sys.argv[2] if len(sys.argv) > 2 else "")
+        print(items(recent_first(rows) if found is None else in_order(rows, found)))
+    elif command == ["ask"]:
+        rows = cached_rows()
+        query = sys.argv[2] if len(sys.argv) > 2 else ""
+        print(items(in_order(rows, ask(query, rows)) if query.strip() else recent_first(rows)))
     else:
         sys.exit(__doc__)
