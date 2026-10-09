@@ -99,8 +99,9 @@ type bodyKey struct {
 }
 
 type bodyLoaded struct {
-	key  bodyKey
-	body []string
+	key      bodyKey
+	body     []string
+	readable bool
 }
 
 type askDone struct {
@@ -293,7 +294,10 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	if !m.displayed.sameView(key) {
 		m.body.SetContentLines(nil)
 	}
-	return m, func() tea.Msg { return bodyLoaded{key, previewBody(req)} }
+	return m, func() tea.Msg {
+		body, err := previewBody(req)
+		return bodyLoaded{key, body, err == nil}
+	}
 }
 
 func (k bodyKey) sameView(other bodyKey) bool {
@@ -385,7 +389,7 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, load := m.loadPreview()
 		return updated, tea.Batch(next, load)
 	case bodyLoaded:
-		if msg.key.generation == m.generation {
+		if msg.key.generation == m.generation && msg.readable {
 			m.bodies[msg.key] = msg.body
 		}
 		if msg.key == m.showing {

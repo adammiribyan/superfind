@@ -207,6 +207,19 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Search failed: the search index couldn't be read")
         self.assertNotIn("No sessions match", self.screen())
 
+    def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        newest = self.projects / "new.jsonl"
+        newest.chmod(0)
+        self.open_picker()
+        self.wait_for("Couldn't read this session")
+        time.sleep(1)
+        newest.chmod(0o644)
+        self.keys("Down")
+        self.keys("Up")
+        self.wait_for("Added a test that taps Pay twice")
+
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
         self.open_picker()

@@ -369,6 +369,55 @@ class HopBehavior(unittest.TestCase):
                 body = self.hop("preview", str(path), "--width", str(width)).split("claude\n", 1)[1]
                 self.assertEqual(body.splitlines(), ["  " + l for l in expected])
 
+    def test_a_transcript_that_could_not_be_read_is_not_labeled_until_it_can_be(self):
+        import http.server
+        import threading
+        judged = []
+
+        class Waiting(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                judged.append(json.loads(self.rfile.read(int(self.headers["Content-Length"])))["state"])
+                body = b'{"answers": {"status": {"choice": "waiting", "probabilities": {"waiting": 0.95}}}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Waiting)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                            claude("Should I run it on production?"), title="Ledger migration")
+        self.hop("index")
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o644)
+        os.utime(path, (time.time() - 600, time.time() - 600))
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        unreadable = self.run_hop("label")
+        status = self.home / ".cache" / "hop" / "status.json"
+        self.assertEqual((unreadable.returncode, judged), (1, []))
+        self.assertNotIn(str(path), json.loads(status.read_text()) if status.exists() else {})
+        path.chmod(0o644)
+        self.hop("label")
+        self.assertEqual(json.loads(status.read_text())[str(path)]["status"], "waiting")
+        self.assertEqual(judged[0]["recent_turns"][-1]["text"], "Should I run it on production?")
+
+    def test_a_preview_of_an_unreadable_transcript_says_so_instead_of_claiming_no_reply(self):
+        path = self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."),
+                            title="Ledger migration")
+        self.hop("index")
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o644)
+        result = self.run_hop("preview", str(path))
+        body = ANSI.sub("", result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("  Couldn't read this session: open ", body)
+        self.assertNotIn("No reply yet", body)
+
     def test_shell_setup_calls_hop_by_its_full_path(self):
         self.assertIn(f"typeset -g _hop_bin={HOP}", self.hop("init", "zsh"))
 

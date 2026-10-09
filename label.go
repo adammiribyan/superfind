@@ -62,8 +62,11 @@ type sessionEnding struct {
 	RecentTurns []endingTurn `json:"recent_turns"`
 }
 
-func ending(path string) sessionEnding {
-	t, _ := readTranscript(path)
+func ending(path string) (sessionEnding, error) {
+	t, err := readTranscript(path)
+	if err != nil {
+		return sessionEnding{}, err
+	}
 	var recent []endingTurn
 	for _, said := range t.turns[max(len(t.turns)-6, 0):] {
 		who := "claude"
@@ -73,7 +76,7 @@ func ending(path string) sessionEnding {
 		r := []rune(said.text)
 		recent = append(recent, endingTurn{who, string(r[max(len(r)-700, 0):])})
 	}
-	return sessionEnding{lastEvents[t.last], recent}
+	return sessionEnding{lastEvents[t.last], recent}, nil
 }
 
 func judgeStatus(key, path string) (string, float64, error) {
@@ -81,7 +84,11 @@ func judgeStatus(key, path string) (string, float64, error) {
 	for _, k := range statusKinds {
 		criteria[k.name] = k.description
 	}
-	answers, err := jev(key, ending(path), map[string]any{"status": map[string]any{
+	end, err := ending(path)
+	if err != nil {
+		return "", 0, err
+	}
+	answers, err := jev(key, end, map[string]any{"status": map[string]any{
 		"type": "choice",
 		"instructions": "This is the end of a coding session between a developer and Claude. " +
 			"In what state did the session end?",

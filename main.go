@@ -283,8 +283,12 @@ func main() {
 		if header != nil {
 			header = append(header, "")
 		}
-		for _, line := range append(header, previewBody(req)...) {
+		body, err := previewBody(req)
+		for _, line := range append(header, body...) {
 			fmt.Println(line)
+		}
+		if err != nil {
+			os.Exit(1)
 		}
 	case "command":
 		if len(args) < 2 {

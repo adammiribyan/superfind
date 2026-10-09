@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func conversation(path string) []turn {
-	t, _ := readTranscript(path)
-	return t.turns
+func conversation(path string) ([]turn, error) {
+	t, err := readTranscript(path)
+	return t.turns, err
 }
 
 const (
@@ -308,9 +308,12 @@ func previewHeader(req previewRequest, cache map[string]cacheEntry, known map[st
 	return header
 }
 
-func previewBody(req previewRequest) []string {
+func previewBody(req previewRequest) ([]string, error) {
 	width := req.width - 2
-	turns := conversation(req.path)
+	turns, err := conversation(req.path)
+	if err != nil {
+		return []string{req.secondary + clipText("  Couldn't read this session: "+err.Error(), width) + ansiReset}, err
+	}
 	var body []string
 	if req.recent {
 		for _, t := range turns[max(len(turns)-8, 0):] {
@@ -318,7 +321,7 @@ func previewBody(req previewRequest) []string {
 			body = append(body, render(t.text, width)...)
 			body = append(body, "")
 		}
-		return body
+		return body, nil
 	}
 	lastAny, lastSubstantial := -1, -1
 	for i, t := range turns {
@@ -351,7 +354,7 @@ func previewBody(req previewRequest) []string {
 	case lastAsk >= 0:
 		body = append(body, "", req.secondary+"  No reply yet. Claude stopped before answering."+ansiReset)
 	}
-	return body
+	return body, nil
 }
 
 var markdownMarks = regexp.MustCompile("[*`#]+")
