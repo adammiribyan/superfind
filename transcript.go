@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -115,59 +116,113 @@ func (t *transcript) say(role, text string) {
 	t.messages = append(t.messages, text)
 }
 
-func readTranscript(path string) (transcript, error) {
-	t := transcript{last: replied}
-	var relocated string
-	err := eachLine(path, func(raw []byte) {
-		var l logLine
-		if json.Unmarshal(raw, &l) != nil {
-			return
-		}
-		if t.cwd == "" {
-			t.cwd = l.Cwd
-		}
-		t.branch = firstNonEmpty(l.GitBranch, t.branch)
-		switch l.Type {
-		case "user":
-			c := decodeContent(l.Message.Content)
-			text := strings.TrimSpace(c.text)
-			wasInterrupted := strings.HasPrefix(text, interruptMark)
-			for _, r := range c.results {
-				wasInterrupted = wasInterrupted || strings.HasPrefix(strings.TrimSpace(r), interruptMark)
-			}
-			prompt := promptText(text)
-			switch {
-			case wasInterrupted:
-				t.last = interrupted
-			case c.hasResult:
-				t.last = calledTool
-			case prompt != "" && !l.IsMeta:
-				t.last = prompted
-				t.prompts = append(t.prompts, prompt)
-				t.say("user", prompt)
-			}
-		case "assistant":
-			c := decodeContent(l.Message.Content)
-			t.toolCalls += c.toolUses
-			t.last = replied
-			if c.toolUses > 0 {
-				t.last = calledTool
-			}
-			if text := strings.TrimSpace(c.text); text != "" && !l.IsMeta {
-				t.say("assistant", text)
-			}
-		case "custom-title":
-			t.customTitle = firstNonEmpty(l.CustomTitle, t.customTitle)
-		case "ai-title":
-			t.aiTitle = firstNonEmpty(l.AITitle, t.aiTitle)
-		case "last-prompt":
-			t.lastPrompt = firstNonEmpty(l.LastPrompt, t.lastPrompt)
-		case "relocated":
-			relocated = firstNonEmpty(l.RelocatedCwd, relocated)
-		}
-	})
-	if relocated != "" {
-		t.cwd = relocated
+type parser struct {
+	t         transcript
+	relocated string
+}
+
+func newParser() *parser { return &parser{t: transcript{last: replied}} }
+
+func (p *parser) feed(raw []byte) {
+	t := &p.t
+	var l logLine
+	if json.Unmarshal(raw, &l) != nil {
+		return
 	}
-	return t, err
+	if t.cwd == "" {
+		t.cwd = l.Cwd
+	}
+	t.branch = firstNonEmpty(l.GitBranch, t.branch)
+	switch l.Type {
+	case "user":
+		c := decodeContent(l.Message.Content)
+		text := strings.TrimSpace(c.text)
+		wasInterrupted := strings.HasPrefix(text, interruptMark)
+		for _, r := range c.results {
+			wasInterrupted = wasInterrupted || strings.HasPrefix(strings.TrimSpace(r), interruptMark)
+		}
+		prompt := promptText(text)
+		switch {
+		case wasInterrupted:
+			t.last = interrupted
+		case c.hasResult:
+			t.last = calledTool
+		case prompt != "" && !l.IsMeta:
+			t.last = prompted
+			t.prompts = append(t.prompts, prompt)
+			t.say("user", prompt)
+		}
+	case "assistant":
+		c := decodeContent(l.Message.Content)
+		t.toolCalls += c.toolUses
+		t.last = replied
+		if c.toolUses > 0 {
+			t.last = calledTool
+		}
+		if text := strings.TrimSpace(c.text); text != "" && !l.IsMeta {
+			t.say("assistant", text)
+		}
+	case "custom-title":
+		t.customTitle = firstNonEmpty(l.CustomTitle, t.customTitle)
+	case "ai-title":
+		t.aiTitle = firstNonEmpty(l.AITitle, t.aiTitle)
+	case "last-prompt":
+		t.lastPrompt = firstNonEmpty(l.LastPrompt, t.lastPrompt)
+	case "relocated":
+		p.relocated = firstNonEmpty(l.RelocatedCwd, p.relocated)
+	}
+}
+
+func (p *parser) done() transcript {
+	if p.relocated != "" {
+		p.t.cwd = p.relocated
+	}
+	return p.t
+}
+
+func readTranscript(path string) (transcript, error) {
+	p := newParser()
+	err := eachLine(path, p.feed)
+	return p.done(), err
+}
+
+const firstEndingWindow = 1 << 20
+
+func readEnding(path string, enough func([]turn) bool) ([]turn, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	for window := int64(firstEndingWindow); ; window *= 4 {
+		start := max(size-window, 0)
+		buf := make([]byte, size-start)
+		if _, err := f.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		if start > 0 {
+			buf = buf[bytes.IndexByte(buf, '\n')+1:]
+		}
+		p := newParser()
+		for len(buf) > 0 {
+			end := bytes.IndexByte(buf, '\n') + 1
+			if end == 0 {
+				end = len(buf)
+			}
+			p.feed(buf[:end])
+			buf = buf[end:]
+		}
+		turns := p.done().turns
+		if start > 0 && len(turns) > 0 {
+			turns = turns[1:]
+		}
+		if start == 0 || enough(turns) {
+			return turns, nil
+		}
+	}
 }

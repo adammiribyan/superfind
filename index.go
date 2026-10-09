@@ -14,8 +14,6 @@ import (
 	"syscall"
 
 	_ "modernc.org/sqlite"
-
-	"github.com/charmbracelet/x/term"
 )
 
 var slashCommand = regexp.MustCompile(`(?s)<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)`)
@@ -128,6 +126,17 @@ func saveCache(files map[string]cacheEntry) error {
 	return writeAtomically(cachePath("index.json"), data)
 }
 
+func cachedRows() []Row {
+	dirs := configDirs()
+	var rows []Row
+	for path, e := range loadCache() {
+		if e.Session != nil {
+			rows = append(rows, Row{Session: *e.Session, ConfigDir: configDirOf(path, dirs), Path: path})
+		}
+	}
+	return rows
+}
+
 func openSearch() (*sql.DB, error) {
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return nil, err
@@ -160,7 +169,7 @@ type parsed struct {
 	body    string
 }
 
-func index() ([]Row, error) {
+func index(announce func(stale int)) ([]Row, error) {
 	unlock, err := lockFile("index.lock")
 	if err != nil {
 		return nil, fmt.Errorf("locking the index: %w", err)
@@ -184,9 +193,8 @@ func index() ([]Row, error) {
 			stale = append(stale, f)
 		}
 	}
-	notice := len(stale) > indexingNoticeAt && term.IsTerminal(os.Stderr.Fd())
-	if notice {
-		fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", len(stale))
+	if announce != nil && len(stale) > indexingNoticeAt {
+		announce(len(stale))
 	}
 	results := make(map[string]parsed, len(stale))
 	var mu sync.Mutex
@@ -212,9 +220,6 @@ func index() ([]Row, error) {
 	}
 	close(work)
 	wg.Wait()
-	if notice {
-		fmt.Fprint(os.Stderr, "\r\033[K")
-	}
 
 	fresh := make(map[string]cacheEntry, len(all))
 	var rows []Row

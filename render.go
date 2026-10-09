@@ -3,17 +3,13 @@ package main
 import (
 	"database/sql"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 )
-
-func conversation(path string) ([]turn, error) {
-	t, err := readTranscript(path)
-	return t.turns, err
-}
 
 const (
 	boldStart = "\x01"
@@ -308,15 +304,23 @@ func previewHeader(req previewRequest, cache map[string]cacheEntry, known map[st
 	return header
 }
 
+const recentTurns = 8
+
+func substantialAsk(t turn) bool { return t.role == "user" && len(strings.Fields(t.text)) > 3 }
+
 func previewBody(req previewRequest) ([]string, error) {
 	width := req.width - 2
-	turns, err := conversation(req.path)
+	enough := func(turns []turn) bool { return slices.ContainsFunc(turns, substantialAsk) }
+	if req.recent {
+		enough = func(turns []turn) bool { return len(turns) >= recentTurns }
+	}
+	turns, err := readEnding(req.path, enough)
 	if err != nil {
 		return []string{req.secondary + clipText("  Couldn't read this session: "+err.Error(), width) + ansiReset}, err
 	}
 	var body []string
 	if req.recent {
-		for _, t := range turns[max(len(turns)-8, 0):] {
+		for _, t := range turns[max(len(turns)-recentTurns, 0):] {
 			body = append(body, speaker(t.role))
 			body = append(body, render(t.text, width)...)
 			body = append(body, "")
@@ -327,9 +331,9 @@ func previewBody(req previewRequest) ([]string, error) {
 	for i, t := range turns {
 		if t.role == "user" {
 			lastAny = i
-			if len(strings.Fields(t.text)) > 3 {
-				lastSubstantial = i
-			}
+		}
+		if substantialAsk(t) {
+			lastSubstantial = i
 		}
 	}
 	lastAsk := lastSubstantial

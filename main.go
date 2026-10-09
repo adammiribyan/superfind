@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/charmbracelet/x/term"
 )
 
 const usage = `hop: find a past AI coding session and hop back into it. Today it reads Claude Code sessions.
@@ -219,7 +221,16 @@ func mustOpenSearch() *sql.DB {
 }
 
 func mustIndex(command string) []Row {
-	rows, err := index()
+	noticed := false
+	rows, err := index(func(stale int) {
+		if term.IsTerminal(os.Stderr.Fd()) {
+			fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", stale)
+			noticed = true
+		}
+	})
+	if noticed {
+		fmt.Fprint(os.Stderr, "\r\033[K")
+	}
 	if err != nil {
 		fail("hop " + command + ": " + err.Error())
 	}

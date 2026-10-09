@@ -43,8 +43,9 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32):
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+    def open_picker(self, width=140, height=32, index_first=True):
+        if index_first:
+            subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {HOP} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
@@ -255,6 +256,22 @@ class PickerBehavior(unittest.TestCase):
     def test_ctrl_x_c_in_bash_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("bash", ["C-x", "c"])
 
+    def test_the_list_appears_while_indexing_and_the_selection_survives_the_refresh(self):
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        self.session("newest", "Search ranking tweaks", user("tune the ranking"), tool("Edit"), claude("Tuned."))
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False)
+        self.keys("Down")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()][:3],
+                         ["Checkout double charge", "Invoice layout", "Ledger migration"])
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+        self.wait_for("Search ranking tweaks")
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
         self.open_picker()
@@ -315,13 +332,10 @@ class PickerBehavior(unittest.TestCase):
 
 
 class PickerColors(unittest.TestCase):
-    def stop(self, pid, terminal):
-        os.close(terminal)
-        if os.waitpid(pid, os.WNOHANG) == (0, 0):
-            os.kill(pid, 9)
-            os.waitpid(pid, 0)
+    COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
+    TINT = b"48;2;41;52;64"
 
-    def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
+    def setUp(self):
         home = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
         projects = home / ".claude" / "projects" / "-tmp"
@@ -331,30 +345,43 @@ class PickerColors(unittest.TestCase):
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
                "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": ""}
         subprocess.run([str(HOP), "index"], env=env, capture_output=True, check=True)
-        pid, terminal = pty.fork()
+        pid, self.terminal = pty.fork()
         if pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
             os.execve(str(HOP), [str(HOP), "pick"], env)
-        self.addCleanup(self.stop, pid, terminal)
+        self.addCleanup(self.stop, pid, self.terminal)
 
-        def read_until(expected, seconds=10):
-            seen, deadline = b"", time.time() + seconds
-            while expected not in seen and time.time() < deadline:
-                if select.select([terminal], [], [], 0.05)[0]:
-                    try:
-                        seen += os.read(terminal, 65536)
-                    except OSError:
-                        break
-            return seen
+    def stop(self, pid, terminal):
+        os.write(terminal, b"\x03")
+        os.close(terminal)
+        if os.waitpid(pid, os.WNOHANG) == (0, 0):
+            os.kill(pid, 9)
+            os.waitpid(pid, 0)
 
-        before = read_until(b"\x1b[7m")
+    def read(self, until=None, seconds=10):
+        seen, deadline = b"", time.time() + seconds
+        while (until is None or until not in seen) and time.time() < deadline:
+            if select.select([self.terminal], [], [], 0.05)[0]:
+                try:
+                    seen += os.read(self.terminal, 65536)
+                except OSError:
+                    break
+        return seen
+
+    def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
+        before = self.read(until=b"\x1b[7m")
         self.assertIn(b"\x1b]11;?", before)
         time.sleep(0.6)
-        os.write(terminal, b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\")
-        after = read_until(b"48;2;41;52;64")
-        os.write(terminal, b"\x03")
-        self.assertIn(b"48;2;41;52;64", after)
+        os.write(self.terminal, self.COLORS)
+        self.assertIn(self.TINT, self.read(until=self.TINT))
 
+    def test_the_picker_appears_in_one_finished_frame_once_colors_are_known(self):
+        waiting = self.read(until=b"\x1b]11;?") + self.read(seconds=0.15)
+        self.assertNotIn(b"Ledger", waiting)
+        os.write(self.terminal, self.COLORS)
+        first = self.read(until=b"Migrated.")
+        self.assertIn(b"Ledger", first)
+        self.assertIn(self.TINT, first)
 
 if __name__ == "__main__":
     unittest.main()
