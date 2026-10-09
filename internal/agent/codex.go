@@ -78,13 +78,15 @@ func codexAnswers(text string) string {
 
 func codexBlockPrompt(text string) string {
 	text = strings.TrimSpace(text)
-	switch {
-	case strings.HasPrefix(text, answersOpen):
+	if strings.HasPrefix(text, answersOpen) {
 		return codexAnswers(text)
-	case slices.ContainsFunc(codexContextHeadings, func(h string) bool { return strings.HasPrefix(text, h) }):
+	}
+	text = withoutWrappers(text)
+	switch {
+	case strings.HasPrefix(text, codexRequest), slices.ContainsFunc(codexContextHeadings, func(h string) bool { return strings.HasPrefix(text, h) }):
 		_, request, _ := strings.Cut(text, codexRequest)
 		return strings.TrimSpace(request)
-	case strings.HasPrefix(text, "<"), strings.HasPrefix(text, "# AGENTS.md instructions for"):
+	case strings.HasPrefix(text, "# AGENTS.md instructions for"):
 		return ""
 	}
 	return text
