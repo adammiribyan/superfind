@@ -7,7 +7,7 @@ import (
 
 func FuzzPrintableLeavesNothingATerminalWouldAct(f *testing.F) {
 	for _, seed := range []string{"plain", "\x1b[31mred\x1b[0m", "\x1b]0;title\x07rest", "\x1b]8;;unterminated words", "bell\x07",
-		"‮evil", "c1\u009b31m", "\x1bP dcs \x1b\\ after"} {
+		"\u202eevil", "c1\u009b31m", "\x1bP dcs \x1b\\ after"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
