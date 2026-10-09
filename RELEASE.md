@@ -6,7 +6,26 @@ The morning checklist. Do the steps in order. Commands run in zsh from the main 
 cd ~/src/tries/2026-10-09-claude-sessions-search
 ```
 
-## 0. Before anything else: reset the signing certificate secret
+## 0. Before anything else: get Actions running, and reset the signing certificate secret
+
+### 0a. Actions billing
+
+Since about 23:04Z on 2026-10-09, GitHub has refused to start every Actions job on this repo with: "The job was not started because recent account payments have failed or your spending limit needs to be increased." Until that is fixed, no check runs: not the tests, not the signing check, not the release. Fix it one of two ways:
+
+- Fix the payment or raise the Actions spending limit at https://github.com/settings/billing. A private repo pays for every minute, and macOS minutes cost 10 times Linux ones; the signing check and the release each run two macOS jobs.
+- Or make the repo public now (step 2 below). Actions is free for public repos. The repo is ready to go public before the PRs merge.
+
+Check that a job really starts: push nothing, just rerun the newest test run and watch it:
+
+```sh
+run=$(gh run list -L1 --json databaseId --jq '.[0].databaseId')
+gh run rerun "$run" && sleep 20 && gh run view "$run" --json jobs --jq '.jobs[] | "\(.name): \(.status) \(.conclusion)"'
+```
+
+A job that shows `in_progress` or `completed success` started. A job that failed within seconds with no steps did not; `gh run view "$run" --log-failed` is empty then, and the billing message is in the run's annotations on the web page.
+
+### 0b. The signing certificate secret
+
 
 The signing check on PR #6 builds all four binaries, then stops at signing with:
 
