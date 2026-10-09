@@ -33,6 +33,14 @@ jobs:
           [ -z "$missing" ] || { echo "::error::missing repository secrets:$missing"; exit 1; }
       - name: The tap token can still reach homebrew-tap
         run: GH_TOKEN="$HOMEBREW_TAP_TOKEN" gh api repos/adammiribyan/homebrew-tap --silent || { echo "::error::HOMEBREW_TAP_TOKEN can't read adammiribyan/homebrew-tap; it may have expired"; exit 1; }
+      - name: No published release exists for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --silent 2>/dev/null; then
+            echo "::error::$GITHUB_REF_NAME is already published; release a new version instead of rebuilding this one"
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -53,12 +61,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
-          path: |
-            dist/*_darwin_*.tar.gz
-            dist/homebrew/Casks/superfind.rb
+          name: cask-${{ github.ref_name }}
+          path: dist/homebrew/Casks/superfind.rb
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   verify:
     needs: build
@@ -74,15 +80,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-${{ github.ref_name }}
-          path: release
-      - name: The ${{ matrix.arch }} binary in the draft is signed, notarized, and runs under quarantine
+      - name: Download the ${{ matrix.arch }} archive from the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           test "$(uname -m | sed s/x86_64/amd64/)" = "${{ matrix.arch }}"
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .assets[] | select(.name | endswith(\"_darwin_${{ matrix.arch }}.tar.gz\")) | .id")
+          [ "$(echo "$asset" | wc -w)" -eq 1 ] || { echo "::error::expected one darwin ${{ matrix.arch }} archive in the $GITHUB_REF_NAME draft, found: $asset"; exit 1; }
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > archive.tar.gz
+      - name: The ${{ matrix.arch }} binary in the draft is signed, notarized, and runs under quarantine
+        run: |
           mkdir unpacked
-          tar -xzf release/*_darwin_${{ matrix.arch }}.tar.gz -C unpacked
+          tar -xzf archive.tar.gz -C unpacked
           sh .github/workflows/verify-darwin.sh unpacked/superfind "superfind ${GITHUB_REF_NAME#v}"
 
   publish:
@@ -92,8 +101,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-${{ github.ref_name }}
-          path: release
+          name: cask-${{ github.ref_name }}
+          path: cask
       - name: Push the cask to adammiribyan/homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -102,12 +111,16 @@ jobs:
           sha=$(gh api "repos/adammiribyan/homebrew-tap/contents/$path" --jq .sha 2>/dev/null || true)
           gh api -X PUT "repos/adammiribyan/homebrew-tap/contents/$path" --silent \
             -f message="superfind ${GITHUB_REF_NAME#v}" \
-            -f content="$(base64 -w0 release/homebrew/Casks/superfind.rb)" \
+            -f content="$(base64 -w0 cask/superfind.rb)" \
             ${sha:+-f sha="$sha"}
       - name: Publish the draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .html_url 2>/dev/null; then
+            echo "already published"
+            exit 0
+          fi
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
           [ "$(echo "$id" | wc -w)" -eq 1 ] || { echo "::error::expected one draft release for $GITHUB_REF_NAME, found: $id"; exit 1; }
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -f make_latest=true --jq .html_url

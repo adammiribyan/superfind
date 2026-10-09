@@ -196,13 +196,13 @@ run=$(gh run list -w release -b v0.9.0 -L1 --json databaseId --jq '.[0].database
 gh run watch "$run" --exit-status
 ```
 
-`release.yml` runs three jobs, and nothing is public until the last one:
+`release.yml` runs three jobs. No release and no cask reach users until the last one:
 
-1. **build**: stops if any of the six secrets is empty, if the tap token can't reach `homebrew-tap`, or if the tag doesn't match `superfind --version`. Then it builds the four binaries, signs the two darwin ones, sends them to Apple, waits up to 20 minutes for notarization (usually a few minutes), and uploads everything to a **draft** release that only you can see.
-2. **verify**: on an Apple Silicon and an Intel Mac, checks the exact darwin archives in the draft, the same way as in step 0.4.
-3. **publish**: pushes `Casks/superfind.rb` to `homebrew-tap`, then publishes the draft as the latest release.
+1. **build**: stops if any of the six secrets is empty, if the tap token can't reach `homebrew-tap`, if `v0.9.0` is already published, or if the tag doesn't match `superfind --version`. Then it builds the four binaries, signs the two darwin ones, sends them to Apple, waits up to 20 minutes for notarization (usually a few minutes), and uploads everything to a **draft** release that only you can see.
+2. **verify**: on an Apple Silicon and an Intel Mac, downloads the darwin archive from the draft and checks it the same way as in step 0.4.
+3. **publish**: pushes `Casks/superfind.rb` to `homebrew-tap`, then publishes the draft as the latest release. Rerunning it is safe: if the release is already published, it stops there.
 
-If **build** or **verify** fails, nothing is public. The usual cause is that Apple was slow: goreleaser only logs a notarization timeout, and **verify** is what catches it. Apple usually finishes within the hour. Rerun the failed jobs then:
+If **build** or **verify** fails, nothing is published. The usual cause is that Apple was slow: goreleaser only logs a notarization timeout, and **verify** is what catches it. Apple usually finishes within the hour. Rerun the failed jobs then:
 
 ```sh
 gh run rerun "$run" --failed
@@ -210,7 +210,7 @@ gh run rerun "$run" --failed
 
 If the code itself must change, don't move the `v0.9.0` tag. Go's module proxy may already have recorded it. Delete the draft (`gh release delete v0.9.0 --yes`), fix the code, set `version` to `0.9.1`, and release `v0.9.1`.
 
-If **publish** fails after the cask push, the cask points at a release that is still a draft. Rerun the failed job; it runs both steps again safely.
+If **publish** fails after the cask push, the cask points at a release that is still a draft, so `brew install` fails until you rerun the job.
 
 ## 9. Check the install paths yourself
 
