@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/term"
 )
 
-const usage = `hop: find a past AI coding session and hop back into it. Today it reads Claude Code sessions.
+const usage = `hop: find a past AI coding session and hop back into it. It reads Claude Code, Codex, and Grok sessions.
 
   hop                     open the picker (after shell setup; see hop init)
   hop init zsh|bash       print the shell setup; add  eval "$(hop init zsh)"  to ~/.zshrc
@@ -23,12 +23,13 @@ const usage = `hop: find a past AI coding session and hop back into it. Today it
   hop pick                open the picker; prints the chosen session's title, then the command
                           that resumes it
   hop search WORDS        print sessions whose title or conversation contains every word;
-                          is:waiting and is:unfinished filter by how a session ended
+                          is:waiting and is:unfinished filter by how a session ended,
+                          agent:claude, agent:codex, and agent:grok by the agent
   hop search --deep WORDS
                           print the sessions that best fit what you describe, even in other words
-  hop preview TRANSCRIPT [--width N] [--recent] [--query Q]
+  hop preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
-  hop command TRANSCRIPT  print the shell command that resumes a session
+  hop command SESSION     print the shell command that resumes a session
   hop index               build or refresh the index
   hop label               mark sessions waiting on you (needs a TypeSafe key)
   hop --version
@@ -297,7 +298,7 @@ func main() {
 		}
 	case "preview":
 		if len(args) < 2 {
-			fail("hop preview: which transcript?")
+			fail("hop preview: which session?")
 		}
 		req := previewRequest{width: 80, secondary: secondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
@@ -331,7 +332,7 @@ func main() {
 		}
 	case "command":
 		if len(args) < 2 {
-			fail("hop command: which transcript?")
+			fail("hop command: which session?")
 		}
 		r, indexed, _ := sessionAt("command", args[1])
 		if !indexed {
