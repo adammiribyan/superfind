@@ -51,7 +51,7 @@ hop() {
   fi
   local out
   out=$("$_hop_bin" pick) || return
-  print -r -- $'\e[38;2;215;119;87m✻\e[0m Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
+  print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
   print -s -- "${out#*$'\n'}"
   eval "${out#*$'\n'}"
 }
@@ -60,7 +60,7 @@ _hop_widget() {
   local out
   if out=$("$_hop_bin" pick); then
     zle -I
-    print -r -- $'\e[38;2;215;119;87m✻\e[0m Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
+    print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
     zle accept-line
   else
@@ -74,7 +74,7 @@ bindkey '^Xc' _hop_widget
 const bashSetup = `_hop_bin=%s
 
 _hop_resume() {
-  printf '\e[38;2;215;119;87m✻\e[0m Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
+  printf 'Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
   history -s "${1#*$'\n'}"
   eval "${1#*$'\n'}"
 }

@@ -285,7 +285,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
                            codex_reply("Fixed."))
-        self.open_picker(header="✻ Sessions")
+        self.open_picker(header="─ Sessions ")
         self.assertEqual([r.split("│")[0].strip() for r in self.rows()[:2]],
                          ["fix the build  2d ago · tmp · codex", "Checkout double charge  2d ago · tmp · claude"])
         self.assertNotIn("Claude sessions", self.screen())
@@ -294,7 +294,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
                            codex_reply("Fixed."))
-        self.open_picker(header="✻ Sessions")
+        self.open_picker(header="─ Sessions ")
         self.keys("Enter")
         self.assertEqual(self.result(), (0, f"fix the build\ncd /tmp && codex resume {uid(1)}\n"))
 
@@ -316,7 +316,7 @@ class PickerBehavior(unittest.TestCase):
         lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
-        self.open_picker(index_first=False, header="✻ Sessions")
+        self.open_picker(index_first=False, header="─ Sessions ")
         self.wait_for("2/2")
         self.keys("Enter")
         self.assertEqual(self.result(), (0, f"Code rating\ncd /tmp && grok --resume {uid(2)}\n"))
@@ -331,7 +331,7 @@ class PickerBehavior(unittest.TestCase):
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False)
-        self.assertNotIn("✻ Sessions", self.screen())
+        self.assertNotIn("─ Sessions ", self.screen())
 
     def test_deep_search_in_the_picker_keeps_the_agent_filter(self):
         received = []
@@ -356,7 +356,7 @@ class PickerBehavior(unittest.TestCase):
         self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
                            codex_reply("Migrated."))
         self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
-        self.open_picker(header="✻ Sessions")
+        self.open_picker(header="─ Sessions ")
         self.keys("agent:codex ledger", "C-r")
         deadline = time.time() + 10
         while not received and time.time() < deadline:
