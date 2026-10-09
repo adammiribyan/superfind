@@ -29,6 +29,7 @@ type transcript struct {
 	turns                            []turn
 	toolCalls                        int
 	last                             event
+	hidden                           bool
 }
 
 type reader interface {

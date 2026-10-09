@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -28,6 +29,46 @@ def tool(name):
         {"type": "tool_use", "id": "t1", "name": name, "input": {}}]})
 
 
+def uid(n):
+    return f"0199{n:04d}-a751-7860-aac9-738072c82895"
+
+
+def codex_meta(cwd="/tmp", parent=None, branch=None):
+    payload = {"id": "meta", "cwd": cwd, "originator": "codex_cli_rs", "source": "cli",
+               "git": {"branch": branch} if branch else None}
+    if parent:
+        payload.update(thread_source="subagent", parent_thread_id=parent)
+    return line(timestamp="2026-10-09T10:00:00Z", type="session_meta", payload=payload)
+
+
+def codex_item(**payload):
+    return line(timestamp="2026-10-09T10:00:00Z", type="response_item", payload=payload)
+
+
+def codex_user(*blocks):
+    return codex_item(type="message", role="user", content=[
+        b if isinstance(b, dict) else {"type": "input_text", "text": b} for b in blocks])
+
+
+def codex_reply(text):
+    return codex_item(type="message", role="assistant", content=[{"type": "output_text", "text": text}])
+
+
+def codex_call():
+    return codex_item(type="function_call", name="shell", arguments="{}", call_id="c1")
+
+
+def codex_output(output="ok"):
+    return codex_item(type="function_call_output", call_id="c1", output=output)
+
+
+def codex_aborted():
+    return line(timestamp="2026-10-09T10:00:00Z", type="event_msg", payload={"type": "turn_aborted", "reason": "interrupted"})
+
+
+CODEX_ENVIRONMENT = "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>"
+
+
 class HopBehavior(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
@@ -35,8 +76,49 @@ class HopBehavior(unittest.TestCase):
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
                     "PWD": "/elsewhere", "TYPESAFE_API_KEY": ""}
-        self.env.pop("CLAUDE_CONFIG_DIR", None)
+        for name in ("CLAUDE_CONFIG_DIR", "HOP_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "HOP_CODEX_DIRS", "HOP_GROK_DIRS"):
+            self.env.pop(name, None)
         self.clock = time.time() - 2 * 86400
+
+    def tick(self, *paths):
+        self.clock += 60
+        for p in paths:
+            os.utime(p, (self.clock, self.clock))
+
+    def codex_session(self, session_id, *lines, home=".codex", day="2026/10/09", archived=False):
+        root = self.home / home
+        folder = root / "archived_sessions" if archived else root / "sessions" / day
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"rollout-{day.replace('/', '-')}T10-00-00-{session_id}.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        self.tick(path)
+        return path.resolve()
+
+    def codex_name(self, session_id, name, home=".codex"):
+        with open(self.home / home / "session_index.jsonl", "a") as index:
+            index.write(line(id=session_id, thread_name=name, updated_at="2026-10-09T10:00:00Z") + "\n")
+
+    def record_typesafe(self):
+        import http.server
+        import threading
+        requests = []
+
+        class Recorder(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        return requests
 
     def session(self, session_id, *lines, title=None):
         path = self.projects / f"{session_id}.jsonl"
@@ -481,6 +563,104 @@ class HopBehavior(unittest.TestCase):
                             tool("Edit"), claude("Fixed."), title="Flaky checkout test")
         self.hop("index")
         self.assertEqual(self.hop("command", str(path)).strip(), f"cd {parent} && claude --resume abc-123")
+
+    def test_a_codex_session_is_listed_and_resumes_with_codex(self):
+        path = self.codex_session(uid(1), codex_meta(), codex_user(CODEX_ENVIRONMENT),
+                                  codex_user("make payment retries safe to repeat"), codex_call(), codex_output(),
+                                  codex_reply("Added idempotency keys."))
+        self.assertEqual(self.titles("idempotency"), ["make payment retries safe to repeat"])
+        self.assertEqual(self.hop("command", str(path)), f"cd /tmp && codex resume {uid(1)}\n")
+
+    def test_codex_subagent_threads_are_hidden(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(parent=uid(1)), codex_user("inspect the failing test"),
+                           codex_reply("Inspected."))
+        self.assertEqual(self.titles(), ["fix the build"])
+
+    def test_archived_codex_sessions_are_hidden(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."), archived=True)
+        self.codex_session(uid(2), codex_meta(), codex_user("fix the build again"), codex_reply("Fixed."))
+        self.assertEqual(self.titles(), ["fix the build again"])
+
+    def test_a_codex_thread_name_titles_the_session_and_a_rename_is_picked_up(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(), codex_user("rename the export job"), codex_call(), codex_output(),
+                           codex_reply("Renamed."))
+        self.codex_name(uid(1), "Build fix draft")
+        self.codex_name(uid(1), "Build fix")
+        self.assertEqual(self.titles(), ["rename the export job", "Build fix"])
+        self.codex_name(uid(1), "Flaky build fix")
+        self.assertEqual(self.titles(), ["rename the export job", "Flaky build fix"])
+
+    def test_a_codex_prompt_with_an_image_attachment_keeps_the_words(self):
+        self.codex_session(uid(1), codex_meta(), codex_user(
+            '<image name=[Image #1] path="a.png">', {"type": "input_image", "image_url": "data:image/png;base64,AA"},
+            "</image>", "help me with this: [Image #1]"), codex_reply("It is a chart."))
+        self.assertEqual(self.titles(), ["help me with this: [Image #1]"])
+
+    def test_codex_machine_messages_are_not_prompts(self):
+        path = self.codex_session(
+            uid(1), codex_meta(), codex_user("# AGENTS.md instructions for /tmp\n\n<INSTRUCTIONS>be careful</INSTRUCTIONS>"),
+            codex_user("<user_instructions>\nbe brief\n</user_instructions>"),
+            codex_user("# Context from my IDE setup:\n\n## Open tabs:\n- main.go\n\n## My request for Codex:\nfix the build"),
+            codex_call(), codex_output(), codex_reply("Fixed."), codex_user("now add a test for it"), codex_reply("Added."))
+        self.hop("index")
+        header = self.hop("preview", str(path)).splitlines()
+        self.assertEqual((header[0], header[1].split(" · ")[-1]), ("fix the build", "2 prompts"))
+
+    def test_an_old_format_codex_rollout_finds_its_folder_in_the_environment_context(self):
+        def item(role, kind, text):
+            return line(type="message", role=role, content=[{"type": kind, "text": text}])
+        first = line(id=uid(1), timestamp="2025-08-01T10:00:00Z", instructions=None, git={"branch": "main"})
+        path = self.codex_session(uid(1), first, item("user", "input_text", CODEX_ENVIRONMENT),
+                                  item("user", "input_text", "fix the build"), line(type="local_shell_call", status="completed"),
+                                  item("assistant", "output_text", "Fixed."), line(record_type="state"), day="2025/08/01")
+        self.codex_session(uid(2), line(id=uid(2), timestamp="2025-08-01T10:00:00Z", instructions=None, git=None),
+                           item("user", "input_text", "rename the export job"), item("assistant", "output_text", "Renamed."),
+                           day="2025/08/01")
+        self.assertEqual(self.titles(), ["fix the build"])
+        self.assertEqual(self.hop("command", str(path)), f"cd /tmp && codex resume {uid(1)}\n")
+        self.assertEqual(self.hop("preview", str(path)).splitlines()[1].split(" · ")[2:], ["main", "1 prompt"])
+
+    def test_a_codex_compaction_summary_is_not_counted_as_a_prompt(self):
+        compacted = line(timestamp="2026-10-09T10:00:00Z", type="compacted", payload={"message": "", "replacement_history": [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "fix the build"}]}]})
+        path = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                  compacted, codex_reply("Fixed."))
+        self.hop("index")
+        self.assertEqual(self.hop("preview", str(path)).splitlines()[1].split(" · ")[-1], "1 prompt")
+
+    def test_a_codex_interruption_is_reported_to_the_labeler(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("run the ledger migration"), codex_call(), codex_output(),
+                           codex_reply("Starting the migration now."), codex_aborted())
+        requests = self.record_typesafe()
+        self.run_hop("label")
+        state = requests[0]["state"]
+        self.assertEqual((state["last_event"], [t["who"] for t in state["recent_turns"]]),
+                         ("The developer interrupted Codex while it was working.", ["developer", "codex"]))
+
+    def test_a_codex_home_other_than_the_default_is_passed_to_codex(self):
+        work = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                  codex_reply("Fixed."), home=".codex-work")
+        self.codex_session(uid(2), codex_meta(), codex_user("rename the export job"), codex_call(), codex_output(),
+                           codex_reply("Renamed."))
+        self.assertEqual(self.rows(), ["rename the export job  1d ago · tmp · .codex",
+                                       "fix the build  1d ago · tmp · .codex-work"])
+        home = self.home.resolve()
+        self.assertEqual(self.hop("command", str(work)), f"cd /tmp && CODEX_HOME={home}/.codex-work codex resume {uid(1)}\n")
+        shutil.rmtree(self.home / ".codex")
+        self.env["CODEX_HOME"] = str(home / ".codex-work")
+        self.assertEqual(self.hop("command", str(work)), f"cd /tmp && codex resume {uid(1)}\n")
+
+    def test_a_long_codex_session_preview_shows_its_last_request(self):
+        path = self.codex_session(uid(1), codex_meta(), codex_user("load the fixtures"), codex_call(),
+                                  codex_output("x" * (1 << 20) + "y" * 300_000), codex_reply("Loaded."),
+                                  codex_user("now add a test for the retries"), codex_call(), codex_output(),
+                                  codex_reply("Added a retry test."))
+        self.hop("index")
+        self.assertEqual(self.hop("preview", str(path)).splitlines()[5:],
+                         ["you", "  now add a test for the retries", "", "codex", "  Added a retry test."])
 
 
 if __name__ == "__main__":

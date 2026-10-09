@@ -25,7 +25,7 @@ func parse(f found) (*Session, string, error) {
 	if len(t.prompts) > 0 {
 		firstPrompt = t.prompts[0]
 	}
-	if t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
+	if t.hidden || t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
 		return nil, "", nil
 	}
 	body := strings.Join(t.messages, "\n")

@@ -25,6 +25,9 @@ var agents = []*agent{
 	{id: "claude", label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "HOP_CLAUDE_DIRS",
 		glob: "projects/*/*.jsonl", resume: "claude --resume", idOf: stem,
 		reader: func(string) (reader, error) { return newParser(), nil }},
+	{id: "codex", label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "HOP_CODEX_DIRS",
+		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", idOf: codexID, names: codexNames,
+		reader: newCodexReader},
 }
 
 func stem(path string) string { return strings.TrimSuffix(filepath.Base(path), ".jsonl") }
