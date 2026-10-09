@@ -48,7 +48,7 @@ func (a *agent) homes() []string {
 		candidates = append(candidates, h)
 	}
 	candidates = append(candidates, filepath.Join(home(), a.dotDir))
-	extras, _ := filepath.Glob(filepath.Join(home(), a.dotDir+"-*"))
+	extras, _ := filepath.Glob(filepath.Join(globMeta.Replace(home()), a.dotDir+"-*"))
 	sort.Strings(extras)
 	candidates = append(candidates, extras...)
 	for _, p := range strings.Split(os.Getenv(a.extraVar), ":") {
@@ -69,8 +69,10 @@ func (a *agent) homes() []string {
 	return dirs
 }
 
+var globMeta = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`)
+
 func (a *agent) sessions(home string) []string {
-	matches, _ := filepath.Glob(filepath.Join(home, a.glob))
+	matches, _ := filepath.Glob(filepath.Join(globMeta.Replace(home), a.glob))
 	return matches
 }
 
@@ -126,8 +128,9 @@ func locate(path string, in []place) (place, bool) {
 	var best place
 	found := false
 	for _, p := range in {
-		owned, _ := filepath.Match(filepath.Join(p.home, p.agent.glob), path)
-		if owned && (!found || len(p.home) > len(best.home)) {
+		rel, under := strings.CutPrefix(path, p.home+"/")
+		owned, _ := filepath.Match(p.agent.glob, rel)
+		if under && owned && (!found || len(p.home) > len(best.home)) {
 			best, found = p, true
 		}
 	}

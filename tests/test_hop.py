@@ -684,6 +684,13 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual((state["last_event"], [t["who"] for t in state["recent_turns"]]),
                          ("The developer interrupted Codex while it was working.", ["developer", "codex"]))
 
+    def test_a_home_whose_path_holds_glob_characters_still_owns_its_sessions(self):
+        odd = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                 codex_reply("Fixed."), home="co[dex]*")
+        self.env["CODEX_HOME"] = str(self.home.resolve() / "co[dex]*")
+        self.assertEqual(self.titles(), ["fix the build"])
+        self.assertEqual(self.hop("command", str(odd)), f"cd /tmp && codex resume {uid(1)}\n")
+
     def test_a_codex_home_other_than_the_default_is_passed_to_codex(self):
         work = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
                                   codex_reply("Fixed."), home=".codex-work")
