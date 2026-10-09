@@ -48,15 +48,21 @@ cd superfind
 
 `install.sh` builds superfind, copies it to `~/.local/bin`, and adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the keybind above to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
 
-`~/.local/bin` doesn't need to be on your PATH: the setup line runs superfind by its full path. Add it to your PATH only to run superfind from scripts or other shells.
+`~/.local/bin` doesn't need to be on your PATH: the setup line defines `superfind` as a shell function that runs the binary by its full path, and passes along every command, such as `superfind ask`. Add it to your PATH only to run superfind from scripts or other shells.
 
 ### Check it works
 
-The setup line takes effect in shells started after you add it, so open a new terminal tab, or `source` the startup file in the shell you have. Then type `superfind`, or `sfd` for short. If the picker doesn't open, run `type superfind`: it should say superfind is a shell function. If it doesn't, the setup line didn't run.
+The setup line takes effect in shells started after you add it, so open a new terminal tab, or `source` the startup file in the shell you have. Then type `superfind`, or `sfd` for short. If the picker doesn't open, run `type superfind`: it should say superfind is a function. If it doesn't, the setup line didn't run.
 
 ## Use
 
-Type `superfind` or `sfd`, press **Ctrl-X**, then **c**, in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
+Open the picker in any of these ways:
+
+- Run `superfind`, or `sfd` for short.
+- In zsh or bash, press **Ctrl-X**, then **c**.
+- In Ghostty, press **Cmd-Shift-O**.
+
+The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
 
 | Key | Does |
 |---|---|
@@ -83,11 +89,11 @@ superfind takes its colors from your terminal. If your terminal doesn't report t
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While it asks, the search box is titled "Asking…". Then the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search.
+Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search.
 
 For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list.
 
-Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise, so asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
 
 Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
 
