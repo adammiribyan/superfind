@@ -459,6 +459,7 @@ func run(args []string) {
 		}
 		if chosen == nil {
 			exit(1)
+			return
 		}
 		fmt.Fprintln(stdout, handoffTitle(*chosen))
 		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
