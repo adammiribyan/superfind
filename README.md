@@ -93,7 +93,7 @@ superfind takes its colors from your terminal. If your terminal doesn't report t
 
 Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search.
 
-For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list.
+For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
 
