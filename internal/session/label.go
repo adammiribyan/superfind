@@ -116,11 +116,11 @@ type statusEntry struct {
 }
 
 func statuses() map[string]statusEntry {
-	known := map[string]statusEntry{}
-	if raw, err := os.ReadFile(CachePath("status.json")); err == nil {
-		json.Unmarshal(raw, &known)
+	var known map[string]statusEntry
+	if raw, err := os.ReadFile(CachePath("status.json")); err == nil && json.Unmarshal(raw, &known) == nil && known != nil {
+		return known
 	}
-	return known
+	return map[string]statusEntry{}
 }
 
 func statusLabel(r Row, known map[string]statusEntry) string {

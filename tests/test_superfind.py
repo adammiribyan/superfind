@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -1312,6 +1313,65 @@ class SuperfindBehavior(unittest.TestCase):
         self.run_superfind("ask", "where was the timeout")
         cards = [c for k, c in requests[0]["questions"]["which"]["criteria"].items() if k != "none"]
         self.assertLessEqual(max(len(c) for c in cards), 700)
+
+    def test_the_cache_is_readable_only_by_its_owner(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        cache = self.home / ".cache" / "superfind"
+        cache.mkdir(parents=True)
+        cache.chmod(0o755)
+        (cache / "search.db").touch(mode=0o644)
+        self.superfind("index")
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+        for name in ("search.db", "index.json", "index.lock"):
+            self.assertEqual((cache / name).stat().st_mode & 0o077, 0, name)
+        self.assertEqual(self.titles("signing"), ["Key rotation"])
+        shutil.rmtree(cache)
+        self.superfind("index")
+        self.assertEqual([(cache / n).stat().st_mode & 0o777 for n in (".", "search.db")], [0o700, 0o600])
+
+    def test_a_session_whose_id_reads_as_an_option_is_never_offered(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        flag = self.session("--dangerously-skip-permissions", user("rotate the signing keys"), claude("Rotated."),
+                            title="Sneaky")
+        self.assertEqual(self.titles(), ["Key rotation"])
+        result = self.run_superfind("command", str(flag))
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+
+    def test_a_fifo_or_device_in_a_session_folder_neither_hangs_nor_fills_memory(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        os.mkfifo(self.projects / "fifo.jsonl")
+        os.symlink("/dev/zero", self.projects / "zero.jsonl")
+        for args in (("index",), ("search", "signing"), ("preview", str(self.projects / "fifo.jsonl")),
+                     ("preview", str(self.projects / "zero.jsonl"))):
+            subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, timeout=20)
+        self.assertEqual(self.titles(), ["Key rotation"])
+
+    def test_one_enormous_line_is_skipped_without_using_memory_for_it(self):
+        path = self.projects / "a1.jsonl"
+        with open(path, "w") as f:
+            f.write(user("rotate the signing keys") + "\n")
+            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "x" * 40_000_000}) + "\n")
+            f.write(claude("Rotated.") + "\n")
+        measure = ("import resource, subprocess, sys; subprocess.run(sys.argv[1:], capture_output=True); "
+                   "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)")
+        peak = int(subprocess.run([sys.executable, "-c", measure, str(SUPERFIND), "index"], env=self.env,
+                                  capture_output=True, text=True, timeout=120).stdout)
+        megabytes = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
+        self.assertLess(megabytes, 250)
+        self.assertEqual(self.titles(), ["rotate the signing keys"])
+
+    def test_a_null_label_cache_is_treated_as_empty(self):
+        path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                            claude("Should I run it on production now?"), title="Ledger migration")
+        os.utime(path, (time.time() - 600, time.time() - 600))
+        self.superfind("index")
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.write_text("null")
+        self.record_typesafe(lambda questions: {q: {"choice": "waiting", "probabilities": {"waiting": 0.99}}
+                                                for q in questions})
+        result = self.run_superfind("label")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(list(json.loads(status.read_text()).values())[0]["status"], "waiting")
 
 
 if __name__ == "__main__":

@@ -61,15 +61,48 @@ type reader interface {
 	done() Transcript
 }
 
+const longestLine = 16 << 20
+
+func errNotAFile(path string) error {
+	return &os.PathError{Op: "read", Path: path, Err: errors.New("not a regular file")}
+}
+
+func openFile(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errNotAFile(path)
+	}
+	return os.Open(path)
+}
+
 func eachLine(path string, fn func(raw []byte) bool) error {
-	f, err := os.Open(path)
+	f, err := openFile(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	lines := bufio.NewReaderSize(f, 1<<20)
+	var long []byte
+	tooLong := false
 	for {
-		raw, err := lines.ReadBytes('\n')
+		raw, err := lines.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
+				long = append(long, raw...)
+			}
+			continue
+		}
+		if long != nil || tooLong {
+			if !tooLong {
+				raw = append(long, raw...)
+			} else {
+				raw = nil
+			}
+			long, tooLong = nil, false
+		}
 		if len(raw) > 0 && !fn(raw) {
 			return nil
 		}
@@ -103,7 +136,7 @@ func ReadTranscript(a *Agent, path string) (Transcript, error) {
 const firstEndingWindow = 1 << 20
 
 func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
-	f, err := os.Open(path)
+	f, err := openFile(path)
 	if err != nil {
 		return nil, err
 	}
