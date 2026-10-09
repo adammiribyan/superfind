@@ -1412,6 +1412,14 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(sorted(self.titles()), ["<div>Hello</div> fix this Codex component", "<div>Hello</div> fix this component",
                                                  "commit this and open a PR", "ship the redirect fix"])
 
+    def test_one_letter_words_and_common_words_still_narrow_a_search(self):
+        self.session("a1", user("write the C extension for the parser"), claude("Written."), title="C extension")
+        self.session("b2", user("port this service to Rust"), claude("Ported."), title="Rust port")
+        self.session("c3", user("configure nginx proxy"), claude("Configured."), title="Nginx proxy")
+        self.assertEqual(self.titles("C"), ["C extension"])
+        self.assertEqual(self.titles("the"), ["C extension"])
+        self.assertEqual(sorted(self.titles("to")), ["Rust port"])
+
 
 if __name__ == "__main__":
     unittest.main()
