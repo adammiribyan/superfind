@@ -89,7 +89,7 @@ TYPESAFE_API_KEY=your-key
 
 Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`. If asking fails, the line under the search box says why, and typing goes back to search.
 
-**What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+**What leaves your machine.** Asking sends your search and, for each session, its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. Claude Code runs from an empty folder without your settings, memory, or CLAUDE.md files, and if TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your search and up to 120 short passages from each of the top five results to TypeSafe, and labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 ## Sessions it finds
 
