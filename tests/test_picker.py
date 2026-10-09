@@ -321,6 +321,49 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Enter")
         self.assertEqual(self.result(), (0, f"Code rating\ncd /tmp && grok --resume {uid(2)}\n"))
 
+    def test_the_first_frame_says_claude_sessions_when_another_agents_home_is_empty(self):
+        self.three_sessions()
+        flat = self.home / ".codex" / "sessions" / "rollout-2025-04-01-0199.json"
+        flat.parent.mkdir(parents=True)
+        flat.write_text("{}")
+        (self.home / ".cache" / "hop").mkdir(parents=True)
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False)
+        self.assertNotIn("✻ Sessions", self.screen())
+
+    def test_deep_search_in_the_picker_keeps_the_agent_filter(self):
+        received = []
+
+        class Recorder(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if "which" in sent["questions"]:
+                    received.append(sent)
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
+                           codex_reply("Migrated."))
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.open_picker(header="✻ Sessions")
+        self.keys("agent:codex ledger", "C-r")
+        deadline = time.time() + 10
+        while not received and time.time() < deadline:
+            time.sleep(0.1)
+        cards = [c.split(" | ")[0] for k, c in received[0]["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertEqual((received[0]["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
+
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()
         subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)

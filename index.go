@@ -336,7 +336,7 @@ func matches(db *sql.DB, query string) ([]string, bool, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, scoped := range []string{"title : (" + match + ")", match} {
-		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path LIMIT 200", scoped)
+		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
 		if err != nil {
 			return nil, true, err
 		}

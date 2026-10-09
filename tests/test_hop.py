@@ -925,10 +925,33 @@ class HopBehavior(unittest.TestCase):
         self.judged(waiting, "waiting")
         every = ["Ledger totals", "migrate the ledger index", "Ledger migration"]
         self.assertEqual(self.titles("agent:codex", "ledger"), ["migrate the ledger index"])
+        self.assertEqual(self.titles("agent:Codex", "ledger"), ["migrate the ledger index"])
         self.assertEqual(self.titles("agent:claude", "is:waiting"), ["Ledger migration"])
+        self.assertEqual(self.titles("is:Waiting"), ["Ledger migration"])
         self.assertEqual(self.titles("agent:grok"), ["Ledger totals"])
         self.assertEqual(sorted(self.titles("agent:bogus", "ledger")), sorted(every))
         self.assertEqual(sorted(self.titles("is:bogus", "ledger")), sorted(every))
+
+    def test_a_filtered_search_is_not_crowded_out_by_other_agents(self):
+        for n in range(201):
+            path = self.projects / f"c{n}.jsonl"
+            path.write_text(user("upgrade the kubernetes cluster") + "\n" + tool("Bash") + "\n" +
+                            claude("Upgraded kubernetes.") + "\n" + line(type="ai-title", aiTitle=f"Kubernetes {n}") + "\n")
+        self.codex_session(uid(1), codex_meta(), codex_user("pin the kubernetes version"), codex_call(), codex_output(),
+                           codex_reply("Pinned."))
+        self.assertEqual(self.titles("agent:codex", "kubernetes"), ["pin the kubernetes version"])
+
+    def test_deep_search_keeps_the_agent_and_status_filters(self):
+        self.session("a1", user("migrate the ledger tables"), tool("Bash"), claude("Migrated."), title="Ledger migration")
+        self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
+                           codex_reply("Migrated."))
+        self.hop("index")
+        requests = self.record_typesafe()
+        self.env["PATH"] = "/usr/bin:/bin"
+        self.run_hop("search", "--deep", "agent:codex", "ledger")
+        sent = requests[0]
+        cards = [c.split(" | ")[0] for k, c in sent["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertEqual((sent["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
 
     def test_the_preview_names_the_agent_that_replied(self):
         paths = {
@@ -983,7 +1006,7 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
         self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 12)
 
-    def test_an_older_search_index_cannot_crowd_out_new_matches(self):
+    def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3
         self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
         cache = self.home / ".cache" / "hop"
@@ -996,6 +1019,9 @@ class HopBehavior(unittest.TestCase):
         db.close()
         (cache / "index.json").write_text(json.dumps({"version": 11, "files": {}}))
         self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"])
+        db = sqlite3.connect(cache / "search.db")
+        self.addCleanup(db.close)
+        self.assertEqual(db.execute("SELECT path FROM docs").fetchall(), [(str(self.projects.resolve() / "a1.jsonl"),)])
 
 
 if __name__ == "__main__":

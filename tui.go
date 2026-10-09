@@ -350,7 +350,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 }
 
 func (m picker) startAsk() (picker, tea.Cmd) {
-	query := strings.TrimSpace(m.input.Value())
+	query, rows := narrow(m.input.Value(), m.all)
 	if query == "" {
 		return m, nil
 	}
@@ -360,7 +360,7 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	}
 	m.askSeq++
 	m.asking, m.message = true, ""
-	seq, db, rows := m.askSeq, m.db, m.all
+	seq, db := m.askSeq, m.db
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		paths, err := ask(db, query, rows)
 		return askDone{seq, query, paths, err}

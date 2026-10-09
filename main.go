@@ -121,17 +121,17 @@ func printRows(rows []Row, shown tags) {
 	}
 }
 
-func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
+func narrow(query string, rows []Row) (string, []Row) {
 	var words, statuses []string
 	var from []*agent
 	for _, w := range strings.Fields(query) {
 		switch {
 		case strings.HasPrefix(w, "is:"):
-			if label := statusLabelFor(w[3:]); label != "" {
+			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
 				statuses = append(statuses, label)
 			}
 		case strings.HasPrefix(w, "agent:"):
-			if a := agentNamed(w[6:]); a != nil {
+			if a := agentNamed(strings.ToLower(w[6:])); a != nil {
 				from = append(from, a)
 			}
 		default:
@@ -147,10 +147,15 @@ func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		}
 		rows = kept
 	}
+	return strings.Join(words, " "), rows
+}
+
+func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
+	words, rows := narrow(query, rows)
 	if db == nil {
 		return recentFirst(rows), nil
 	}
-	found, searched, err := matches(db, strings.Join(words, " "))
+	found, searched, err := matches(db, words)
 	if err != nil {
 		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
 	}
@@ -283,11 +288,12 @@ func main() {
 			printRows(found, shown)
 			return
 		}
-		if strings.TrimSpace(query) == "" {
-			printRows(recentFirst(rows), shown)
+		query, eligible := narrow(query, rows)
+		if query == "" {
+			printRows(recentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask(db, query, rows)
+		paths, err := ask(db, query, eligible)
 		var failure askFailure
 		if errors.As(err, &failure) {
 			fail(failure.Error())

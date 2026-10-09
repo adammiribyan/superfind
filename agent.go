@@ -181,7 +181,9 @@ func pickerLabel(rows []Row, in []place) string {
 	}
 	if len(rows) == 0 {
 		for _, p := range in {
-			present[p.agent] = true
+			if len(p.agent.sessions(p.home)) > 0 {
+				present[p.agent] = true
+			}
 		}
 	}
 	if len(present) == 1 {
