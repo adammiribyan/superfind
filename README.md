@@ -15,6 +15,8 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
+There are two ways to install. Install with Homebrew or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
+
 ### With Homebrew or Go
 
 ```sh
@@ -75,7 +77,7 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 | Ctrl-U | Clear the search. |
 | Esc, Ctrl-C | Close the picker without resuming anything. |
 
-Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words.
+Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words.
 
 Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
 
