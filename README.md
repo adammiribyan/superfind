@@ -13,7 +13,7 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 ## Install
 
-superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 on the first build.
+superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
 ### With Homebrew or Go
 
@@ -69,13 +69,13 @@ Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shi
 | Ctrl-U | Clear the search. |
 | Esc, Ctrl-C | Close the picker without resuming anything. |
 
-Add `agent:claude`, `agent:codex`, or `agent:grok` to your words to show one agent's sessions, and `is:waiting` or `is:unfinished` to show the sessions marked [waiting on you](#waiting-on-you).
+Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words.
 
 Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
-When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command lands in your shell history, such as `cd /Users/you/code/storefront && claude --resume <id>`, and when you leave the agent, your shell stays in that folder.
+When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/storefront && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
 
@@ -121,7 +121,7 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 ## What leaves your machine
 
-Asking sends your description, and each session's title, project, age, last request, and one short passage, to the ranker: to TypeSafe with a key, to Anthropic without one, and to Anthropic as well when TypeSafe fails to answer. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Labeling sends the ending (its last six turns, clipped) of each session written in the last two weeks to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+Asking sends the ranker your description and, for each session except one-line "hi" sessions, its title, project, age, last request, and one short passage: to TypeSafe with a key, to Anthropic without one, and to Anthropic as well when TypeSafe fails or finds nothing. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Labeling sends the ending (its last six turns, clipped) of each session written in the last two weeks to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
@@ -162,7 +162,7 @@ These environment variables change what superfind does:
 | `TYPESAFE_API_KEY` | Ask with Jev and turn on labels. Can also go in `~/.config/superfind/env`. | [Ask](#ask-for-the-session-you-remember) |
 | `TYPESAFE_URL` | Send TypeSafe requests to another endpoint. | [Ask](#ask-for-the-session-you-remember) |
 | `SUPERFIND_CLAUDE_DIRS`, `SUPERFIND_CODEX_DIRS`, `SUPERFIND_GROK_DIRS` | Read sessions from more folders, separated by colons. | [Sessions it finds](#sessions-it-finds) |
-| `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME` | Read each agent's sessions from where that agent keeps them. | [Sessions it finds](#sessions-it-finds) |
+| `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME` | The agents' own home variables. superfind reads sessions there as well as in the default folders, and sets the variable when it resumes a session from another folder. | [Sessions it finds](#sessions-it-finds) |
 | `XDG_CACHE_HOME` | Keep the index in `$XDG_CACHE_HOME/superfind/`. | [Commands](#commands) |
 | `NO_COLOR` | Turn color off. | [Use](#use) |
 
