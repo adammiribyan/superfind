@@ -116,7 +116,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
                     "PWD": "/elsewhere", "TYPESAFE_API_KEY": ""}
-        for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS"):
+        for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
+                     "NO_COLOR", "SUPERFIND_SECONDARY"):
             self.env.pop(name, None)
         self.clock = time.time() - 2 * 86400
 
@@ -575,8 +576,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("\x1b[2m", plain)
 
     def test_search_no_longer_takes_a_deep_flag(self):
-        self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
-        self.assertEqual(self.titles("--deep", "build"), [])
+        self.session("a1", user("fix the deep build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.assertEqual(self.titles("--deep", "build"), ["Build fix"])
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         self.assertIn(f"typeset -g _superfind_bin={SUPERFIND}", self.superfind("init", "zsh"))

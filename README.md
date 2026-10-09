@@ -118,7 +118,7 @@ A session is the path `superfind search` prints first: a Claude Code or Codex tr
 
 The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set. Each run re-reads only the sessions that changed, so opening the picker stays instant. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 
-superfind takes its colors from your terminal. Until your terminal reports them, superfind shows the selected row in reverse video, and it switches to the tinted row as soon as they arrive. Set [`NO_COLOR`](https://no-color.org) to any value to turn color off: superfind then uses only bold, dim, and reverse video, and always shows the selected row in reverse video.
+superfind takes its colors from your terminal. Until your terminal reports them, superfind shows the selected row in reverse video, and it switches to the tinted row as soon as they arrive. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video, and always shows the selected row in reverse video.
 
 ## Develop
 
