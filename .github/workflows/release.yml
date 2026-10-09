@@ -17,8 +17,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: The tag matches hop --version
-        run: test "$(go run . --version)" = "hop ${GITHUB_REF_NAME#v}"
+      - name: The tag matches superfind --version
+        run: test "$(go run . --version)" = "superfind ${GITHUB_REF_NAME#v}"
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

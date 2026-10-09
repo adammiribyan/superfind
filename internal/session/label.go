@@ -10,8 +10,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 type statusKind struct {

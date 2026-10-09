@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/superfind/internal/agent"
 )
 
 const (
@@ -69,9 +69,9 @@ func Now() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
 func CacheDir() string {
 	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
-		return filepath.Join(x, "hop")
+		return filepath.Join(x, "superfind")
 	}
-	return filepath.Join(agent.Home(), ".cache", "hop")
+	return filepath.Join(agent.Home(), ".cache", "superfind")
 }
 
 func CachePath(name string) string { return filepath.Join(CacheDir(), name) }

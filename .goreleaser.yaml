@@ -16,9 +16,9 @@ checksum:
   name_template: checksums.txt
 
 homebrew_casks:
-  - name: hop
-    binaries: [hop]
-    homepage: https://github.com/adammiribyan/hop
+  - name: superfind
+    binaries: [superfind]
+    homepage: https://github.com/adammiribyan/superfind
     description: Find any past AI coding session and resume it in the terminal you're in
     repository:
       owner: adammiribyan
@@ -28,10 +28,10 @@ homebrew_casks:
       post:
         install: |
           if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/hop"]
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/superfind"]
           end
 
 release:
   github:
     owner: adammiribyan
-    name: hop
+    name: superfind

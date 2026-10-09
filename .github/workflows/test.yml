@@ -27,8 +27,8 @@ jobs:
       - name: Staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - name: Build
-        run: go build -o bin/hop .
+        run: go build -o bin/superfind .
       - name: Behavior tests
         run: python3 -m unittest discover -s tests -v
       - name: Behavior tests under the race detector
-        run: go build -race -o bin/hop-race . && HOP_BIN=$PWD/bin/hop-race python3 -m unittest discover -s tests
+        run: go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race python3 -m unittest discover -s tests

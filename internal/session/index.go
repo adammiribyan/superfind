@@ -17,7 +17,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/superfind/internal/agent"
 )
 
 const cacheVersion = 12

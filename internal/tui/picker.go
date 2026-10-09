@@ -16,13 +16,14 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/ask"
-	"github.com/adammiribyan/hop/internal/render"
-	"github.com/adammiribyan/hop/internal/session"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/session"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 const (
@@ -37,14 +38,12 @@ const (
 )
 
 type theme struct {
-	settled     bool
-	forcedPlain bool
-	bg, fg      color.Color
-	tint        color.Color
-	muted       color.Color
-	border      color.Color
-	accent      color.Color
-	mutedSeq    string
+	settled               bool
+	noColor               bool
+	bg, fg                color.Color
+	tint                  color.Color
+	muted, border, accent lipgloss.Style
+	mutedSeq              string
 }
 
 func ansiFor(c color.Color) string {
@@ -64,14 +63,20 @@ func isDark(c color.Color) bool {
 	return 0.2126*float64(r>>8)+0.7152*float64(g>>8)+0.0722*float64(b>>8) < 128
 }
 
-func (t *theme) plain() bool { return t.forcedPlain || t.bg == nil || t.fg == nil }
+func (t *theme) plain() bool { return t.noColor || t.bg == nil || t.fg == nil }
+
+func foreground(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
 
 func (t *theme) settle() {
 	t.settled = true
-	t.accent = lipgloss.Color("4")
+	t.mutedSeq = render.Dim
+	if t.noColor {
+		t.muted, t.border, t.accent = lipgloss.NewStyle().Faint(true), lipgloss.NewStyle().Faint(true), lipgloss.NewStyle().Bold(true)
+		return
+	}
+	t.accent = foreground(lipgloss.Color("4"))
 	if t.plain() {
-		t.muted, t.border = lipgloss.Color("8"), lipgloss.Color("8")
-		t.mutedSeq = render.Dim
+		t.muted, t.border = foreground(lipgloss.Color("8")), foreground(lipgloss.Color("8"))
 		return
 	}
 	blue, share := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255}), 0.10
@@ -79,9 +84,9 @@ func (t *theme) settle() {
 		blue, share = color.RGBA{0x63, 0xA8, 0xF8, 255}, 0.16
 	}
 	t.tint = blend(t.bg, blue, share)
-	t.muted = blend(t.bg, t.fg, 0.70)
-	t.border = blend(t.bg, t.fg, 0.35)
-	t.mutedSeq = ansiFor(t.muted)
+	muted := blend(t.bg, t.fg, 0.70)
+	t.muted, t.border = foreground(muted), foreground(blend(t.bg, t.fg, 0.35))
+	t.mutedSeq = ansiFor(muted)
 }
 
 type layout struct {
@@ -188,8 +193,8 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
 	}
-	m.colors.forcedPlain = os.Getenv("HOP_PLAIN_COLORS") != ""
-	if m.colors.forcedPlain {
+	m.colors.noColor = render.NoColor
+	if m.colors.noColor {
 		m.settleColors()
 	}
 	return m
@@ -204,7 +209,7 @@ func (m picker) Init() tea.Cmd {
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
 		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
-	if !m.colors.forcedPlain {
+	if !m.colors.noColor {
 		cmds = append(cmds, tea.RequestBackgroundColor, tea.RequestForegroundColor)
 	}
 	return tea.Batch(cmds...)
@@ -234,9 +239,12 @@ func (m picker) layout() layout {
 
 func (m *picker) styleInput() {
 	styles := textinput.DefaultStyles(m.colors.bg == nil || isDark(m.colors.bg))
-	styles.Focused.Prompt = lipgloss.NewStyle().Foreground(m.colors.accent)
+	styles.Focused.Prompt = m.colors.accent
 	styles.Focused.Text = lipgloss.NewStyle()
-	styles.Focused.Placeholder = lipgloss.NewStyle().Foreground(m.colors.muted)
+	styles.Focused.Placeholder = m.colors.muted
+	if m.colors.noColor {
+		styles.Cursor.Color = nil
+	}
 	m.input.SetStyles(styles)
 }
 
@@ -481,7 +489,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
 		if len(m.shown) == 0 {
-			m.message = "Deep search found nothing for “" + msg.query + "”"
+			m.message = "Ask found nothing for “" + msg.query + "”"
 		}
 		updated, load := m.loadPreview()
 		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
@@ -566,11 +574,11 @@ func (m picker) rowLine(r session.Row, selected bool, width int) string {
 		}
 		return st
 	}
-	plain, muted := paint(lipgloss.NewStyle()), paint(lipgloss.NewStyle().Foreground(m.colors.muted))
+	plain, muted := paint(lipgloss.NewStyle()), paint(m.colors.muted)
 	t := render.RowTextOf(r, m.tags)
 	segment := ""
 	if t.Waiting != "" {
-		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(t.Waiting) + muted.Render(" · ")
+		segment = paint(m.colors.accent).Render(t.Waiting) + muted.Render(" · ")
 	}
 	line := plain.Render(" "+t.Title+"  ") + segment + muted.Render(strings.Join(t.Context, " · "))
 	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
@@ -581,12 +589,10 @@ func (m picker) rowLine(r session.Row, selected bool, width int) string {
 }
 
 func (m picker) inputBox(width int) []string {
-	border := lipgloss.NewStyle().Foreground(m.colors.border)
-	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
+	border, muted := m.colors.border, m.colors.muted
 	label := " " + lipgloss.NewStyle().Bold(true).Render(m.label) + " "
 	if m.asking {
-		label = " " + lipgloss.NewStyle().Foreground(m.colors.accent).Render(m.spin.View()) + " " +
-			lipgloss.NewStyle().Bold(true).Render("Searching deeper…") + " "
+		label = " " + m.colors.accent.Render(m.spin.View()) + " " + lipgloss.NewStyle().Bold(true).Render("Asking…") + " "
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")
@@ -600,10 +606,10 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) footer(width int) string {
-	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
-	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "deep search"}}
+	muted := m.colors.muted
+	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
 	if len(m.shown) == 0 {
-		pairs = [][2]string{{"ctrl-r", "deep search"}, {"ctrl-u", "clear search"}}
+		pairs = [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
 	line, used := "", 1
 	for i, p := range pairs {
@@ -651,7 +657,7 @@ func (m picker) View() tea.View {
 		return tea.NewView("")
 	}
 	l := m.layout()
-	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
+	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
 	for i := m.offset; i < m.offset+l.listHeight; i++ {
@@ -666,7 +672,7 @@ func (m picker) View() tea.View {
 	switch {
 	case l.hasPreview() && !l.stacked:
 		column = append(column, "", m.footer(l.listWidth))
-		divider := lipgloss.NewStyle().Foreground(m.colors.border).Render("│")
+		divider := m.colors.border.Render("│")
 		for i := range preview {
 			left := ""
 			if i < len(column) {
@@ -675,7 +681,7 @@ func (m picker) View() tea.View {
 			screen = append(screen, pad(left, l.listWidth)+" "+divider+" "+preview[i])
 		}
 	case l.stacked:
-		screen = append(column, lipgloss.NewStyle().Foreground(m.colors.border).Render(strings.Repeat("─", m.width)))
+		screen = append(column, m.colors.border.Render(strings.Repeat("─", m.width)))
 		screen = append(append(screen, preview...), "", m.footer(m.width))
 	default:
 		screen = append(column, "", m.footer(m.width))
@@ -711,10 +717,14 @@ func Pick() (*session.Row, error) {
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("hop pick needs a terminal: %w", err)
+		return nil, fmt.Errorf("superfind pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
-	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	options := []tea.ProgramOption{tea.WithInput(tty), tea.WithOutput(tty)}
+	if render.NoColor {
+		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
+	}
+	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), options...).Run()
 	if err != nil {
 		return nil, err
 	}

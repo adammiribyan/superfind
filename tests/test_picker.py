@@ -14,8 +14,8 @@ import time
 import unittest
 from pathlib import Path
 
-from test_hop import (HOP, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, grok_reply, grok_user, line,
-                      tool, uid, user)
+from test_superfind import (SUPERFIND, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, colors_in,
+                            grok_reply, grok_user, line, tool, uid, user)
 
 
 def tmux(*args):
@@ -29,10 +29,10 @@ class PickerBehavior(unittest.TestCase):
         self.projects = self.home / ".claude" / "projects" / "-tmp"
         self.projects.mkdir(parents=True)
         self.out = self.home / "out"
-        self.session_name = f"hop-test-{os.getpid()}-{id(self)}"
+        self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
-                    "TYPESAFE_API_KEY": "", "HOP_PLAIN_COLORS": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
+                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
 
     def tearDown(self):
         tmux("kill-session", "-t", self.session_name)
@@ -54,9 +54,9 @@ class PickerBehavior(unittest.TestCase):
 
     def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions"):
         if index_first:
-            subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+            subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
-        command = f"env -i {env} {HOP} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
         self.wait_for(header)
 
@@ -187,7 +187,7 @@ class PickerBehavior(unittest.TestCase):
         self.keys(*["M-Up"] * 12)
         scrolled = self.settled_screen()
         self.assertNotIn("Finished rollout step 40.", scrolled)
-        cache = self.home / ".cache" / "hop"
+        cache = self.home / ".cache" / "superfind"
         (cache / "status.json").write_text("{}")
         os.utime(cache / "status.json", (time.time() + 5, time.time() + 5))
         time.sleep(2.5)
@@ -208,8 +208,8 @@ class PickerBehavior(unittest.TestCase):
     def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
         import sqlite3
         self.three_sessions()
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
-        db = sqlite3.connect(self.home / ".cache" / "hop" / "search.db")
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
         db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
         db.close()
         self.open_picker()
@@ -219,7 +219,7 @@ class PickerBehavior(unittest.TestCase):
 
     def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
         self.three_sessions()
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         newest = self.projects / "new.jsonl"
         newest.chmod(0)
         self.open_picker()
@@ -236,12 +236,12 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
         self.three_sessions()
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
         start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
         tmux("new-session", "-d", "-s", self.session_name, "-x", "140", "-y", "32", f"env -i {env} {start}")
         time.sleep(0.5)
-        self.keys(f'eval "$({HOP} init {shell})"', "Enter")
+        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
         self.keys(*open_keys)
         self.wait_for("Claude sessions")
         self.keys("Down", "Enter")
@@ -253,23 +253,29 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Resuming")
         self.assertIn("\n/tmp", self.screen())
 
-    def test_typing_hop_in_zsh_resumes_the_chosen_session_in_that_shell(self):
-        self.resume_through_shell("zsh", ["hop", "Enter"])
+    def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["superfind", "Enter"])
+
+    def test_typing_sfd_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd", "Enter"])
 
     def test_ctrl_x_c_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["C-x", "c"])
 
-    def test_typing_hop_in_bash_resumes_the_chosen_session_in_that_shell(self):
-        self.resume_through_shell("bash", ["hop", "Enter"])
+    def test_typing_superfind_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["superfind", "Enter"])
+
+    def test_typing_sfd_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["sfd", "Enter"])
 
     def test_ctrl_x_c_in_bash_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("bash", ["C-x", "c"])
 
     def test_the_list_appears_while_indexing_and_the_selection_survives_the_refresh(self):
         self.three_sessions()
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         self.session("newest", "Search ranking tweaks", user("tune the ranking"), tool("Edit"), claude("Tuned."))
-        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False)
         self.keys("Down")
@@ -312,8 +318,8 @@ class PickerBehavior(unittest.TestCase):
             self.clock += 3600
             os.utime(path, (self.clock, self.clock))
         self.env.update(CODEX_HOME=str(shared), GROK_HOME=str(shared))
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
-        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False, header="─ Sessions ")
@@ -326,14 +332,14 @@ class PickerBehavior(unittest.TestCase):
         flat = self.home / ".codex" / "sessions" / "rollout-2025-04-01-0199.json"
         flat.parent.mkdir(parents=True)
         flat.write_text("{}")
-        (self.home / ".cache" / "hop").mkdir(parents=True)
-        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        (self.home / ".cache" / "superfind").mkdir(parents=True)
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False)
         self.assertNotIn("─ Sessions ", self.screen())
 
-    def test_deep_search_in_the_picker_keeps_the_agent_filter(self):
+    def test_ask_in_the_picker_keeps_the_agent_filter(self):
         received = []
 
         class Recorder(http.server.BaseHTTPRequestHandler):
@@ -366,31 +372,31 @@ class PickerBehavior(unittest.TestCase):
 
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()
-        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
-        index = self.home / ".cache" / "hop" / "index.json"
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        index = self.home / ".cache" / "superfind" / "index.json"
         cache = json.loads(index.read_text())
         entry = next(iter(cache["files"].values()))
         cache["files"]["/nowhere/stray.jsonl"] = {**entry, "session": {**entry["session"], "title": "Stray session"}}
         index.write_text(json.dumps(cache))
-        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
         self.addCleanup(lock.close)
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False)
         self.wait_for("3/3")
         self.assertNotIn("Stray session", self.screen())
 
-    def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
+    def test_ctrl_r_asks_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "C-r")
-        self.wait_for("Deep search failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
         self.assertFalse(Path(f"{self.out}.code").exists())
 
-    def test_alt_enter_also_searches_deeper_in_terminals_that_send_it(self):
+    def test_alt_enter_also_asks_in_terminals_that_send_it(self):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "M-Enter")
-        self.wait_for("Deep search failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
 
 
     def test_explanation_passages_are_packed_by_characters_and_never_cut_short(self):
@@ -438,9 +444,8 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual(list(received[0]), [f"p{i}" for i in range(len(received[0]) - 1)] + ["none"])
 
 
-class PickerColors(unittest.TestCase):
-    COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
-    TINT = b"48;2;41;52;64"
+class PtyPicker(unittest.TestCase):
+    EXTRA_ENV = {}
 
     def setUp(self):
         home = Path(tempfile.mkdtemp()).resolve()
@@ -450,12 +455,12 @@ class PickerColors(unittest.TestCase):
         (projects / "a1.jsonl").write_text(user("migrate the ledger") + "\n" + tool("Bash") + "\n" +
                                           claude("Migrated.") + "\n" + line(type="ai-title", aiTitle="Ledger") + "\n")
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
-               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": ""}
-        subprocess.run([str(HOP), "index"], env=env, capture_output=True, check=True)
+               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", **self.EXTRA_ENV}
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
         pid, self.terminal = pty.fork()
         if pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-            os.execve(str(HOP), [str(HOP), "pick"], env)
+            os.execve(str(SUPERFIND), [str(SUPERFIND), "pick"], env)
         self.addCleanup(self.stop, pid, self.terminal)
 
     def stop(self, pid, terminal):
@@ -475,6 +480,11 @@ class PickerColors(unittest.TestCase):
                     break
         return seen
 
+
+class PickerColors(PtyPicker):
+    COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
+    TINT = b"48;2;41;52;64"
+
     def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
         before = self.read(until=b"\x1b[7m")
         self.assertIn(b"\x1b]11;?", before)
@@ -489,6 +499,17 @@ class PickerColors(unittest.TestCase):
         first = self.read(until=b"Migrated.")
         self.assertIn(b"Ledger", first)
         self.assertIn(self.TINT, first)
+
+
+class PickerWithoutColor(PtyPicker):
+    EXTRA_ENV = {"NO_COLOR": "1"}
+
+    def test_no_color_shows_the_selection_in_reverse_video_and_sends_no_colors(self):
+        first = self.read(until=b"Migrated.")
+        self.assertIn(b"Ledger", first)
+        self.assertIn(b"\x1b[7m", first)
+        self.assertNotIn(b"\x1b]11;?", first)
+        self.assertEqual(colors_in(first), [])
 
 if __name__ == "__main__":
     unittest.main()

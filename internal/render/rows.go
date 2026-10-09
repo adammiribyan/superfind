@@ -8,16 +8,25 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/session"
 )
 
 const (
-	Accent = "\033[34m"
-	Dim    = "\033[2m"
-	Bold   = "\033[1m"
-	Reset  = "\033[0m"
+	Dim   = "\033[2m"
+	Bold  = "\033[1m"
+	Reset = "\033[0m"
 )
+
+var NoColor = os.Getenv("NO_COLOR") != ""
+
+var Accent = "\033[34m"
+
+func init() {
+	if NoColor {
+		Accent = Bold
+	}
+}
 
 type Tags struct {
 	agents bool
@@ -111,8 +120,8 @@ func metaParts(r session.Row, shown Tags) []string {
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 func SecondaryFromEnv() string {
-	hx := os.Getenv("HOP_SECONDARY")
-	if !hexColor.MatchString(hx) {
+	hx := os.Getenv("SUPERFIND_SECONDARY")
+	if NoColor || !hexColor.MatchString(hx) {
 		return Dim
 	}
 	r, _ := strconv.ParseUint(hx[1:3], 16, 8)

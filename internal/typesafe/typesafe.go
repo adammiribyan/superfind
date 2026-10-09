@@ -27,7 +27,7 @@ func Key() string {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	places = append(places, filepath.Join(home, ".config", "hop", "env"))
+	places = append(places, filepath.Join(home, ".config", "superfind", "env"))
 	for _, p := range places {
 		if raw, err := os.ReadFile(p); err == nil {
 			if m := envKey.FindSubmatch(raw); m != nil {

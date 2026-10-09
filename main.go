@@ -12,53 +12,56 @@ import (
 
 	"github.com/charmbracelet/x/term"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/ask"
-	"github.com/adammiribyan/hop/internal/render"
-	"github.com/adammiribyan/hop/internal/session"
-	"github.com/adammiribyan/hop/internal/tui"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/session"
+	"github.com/adammiribyan/superfind/internal/tui"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 const version = "0.9.0"
 
-const usage = `hop: find a past AI coding session and hop back into it. It reads Claude Code, Codex, and Grok sessions.
+const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
-  hop                     open the picker (after shell setup; see hop init)
-  hop init zsh|bash       print the shell setup; add  eval "$(hop init zsh)"  to ~/.zshrc
-                          or  eval "$(hop init bash)"  to ~/.bashrc
-  hop pick                open the picker; prints the chosen session's title, then the command
+  superfind               open the picker (after shell setup; see superfind init); sfd is short for it
+  superfind init zsh|bash print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc
+                          or  eval "$(superfind init bash)"  to ~/.bashrc
+  superfind pick          open the picker; prints the chosen session's title, then the command
                           that resumes it
-  hop search WORDS        print sessions whose title or conversation contains every word;
+  superfind search WORDS  print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent
-  hop search --deep WORDS
-                          print the sessions that best fit what you describe, even in other words
-  hop preview SESSION [--width N] [--recent] [--query Q]
+  superfind ask WORDS     print the sessions that best fit what you describe, even in other words;
+                          takes the same is: and agent: filters
+  superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
-  hop command SESSION     print the shell command that resumes a session
-  hop index               build or refresh the index
-  hop label               mark sessions waiting on you (needs a TypeSafe key)
-  hop --version
+  superfind command SESSION
+                          print the shell command that resumes a session
+  superfind index         build or refresh the index
+  superfind label         mark sessions waiting on you (needs a TypeSafe key)
+  superfind --version
 `
 
-const zshSetup = `typeset -g _hop_bin=%s
+const zshSetup = `typeset -g _superfind_bin=%s
 
-hop() {
+superfind() {
   if (( $# )); then
-    "$_hop_bin" "$@"
+    "$_superfind_bin" "$@"
     return
   fi
   local out
-  out=$("$_hop_bin" pick) || return
+  out=$("$_superfind_bin" pick) || return
   print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
   print -s -- "${out#*$'\n'}"
   eval "${out#*$'\n'}"
 }
 
-_hop_widget() {
+sfd() { superfind "$@"; }
+
+_superfind_widget() {
   local out
-  if out=$("$_hop_bin" pick); then
+  if out=$("$_superfind_bin" pick); then
     zle -I
     print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -67,33 +70,35 @@ _hop_widget() {
     zle reset-prompt
   fi
 }
-zle -N _hop_widget
-bindkey '^Xc' _hop_widget
+zle -N _superfind_widget
+bindkey '^Xc' _superfind_widget
 `
 
-const bashSetup = `_hop_bin=%s
+const bashSetup = `_superfind_bin=%s
 
-_hop_resume() {
+_superfind_resume() {
   printf 'Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
   history -s "${1#*$'\n'}"
   eval "${1#*$'\n'}"
 }
 
-hop() {
+superfind() {
   if (( $# )); then
-    "$_hop_bin" "$@"
+    "$_superfind_bin" "$@"
     return
   fi
   local out
-  out=$("$_hop_bin" pick) || return
-  _hop_resume "$out"
+  out=$("$_superfind_bin" pick) || return
+  _superfind_resume "$out"
 }
 
-_hop_widget() {
+sfd() { superfind "$@"; }
+
+_superfind_widget() {
   local out
-  out=$("$_hop_bin" pick) && _hop_resume "$out"
+  out=$("$_superfind_bin" pick) && _superfind_resume "$out"
 }
-[[ $- == *i* ]] && bind -x '"\C-xc": _hop_widget'
+[[ $- == *i* ]] && bind -x '"\C-xc": _superfind_widget'
 `
 
 var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
@@ -133,7 +138,7 @@ func selfPath() string {
 func mustOpenSearch() *sql.DB {
 	db, err := session.OpenSearch()
 	if err != nil {
-		fail("hop: can't open the search index in " + session.CacheDir() + ": " + err.Error())
+		fail("superfind: can't open the search index in " + session.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
@@ -150,7 +155,7 @@ func mustIndex(command string) []session.Row {
 		fmt.Fprint(os.Stderr, "\r\033[K")
 	}
 	if err != nil {
-		fail("hop " + command + ": " + err.Error())
+		fail("superfind " + command + ": " + err.Error())
 	}
 	return rows
 }
@@ -163,7 +168,7 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 		for i, a := range agent.Agents {
 			labels[i] = a.Label
 		}
-		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
+		fail("superfind " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
 	rows = session.Annotate(mustIndex(command))
@@ -181,7 +186,7 @@ func fail(message string) {
 }
 
 func main() {
-	typesafe.UserAgent = "hop/" + version
+	typesafe.UserAgent = "superfind/" + version
 	args := os.Args[1:]
 	if len(args) == 0 {
 		fmt.Print(usage)
@@ -189,40 +194,30 @@ func main() {
 	}
 	switch args[0] {
 	case "--version", "version":
-		fmt.Println("hop " + version)
+		fmt.Println("superfind " + version)
 	case "init":
 		setup, ok := "", len(args) > 1
 		if ok {
 			setup, ok = shellSetups[args[1]]
 		}
 		if !ok {
-			fail("hop init: which shell? hop init zsh or hop init bash")
+			fail("superfind init: which shell? superfind init zsh or superfind init bash")
 		}
 		fmt.Printf(setup, agent.ShellQuote(selfPath()))
 	case "index":
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
 		rows := session.Annotate(mustIndex("search"))
+		found, err := session.Search(mustOpenSearch(), strings.Join(args[1:], " "), rows)
+		if err != nil {
+			fail("superfind search: " + err.Error())
+		}
+		printRows(found, render.TagsFor(rows))
+	case "ask":
+		rows := session.Annotate(mustIndex("ask"))
 		shown := render.TagsFor(rows)
 		db := mustOpenSearch()
-		deep, words := false, []string{}
-		for _, arg := range args[1:] {
-			if arg == "--deep" {
-				deep = true
-			} else {
-				words = append(words, arg)
-			}
-		}
-		query := strings.Join(words, " ")
-		if !deep {
-			found, err := session.Search(db, query, rows)
-			if err != nil {
-				fail("hop search: " + err.Error())
-			}
-			printRows(found, shown)
-			return
-		}
-		query, eligible := session.Narrow(query, rows)
+		query, eligible := session.Narrow(strings.Join(args[1:], " "), rows)
 		if query == "" {
 			printRows(session.RecentFirst(eligible), shown)
 			return
@@ -236,14 +231,14 @@ func main() {
 	case "label":
 		key := typesafe.Key()
 		if key == "" {
-			fail("hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env")
+			fail("superfind label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/superfind/env")
 		}
 		if err := session.Label(key, mustIndex("label")); err != nil {
-			fail("hop label: " + err.Error())
+			fail("superfind label: " + err.Error())
 		}
 	case "preview":
 		if len(args) < 2 {
-			fail("hop preview: which session?")
+			fail("superfind preview: which session?")
 		}
 		req := render.PreviewRequest{Width: 80, Secondary: render.SecondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
@@ -277,11 +272,11 @@ func main() {
 		}
 	case "command":
 		if len(args) < 2 {
-			fail("hop command: which session?")
+			fail("superfind command: which session?")
 		}
 		r, indexed, _ := sessionAt("command", args[1])
 		if !indexed {
-			fail("hop command: not an indexed session: " + args[1])
+			fail("superfind command: not an indexed session: " + args[1])
 		}
 		fmt.Println(agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":

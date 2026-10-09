@@ -22,13 +22,13 @@ type Agent struct {
 }
 
 var Agents = []*Agent{
-	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "HOP_CLAUDE_DIRS",
+	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "SUPERFIND_CLAUDE_DIRS",
 		glob: "projects/*/*.jsonl", resume: "claude --resume", IDOf: stem,
 		reader: func(string) (reader, error) { return newParser(), nil }},
-	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "HOP_CODEX_DIRS",
+	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
 		reader: newCodexReader},
-	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "HOP_GROK_DIRS",
+	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "SUPERFIND_GROK_DIRS",
 		glob: "sessions/*/*/chat_history.jsonl", sidecar: "summary.json", resume: "grok --resume", IDOf: grokID,
 		reader: newGrokReader},
 }

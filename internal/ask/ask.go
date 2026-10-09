@@ -16,9 +16,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/adammiribyan/hop/internal/render"
-	"github.com/adammiribyan/hop/internal/session"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/session"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 const (
@@ -219,7 +219,7 @@ func runClaude(args []string, input string) ([]byte, error) {
 
 type Failure struct{ reason string }
 
-func (a Failure) Error() string { return "Deep search failed: " + a.reason + "." }
+func (a Failure) Error() string { return "Ask failed: " + a.reason + "." }
 
 func Ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
 	kept, cards, err := askCards(db, query, rows)
