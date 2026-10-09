@@ -14,32 +14,34 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/adammiribyan/hop/internal/agent"
+
 	_ "modernc.org/sqlite"
 )
 
 func parse(f found) (*Session, string, error) {
-	t, err := readTranscript(f.agent, f.path)
+	t, err := agent.ReadTranscript(f.Agent, f.path)
 	if err != nil {
 		return nil, "", err
 	}
 	firstPrompt, latestPrompt := "", ""
-	if len(t.prompts) > 0 {
-		firstPrompt, latestPrompt = t.prompts[0], t.prompts[len(t.prompts)-1]
+	if len(t.Prompts) > 0 {
+		firstPrompt, latestPrompt = t.Prompts[0], t.Prompts[len(t.Prompts)-1]
 	}
-	if t.hidden || t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
+	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
 		return nil, "", nil
 	}
-	body := strings.Join(t.messages, "\n")
+	body := strings.Join(t.Messages, "\n")
 	return &Session{
-		ID: f.agent.idOf(f.path), Cwd: t.cwd,
-		Title:      cmp.Or(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
-		LastPrompt: cmp.Or(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.mtime,
+		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
+		Title:      cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt),
+		LastPrompt: cmp.Or(t.LastPrompt, latestPrompt), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
+		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime,
 	}, body, nil
 }
 
 type cacheEntry struct {
-	fileID
+	agent.FileID
 	Name    string   `json:"name,omitempty"`
 	Session *Session `json:"session"`
 }
@@ -104,11 +106,11 @@ func saveCache(files map[string]cacheEntry) error {
 }
 
 func cachedRows() []Row {
-	in := places()
+	in := agent.Places()
 	var rows []Row
 	for path, e := range loadCache() {
-		if p, ok := locate(path, in); ok && e.Session != nil {
-			rows = append(rows, Row{Session: *e.Session, Agent: p.agent, Home: p.home, Path: path})
+		if p, ok := agent.Locate(path, in); ok && e.Session != nil {
+			rows = append(rows, Row{Session: *e.Session, Agent: p.Agent, Home: p.Home, Path: path})
 		}
 	}
 	return rows
@@ -136,9 +138,9 @@ func openSearch() (*sql.DB, error) {
 }
 
 type found struct {
-	place
+	agent.Place
 	path  string
-	id    fileID
+	id    agent.FileID
 	mtime float64
 	name  string
 }
@@ -159,21 +161,21 @@ func index(announce func(stale int)) ([]Row, error) {
 		old = map[string]cacheEntry{}
 	}
 	var all []found
-	for _, p := range places() {
+	for _, p := range agent.Places() {
 		var names map[string]string
-		if p.agent.names != nil {
-			names = p.agent.names(p.home)
+		if p.Agent.Names != nil {
+			names = p.Agent.Names(p.Home)
 		}
-		for _, path := range p.agent.sessions(p.home) {
-			if id, mtime, err := p.agent.stat(path); err == nil {
-				all = append(all, found{p, path, id, mtime, names[p.agent.idOf(path)]})
+		for _, path := range p.Agent.Sessions(p.Home) {
+			if id, mtime, err := p.Agent.Stat(path); err == nil {
+				all = append(all, found{p, path, id, mtime, names[p.Agent.IDOf(path)]})
 			}
 		}
 	}
 	var stale []found
 	for _, f := range all {
 		e, known := old[f.path]
-		if !known || e.fileID != f.id || e.Name != f.name {
+		if !known || e.FileID != f.id || e.Name != f.name {
 			stale = append(stale, f)
 		}
 	}
@@ -217,7 +219,7 @@ func index(announce func(stale int)) ([]Row, error) {
 		}
 		fresh[f.path] = entry
 		if s := entry.Session; s != nil {
-			rows = append(rows, Row{Session: *s, Agent: f.agent, Home: f.home, Path: f.path})
+			rows = append(rows, Row{Session: *s, Agent: f.Agent, Home: f.Home, Path: f.path})
 		}
 	}
 	var gone []string

@@ -1,4 +1,4 @@
-package main
+package agent
 
 import (
 	"bufio"
@@ -8,33 +8,33 @@ import (
 	"os"
 )
 
-type event string
+type Event string
 
 const (
-	replied     event = "assistant_text"
-	calledTool  event = "tool_call"
-	interrupted event = "interrupted"
-	prompted    event = "user_prompt"
+	Replied     Event = "assistant_text"
+	CalledTool  Event = "tool_call"
+	Interrupted Event = "interrupted"
+	Prompted    Event = "user_prompt"
 )
 
-type turn struct {
-	role string
-	text string
+type Turn struct {
+	Role string
+	Text string
 }
 
-type transcript struct {
-	cwd, branch                      string
-	customTitle, aiTitle, lastPrompt string
-	prompts, messages                []string
-	turns                            []turn
-	toolCalls                        int
-	last                             event
-	hidden                           bool
+type Transcript struct {
+	Cwd, Branch                      string
+	CustomTitle, AITitle, LastPrompt string
+	Prompts, Messages                []string
+	Turns                            []Turn
+	ToolCalls                        int
+	Last                             Event
+	Hidden                           bool
 }
 
 type reader interface {
 	feed(raw []byte) bool
-	done() transcript
+	done() Transcript
 }
 
 func eachLine(path string, fn func(raw []byte) bool) error {
@@ -58,19 +58,19 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 	}
 }
 
-func (t *transcript) say(role, text string) {
-	if n := len(t.turns); n > 0 && t.turns[n-1].role == role {
-		t.turns[n-1].text += "\n\n" + text
+func (t *Transcript) say(role, text string) {
+	if n := len(t.Turns); n > 0 && t.Turns[n-1].Role == role {
+		t.Turns[n-1].Text += "\n\n" + text
 	} else {
-		t.turns = append(t.turns, turn{role, text})
+		t.Turns = append(t.Turns, Turn{role, text})
 	}
-	t.messages = append(t.messages, text)
+	t.Messages = append(t.Messages, text)
 }
 
-func readTranscript(a *agent, path string) (transcript, error) {
+func ReadTranscript(a *Agent, path string) (Transcript, error) {
 	r, err := a.reader(path)
 	if err != nil {
-		return transcript{}, err
+		return Transcript{}, err
 	}
 	err = eachLine(path, r.feed)
 	return r.done(), err
@@ -78,7 +78,7 @@ func readTranscript(a *agent, path string) (transcript, error) {
 
 const firstEndingWindow = 1 << 20
 
-func readEnding(a *agent, path string, enough func([]turn) bool) ([]turn, error) {
+func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -110,7 +110,7 @@ func readEnding(a *agent, path string, enough func([]turn) bool) ([]turn, error)
 			r.feed(buf[:end])
 			buf = buf[end:]
 		}
-		turns := r.done().turns
+		turns := r.done().Turns
 		if start > 0 && len(turns) > 0 {
 			turns = turns[1:]
 		}

@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/adammiribyan/hop/internal/agent"
+
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -249,11 +251,11 @@ func render(text string, width int) []string {
 	return lines
 }
 
-func speaker(role string, a *agent) string {
+func speaker(role string, a *agent.Agent) string {
 	if role == "user" {
 		return ansiAccent + ansiBold + "you" + ansiReset
 	}
-	return ansiBold + a.id + ansiReset
+	return ansiBold + a.ID + ansiReset
 }
 
 func excerpt(lines []string, keep int, fromEnd bool, note, secondary string) []string {
@@ -268,7 +270,7 @@ func excerpt(lines []string, keep int, fromEnd bool, note, secondary string) []s
 }
 
 type previewRequest struct {
-	agent     *agent
+	agent     *agent.Agent
 	path      string
 	width     int
 	recent    bool
@@ -281,7 +283,7 @@ func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
 	width := req.width - 2
 	s := r.Session
 	where := tilde(s.Cwd)
-	if survivor := survivingDir(s.Cwd); survivor != s.Cwd {
+	if survivor := agent.SurvivingDir(s.Cwd); survivor != s.Cwd {
 		where = "folder removed · resumes from " + tilde(survivor)
 	}
 	found := oneLine(plainPassage(req.explained), width)
@@ -302,30 +304,30 @@ func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
 
 const recentTurns = 8
 
-func substantialAsk(t turn) bool { return t.role == "user" && len(strings.Fields(t.text)) > 3 }
+func substantialAsk(t agent.Turn) bool { return t.Role == "user" && len(strings.Fields(t.Text)) > 3 }
 
 func previewBody(req previewRequest) ([]string, error) {
 	width := req.width - 2
-	enough := func(turns []turn) bool { return slices.ContainsFunc(turns, substantialAsk) }
+	enough := func(turns []agent.Turn) bool { return slices.ContainsFunc(turns, substantialAsk) }
 	if req.recent {
-		enough = func(turns []turn) bool { return len(turns) >= recentTurns }
+		enough = func(turns []agent.Turn) bool { return len(turns) >= recentTurns }
 	}
-	turns, err := readEnding(req.agent, req.path, enough)
+	turns, err := agent.ReadEnding(req.agent, req.path, enough)
 	if err != nil {
 		return []string{req.secondary + clipText("  Couldn't read this session: "+err.Error(), width) + ansiReset}, err
 	}
 	var body []string
 	if req.recent {
 		for _, t := range turns[max(len(turns)-recentTurns, 0):] {
-			body = append(body, speaker(t.role, req.agent))
-			body = append(body, render(t.text, width)...)
+			body = append(body, speaker(t.Role, req.agent))
+			body = append(body, render(t.Text, width)...)
 			body = append(body, "")
 		}
 		return body, nil
 	}
 	lastAny, lastSubstantial := -1, -1
 	for i, t := range turns {
-		if t.role == "user" {
+		if t.Role == "user" {
 			lastAny = i
 		}
 		if substantialAsk(t) {
@@ -338,21 +340,21 @@ func previewBody(req previewRequest) ([]string, error) {
 	}
 	if lastAsk >= 0 {
 		body = append(body, speaker("user", req.agent))
-		body = append(body, excerpt(render(turns[lastAsk].text, width), 10, false, "rest of your message", req.secondary)...)
+		body = append(body, excerpt(render(turns[lastAsk].Text, width), 10, false, "rest of your message", req.secondary)...)
 	}
 	reply := ""
 	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].role == "assistant" {
-			reply = turns[i].text
+		if turns[i].Role == "assistant" {
+			reply = turns[i].Text
 			break
 		}
 	}
 	switch {
-	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].role == "assistant"):
+	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].Role == "assistant"):
 		body = append(body, "", speaker("assistant", req.agent))
 		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.secondary)...)
 	case lastAsk >= 0:
-		body = append(body, "", req.secondary+"  No reply yet. "+req.agent.label+" stopped before answering."+ansiReset)
+		body = append(body, "", req.secondary+"  No reply yet. "+req.agent.Label+" stopped before answering."+ansiReset)
 	}
 	return body, nil
 }

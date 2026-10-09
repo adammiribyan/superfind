@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/adammiribyan/hop/internal/agent"
 )
 
 const (
@@ -55,7 +57,7 @@ func (s Session) Active() bool { return now()-s.Mtime < activeSeconds }
 
 type Row struct {
 	Session    Session
-	Agent      *agent
+	Agent      *agent.Agent
 	Home       string
 	Path       string
 	Status     string
@@ -75,38 +77,14 @@ func annotate(rows []Row) []Row {
 
 func now() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
-func home() string {
-	h, _ := os.UserHomeDir()
-	return h
-}
-
 func cacheDir() string {
 	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
 		return filepath.Join(x, "hop")
 	}
-	return filepath.Join(home(), ".cache", "hop")
+	return filepath.Join(agent.Home(), ".cache", "hop")
 }
 
 func cachePath(name string) string { return filepath.Join(cacheDir(), name) }
-
-func resolve(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		path = filepath.Join(home(), path[2:])
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return path
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return real
-	}
-	return abs
-}
-
-type fileID struct {
-	ModNanos int64 `json:"mtime_ns"`
-	Size     int64 `json:"size"`
-}
 
 func oneLine(text string, width int) string {
 	text = strings.Join(strings.Fields(text), " ")
@@ -118,7 +96,7 @@ func oneLine(text string, width int) string {
 }
 
 func tilde(path string) string {
-	h := home()
+	h := agent.Home()
 	if path == h || strings.HasPrefix(path, h+"/") {
 		return "~" + path[len(h):]
 	}
@@ -183,19 +161,6 @@ func inOrder(rows []Row, paths []string) []Row {
 		}
 	}
 	return out
-}
-
-func survivingDir(dir string) string {
-	for {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return dir
-		}
-		dir = parent
-	}
 }
 
 func folderExists(dir string) bool {

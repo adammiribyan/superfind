@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/typesafe"
+
 	"github.com/charmbracelet/x/term"
 )
 
@@ -123,7 +126,7 @@ func printRows(rows []Row, shown tags) {
 
 func narrow(query string, rows []Row) (string, []Row) {
 	var words, statuses []string
-	var from []*agent
+	var from []*agent.Agent
 	for _, w := range strings.Fields(query) {
 		switch {
 		case strings.HasPrefix(w, "is:"):
@@ -131,7 +134,7 @@ func narrow(query string, rows []Row) (string, []Row) {
 				statuses = append(statuses, label)
 			}
 		case strings.HasPrefix(w, "agent:"):
-			if a := agentNamed(strings.ToLower(w[6:])); a != nil {
+			if a := agent.Named(strings.ToLower(w[6:])); a != nil {
 				from = append(from, a)
 			}
 		default:
@@ -163,15 +166,6 @@ func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		return recentFirst(rows), nil
 	}
 	return inOrder(rows, found), nil
-}
-
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
-
-func shellQuote(s string) string {
-	if s != "" && shellSafe.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 func handoffTitle(r Row) string {
@@ -223,12 +217,12 @@ func mustIndex(command string) []Row {
 }
 
 func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
-	path := filepath.Join(resolve(filepath.Dir(arg)), filepath.Base(arg))
-	p, ok := locate(path, places())
+	path := filepath.Join(agent.Resolve(filepath.Dir(arg)), filepath.Base(arg))
+	p, ok := agent.Locate(path, agent.Places())
 	if !ok {
-		labels := make([]string, len(agents))
-		for i, a := range agents {
-			labels[i] = a.label
+		labels := make([]string, len(agent.Agents))
+		for i, a := range agent.Agents {
+			labels[i] = a.Label
 		}
 		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
@@ -239,7 +233,7 @@ func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
 			return r, true, rows
 		}
 	}
-	return Row{Agent: p.agent, Home: p.home, Path: path}, false, rows
+	return Row{Agent: p.Agent, Home: p.Home, Path: path}, false, rows
 }
 
 func fail(message string) {
@@ -248,6 +242,7 @@ func fail(message string) {
 }
 
 func main() {
+	typesafe.UserAgent = "hop/" + version
 	args := os.Args[1:]
 	if len(args) == 0 {
 		fmt.Print(usage)
@@ -264,7 +259,7 @@ func main() {
 		if !ok {
 			fail("hop init: which shell? hop init zsh or hop init bash")
 		}
-		fmt.Printf(setup, shellQuote(selfPath()))
+		fmt.Printf(setup, agent.ShellQuote(selfPath()))
 	case "index":
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
@@ -300,7 +295,7 @@ func main() {
 		}
 		printRows(inOrder(rows, paths), shown)
 	case "label":
-		key := typesafeKey()
+		key := typesafe.Key()
 		if key == "" {
 			fail("hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env")
 		}
@@ -349,7 +344,7 @@ func main() {
 		if !indexed {
 			fail("hop command: not an indexed session: " + args[1])
 		}
-		fmt.Println(resumeCommand(r))
+		fmt.Println(agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":
 		chosen, err := pick()
 		if err != nil {
@@ -359,7 +354,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(handoffTitle(*chosen))
-		fmt.Println(resumeCommand(*chosen))
+		fmt.Println(agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

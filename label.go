@@ -9,6 +9,9 @@ import (
 	"os"
 	"sync"
 	"syscall"
+
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
 type statusKind struct {
@@ -45,11 +48,11 @@ func statusLabelFor(name string) string {
 
 const waitingLabel = "waiting on you"
 
-var lastEvents = map[event]string{
-	replied:     "{agent}'s last action was writing a reply to the developer.",
-	calledTool:  "{agent}'s last action was starting a tool (a command, edit, or search) whose result never arrived.",
-	prompted:    "The developer's last action was sending a request that {agent} never answered.",
-	interrupted: "The developer interrupted {agent} while it was working.",
+var lastEvents = map[agent.Event]string{
+	agent.Replied:     "{agent}'s last action was writing a reply to the developer.",
+	agent.CalledTool:  "{agent}'s last action was starting a tool (a command, edit, or search) whose result never arrived.",
+	agent.Prompted:    "The developer's last action was sending a request that {agent} never answered.",
+	agent.Interrupted: "The developer interrupted {agent} while it was working.",
 }
 
 type endingTurn struct {
@@ -62,35 +65,35 @@ type sessionEnding struct {
 	RecentTurns []endingTurn `json:"recent_turns"`
 }
 
-func ending(a *agent, path string) (sessionEnding, error) {
-	t, err := readTranscript(a, path)
+func ending(a *agent.Agent, path string) (sessionEnding, error) {
+	t, err := agent.ReadTranscript(a, path)
 	if err != nil {
 		return sessionEnding{}, err
 	}
 	var recent []endingTurn
-	for _, said := range t.turns[max(len(t.turns)-6, 0):] {
-		who := a.id
-		if said.role == "user" {
+	for _, said := range t.Turns[max(len(t.Turns)-6, 0):] {
+		who := a.ID
+		if said.Role == "user" {
 			who = "developer"
 		}
-		r := []rune(said.text)
+		r := []rune(said.Text)
 		recent = append(recent, endingTurn{who, string(r[max(len(r)-700, 0):])})
 	}
-	return sessionEnding{a.phrase(lastEvents[t.last]), recent}, nil
+	return sessionEnding{a.Phrase(lastEvents[t.Last]), recent}, nil
 }
 
 func judgeStatus(key string, r Row) (string, float64, error) {
 	criteria := map[string]string{}
 	for _, k := range statusKinds {
-		criteria[k.name] = r.Agent.phrase(k.description)
+		criteria[k.name] = r.Agent.Phrase(k.description)
 	}
 	end, err := ending(r.Agent, r.Path)
 	if err != nil {
 		return "", 0, err
 	}
-	answers, err := jev(key, end, map[string]any{"status": map[string]any{
+	answers, err := typesafe.Jev(key, end, map[string]any{"status": map[string]any{
 		"type": "choice",
-		"instructions": r.Agent.phrase("This is the end of a coding session between a developer and {agent}. " +
+		"instructions": r.Agent.Phrase("This is the end of a coding session between a developer and {agent}. " +
 			"In what state did the session end?"),
 		"criteria": criteria,
 	}})
@@ -106,7 +109,7 @@ func judgeStatus(key string, r Row) (string, float64, error) {
 }
 
 type statusEntry struct {
-	fileID
+	agent.FileID
 	Status string  `json:"status"`
 	P      float64 `json:"p"`
 }
@@ -124,12 +127,12 @@ func statusLabel(r Row, known map[string]statusEntry) string {
 	if !ok || e.P < statusShownAt {
 		return ""
 	}
-	id, mtime, err := r.Agent.stat(r.Path)
+	id, mtime, err := r.Agent.Stat(r.Path)
 	if err != nil {
 		return ""
 	}
 	age := now() - mtime
-	if e.fileID != id || age < activeSeconds || age >= labelDays*86400 {
+	if e.FileID != id || age < activeSeconds || age >= labelDays*86400 {
 		return ""
 	}
 	return statusLabelFor(e.Status)
@@ -154,17 +157,17 @@ func labelSessions(key string, rows []Row) error {
 	}
 	type job struct {
 		row Row
-		id  fileID
+		id  agent.FileID
 	}
 	var todo []job
 	for _, r := range rows {
-		id, mtime, err := r.Agent.stat(r.Path)
+		id, mtime, err := r.Agent.Stat(r.Path)
 		if err != nil {
 			continue
 		}
 		e, ok := known[r.Path]
 		recent := now()-mtime < labelDays*86400
-		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.fileID == id) {
+		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.FileID == id) {
 			todo = append(todo, job{r, id})
 		}
 	}

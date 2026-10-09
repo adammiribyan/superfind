@@ -1,4 +1,4 @@
-package main
+package agent
 
 import (
 	"cmp"
@@ -77,11 +77,11 @@ func decodeContent(raw json.RawMessage) content {
 const interruptMark = "[Request interrupted"
 
 type parser struct {
-	t         transcript
+	t         Transcript
 	relocated string
 }
 
-func newParser() *parser { return &parser{t: transcript{last: replied}} }
+func newParser() *parser { return &parser{t: Transcript{Last: Replied}} }
 
 func (p *parser) feed(raw []byte) bool {
 	t := &p.t
@@ -89,10 +89,10 @@ func (p *parser) feed(raw []byte) bool {
 	if json.Unmarshal(raw, &l) != nil {
 		return true
 	}
-	if t.cwd == "" {
-		t.cwd = l.Cwd
+	if t.Cwd == "" {
+		t.Cwd = l.Cwd
 	}
-	t.branch = cmp.Or(l.GitBranch, t.branch)
+	t.Branch = cmp.Or(l.GitBranch, t.Branch)
 	switch l.Type {
 	case "user":
 		c := decodeContent(l.Message.Content)
@@ -104,39 +104,39 @@ func (p *parser) feed(raw []byte) bool {
 		prompt := promptText(text)
 		switch {
 		case wasInterrupted:
-			t.last = interrupted
+			t.Last = Interrupted
 		case c.hasResult:
-			t.last = calledTool
+			t.Last = CalledTool
 		case prompt != "" && !l.IsMeta:
-			t.last = prompted
-			t.prompts = append(t.prompts, prompt)
+			t.Last = Prompted
+			t.Prompts = append(t.Prompts, prompt)
 			t.say("user", prompt)
 		}
 	case "assistant":
 		c := decodeContent(l.Message.Content)
-		t.toolCalls += c.toolUses
-		t.last = replied
+		t.ToolCalls += c.toolUses
+		t.Last = Replied
 		if c.toolUses > 0 {
-			t.last = calledTool
+			t.Last = CalledTool
 		}
 		if text := strings.TrimSpace(c.text); text != "" && !l.IsMeta {
 			t.say("assistant", text)
 		}
 	case "custom-title":
-		t.customTitle = cmp.Or(l.CustomTitle, t.customTitle)
+		t.CustomTitle = cmp.Or(l.CustomTitle, t.CustomTitle)
 	case "ai-title":
-		t.aiTitle = cmp.Or(l.AITitle, t.aiTitle)
+		t.AITitle = cmp.Or(l.AITitle, t.AITitle)
 	case "last-prompt":
-		t.lastPrompt = cmp.Or(l.LastPrompt, t.lastPrompt)
+		t.LastPrompt = cmp.Or(l.LastPrompt, t.LastPrompt)
 	case "relocated":
 		p.relocated = cmp.Or(l.RelocatedCwd, p.relocated)
 	}
 	return true
 }
 
-func (p *parser) done() transcript {
+func (p *parser) done() Transcript {
 	if p.relocated != "" {
-		p.t.cwd = p.relocated
+		p.t.Cwd = p.relocated
 	}
 	return p.t
 }

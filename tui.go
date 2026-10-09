@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/typesafe"
+
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
@@ -97,7 +100,7 @@ type bodyKey struct {
 	path   string
 	width  int
 	recent bool
-	file   fileID
+	file   agent.FileID
 }
 
 type bodyLoaded struct {
@@ -170,7 +173,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: recentFirst(annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, places()),
+		all: recentFirst(annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, agent.Places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 	}
 	m.problem, m.dbProblem = problem, problem
@@ -304,7 +307,7 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 		explained: m.explained[r.Path], secondary: m.colors.mutedSeq}
 	m.header = previewHeader(req, *r, m.tags, m.db)
 	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent}
-	if id, _, err := r.Agent.stat(r.Path); err == nil {
+	if id, _, err := r.Agent.Stat(r.Path); err == nil {
 		key.file = id
 	}
 	m.showing = key
@@ -368,7 +371,7 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 }
 
 func spawnLabeler() {
-	if typesafeKey() == "" {
+	if typesafe.Key() == "" {
 		return
 	}
 	exe, err := os.Executable()
@@ -423,7 +426,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all, m.tags, m.label = recentFirst(annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, places())
+		m.all, m.tags, m.label = recentFirst(annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, agent.Places())
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
@@ -478,7 +481,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "Deep search found nothing for “" + msg.query + "”"
 		}
 		updated, load := m.loadPreview()
-		key, top := typesafeKey(), msg.paths[:min(explainTop, len(msg.paths))]
+		key, top := typesafe.Key(), msg.paths[:min(explainTop, len(msg.paths))]
 		if key == "" || len(top) == 0 {
 			return updated, load
 		}
