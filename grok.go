@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -51,10 +52,10 @@ func newGrokReader(path string) (reader, error) {
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, err
 	}
-	g.t.cwd = firstNonEmpty(s.Info.Cwd, folder)
+	g.t.cwd = cmp.Or(s.Info.Cwd, folder)
 	g.t.branch = s.HeadBranch
 	g.t.hidden = s.SessionKind == "subagent"
-	title := firstNonEmpty(s.SessionSummary, s.GeneratedTitle)
+	title := cmp.Or(s.SessionSummary, s.GeneratedTitle)
 	if s.TitleIsManual {
 		g.t.customTitle = title
 	} else {

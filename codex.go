@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -128,7 +129,7 @@ func (c *codexReader) feed(raw []byte) bool {
 		t.hidden = item.ParentThreadID != ""
 		return !t.hidden
 	case l.Type == "turn_context":
-		t.cwd = firstNonEmpty(item.Cwd, t.cwd)
+		t.cwd = cmp.Or(item.Cwd, t.cwd)
 	case l.Type == "event_msg":
 		if item.Type == "turn_aborted" {
 			t.last = interrupted

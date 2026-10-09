@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -31,19 +32,10 @@ func parse(f found) (*Session, string, error) {
 	body := strings.Join(t.messages, "\n")
 	return &Session{
 		ID: f.agent.idOf(f.path), Cwd: t.cwd,
-		Title:      firstNonEmpty(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
-		LastPrompt: firstNonEmpty(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
+		Title:      cmp.Or(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
+		LastPrompt: cmp.Or(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
 		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.mtime,
 	}, body, nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 type cacheEntry struct {

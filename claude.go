@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -91,7 +92,7 @@ func (p *parser) feed(raw []byte) bool {
 	if t.cwd == "" {
 		t.cwd = l.Cwd
 	}
-	t.branch = firstNonEmpty(l.GitBranch, t.branch)
+	t.branch = cmp.Or(l.GitBranch, t.branch)
 	switch l.Type {
 	case "user":
 		c := decodeContent(l.Message.Content)
@@ -122,13 +123,13 @@ func (p *parser) feed(raw []byte) bool {
 			t.say("assistant", text)
 		}
 	case "custom-title":
-		t.customTitle = firstNonEmpty(l.CustomTitle, t.customTitle)
+		t.customTitle = cmp.Or(l.CustomTitle, t.customTitle)
 	case "ai-title":
-		t.aiTitle = firstNonEmpty(l.AITitle, t.aiTitle)
+		t.aiTitle = cmp.Or(l.AITitle, t.aiTitle)
 	case "last-prompt":
-		t.lastPrompt = firstNonEmpty(l.LastPrompt, t.lastPrompt)
+		t.lastPrompt = cmp.Or(l.LastPrompt, t.lastPrompt)
 	case "relocated":
-		p.relocated = firstNonEmpty(l.RelocatedCwd, p.relocated)
+		p.relocated = cmp.Or(l.RelocatedCwd, p.relocated)
 	}
 	return true
 }
