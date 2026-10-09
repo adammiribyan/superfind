@@ -3,10 +3,14 @@
 
   hop pick       run the picker; prints the chosen session's title, then the
                  shell command that resumes it
+  hop index      build or refresh the index without opening the picker
   hop preview F  pinned header, then where the session left off, or the recent
                  conversation when fzf's preview label says so
   hop search Q   fzf lines for sessions whose title or conversation contains Q
-  hop ask Q      fzf lines for the sessions Claude judges most relevant to Q
+  hop ask Q      fzf lines for the sessions judged most relevant to Q (by Jev when a
+                 TypeSafe key is configured, otherwise by Claude)
+  hop explain Q P...
+                 save the passage of each transcript P that best shows Q
 """
 import json
 import shlex
@@ -19,6 +23,8 @@ import select
 import signal
 import termios
 import tty
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -26,8 +32,16 @@ from pathlib import Path
 
 HOME = Path.home()
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "hop" / "index.json"
-CACHE_VERSION = 7
+CACHE_VERSION = 10
+ACTIVE_SECONDS = 120
+THROWAWAY_WORDS = 150
+VERSION = "0.4.0"
 SEARCH_DB = CACHE.with_name("search.db")
+EXPLAINED = CACHE.with_name("explained.json")
+JEV_URL = "https://api.typesafe.ai/v1/systemone"
+JEV_CHUNK = 120
+JEV_SHORTLIST = 15
+EXPLAIN_TOP = 5
 
 ACCENT, DIM, BOLD, RESET = "\033[34m", "\033[2m", "\033[1m", "\033[0m"
 
@@ -42,12 +56,25 @@ class Session:
     last_prompt: str
     branch: str
     prompts: int
+    words: int
+    tool_calls: int
     mtime: float
 
     @property
     def project(self):
         root = self.cwd.split(WORKTREE_MARK)[0]
         return Path(root).name or root
+
+    @property
+    def throwaway(self):
+        """A "hi" or "test" session: sorted last and left out of ask, never hidden. Short sessions that ran
+        any tool did real work, so they count."""
+        return self.prompts <= 2 and self.words < THROWAWAY_WORDS and not self.tool_calls
+
+    @property
+    def active(self):
+        """Written in the last two minutes, so probably still open in another window."""
+        return time.time() - self.mtime < ACTIVE_SECONDS
 
 
 def config_dirs():
@@ -81,7 +108,7 @@ def prompt_text(text):
     command = SLASH_COMMAND.search(text)
     if command:
         return f"{command.group(1)} {command.group(2) or ''}".strip()
-    if text.startswith(("<", "Caveat:", "[Request interrupted")):
+    if text.startswith(("<", "Caveat:", "[Request interrupted", "Another Claude session sent a message", "[SYSTEM NOTIFICATION")):
         return ""
     return text
 
@@ -98,7 +125,7 @@ def message_text(entry):
 def parse(path, mtime):
     """(Session or None, the conversation's readable text: prompts and Claude's replies)."""
     cwd = relocated = custom = ai = last_prompt = first_prompt = branch = ""
-    prompts = 0
+    prompts = tool_calls = 0
     body = []
     with open(path, "rb") as f:
         for raw in f:
@@ -111,8 +138,10 @@ def parse(path, mtime):
                     prompts += 1
                     first_prompt = first_prompt or text
                     body.append(text)
-            elif b'"type":"assistant"' in raw and b'"type":"text"' in raw:
-                body.append(message_text(json.loads(raw)))
+            elif b'"type":"assistant"' in raw:
+                tool_calls += raw.count(b'"type":"tool_use"')
+                if b'"type":"text"' in raw:
+                    body.append(message_text(json.loads(raw)))
             elif not cwd and b'"cwd":"' in raw:
                 cwd = json.loads(raw).get("cwd") or ""
             elif b'"type":"custom-title"' in raw:
@@ -127,7 +156,8 @@ def parse(path, mtime):
     if not cwd or not (first_prompt or last_prompt):
         return None, ""
     title = custom or ai or first_prompt or last_prompt
-    return Session(path.stem, cwd, title, last_prompt or first_prompt, branch, max(prompts, 1), mtime), "\n".join(body)
+    text = "\n".join(body)
+    return Session(path.stem, cwd, title, last_prompt or first_prompt, branch, max(prompts, 1), len(text.split()), tool_calls, mtime), text
 
 
 def one_line(text, width):
@@ -241,9 +271,9 @@ ASK_PROMPT = (
 )
 
 
-def ask(query, rows):
-    """Paths of the sessions Claude ranks as most relevant to the query, best first."""
-    rows = recent_first(rows)
+def ask_cards(query, rows):
+    """(rows, one card per row): the evidence any ranker sees about each session for this query."""
+    rows = [r for r in recent_first(rows) if not r[0].throwaway]
     words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS]
     any_word = " OR ".join(f'"{w}"*' for w in words)
     with search_db() as db:
@@ -251,12 +281,141 @@ def ask(query, rows):
         if any_word:
             passages.update(db.execute(
                 "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?", (any_word,)))
-    lines = [
-        f"{i}. {s.title} | {s.project} | {ago(s.mtime)} | {one_line(s.last_prompt, 160)} | "
+    cards = [
+        f"{s.title} | {s.project} | {ago(s.mtime)} | {one_line(s.last_prompt, 160)} | "
         f"{one_line(passages.get(str(path), ''), 300)}"
-        for i, (s, _, path) in enumerate(rows)
+        for s, _, path in rows
     ]
-    request = f"Search: {query}\n\nSessions:\n" + "\n".join(lines)
+    return rows, cards
+
+
+def typesafe_key():
+    """TYPESAFE_API_KEY from the environment, or from a .env file next to this script."""
+    if os.environ.get("TYPESAFE_API_KEY"):
+        return os.environ["TYPESAFE_API_KEY"]
+    try:
+        found = re.search(r'^\s*(?:export\s+)?TYPESAFE_API_KEY\s*=\s*["\']?([^"\'\s]+)',
+                          (Path(__file__).resolve().parent / ".env").read_text(), re.M)
+    except OSError:
+        return None
+    return found and found.group(1)
+
+
+def jev(key, state, questions):
+    request = urllib.request.Request(
+        JEV_URL, data=json.dumps({"model": "jev-latest", "state": state, "questions": questions}).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)["answers"]
+
+
+def jev_rank(key, query, rows, cards):
+    """Two stages: shortlist likely sessions out of every card, then a yes/no on each shortlisted one.
+    Final order adds both probabilities, so a confident shortlist pick survives a hesitant second look."""
+    chunks = [range(start, min(start + JEV_CHUNK, len(cards))) for start in range(0, len(cards), JEV_CHUNK)]
+    if not chunks:
+        return []
+
+    def shortlist(indices):
+        criteria = {f"s{i}": cards[i] for i in indices}
+        criteria["none"] = "None of these sessions is where the developer did this work."
+        answer = jev(key, {"search": query}, {"which": {
+            "type": "choice",
+            "instructions": "A developer is searching their past AI coding sessions with `search`. "
+                            "Which session is the one where they did the work the search describes?",
+            "criteria": criteria}})["which"]["probabilities"]
+        best = sorted((k for k in answer if k != "none"), key=answer.get, reverse=True)[:JEV_SHORTLIST]
+        return {int(k[1:]): answer[k] for k in best}
+
+    with ThreadPoolExecutor(len(chunks)) as pool:
+        first = {i: p for picks in pool.map(shortlist, chunks) for i, p in picks.items()}
+    second = jev(key, {"search": query, "sessions": {f"s{i}": cards[i] for i in first}}, {
+        f"s{i}": {
+            "type": "noul",
+            "instructions": f"Is session `sessions.s{i}` the one where the developer did the work described by `search`?",
+            "criteria": {"true": "The session's title, requests, or passage show this specific work.",
+                         "false": "The session is only related in topic, or covers a different task."},
+        }
+        for i in first
+    })
+    order = sorted(first, key=lambda i: first[i] + second[f"s{i}"]["noul"], reverse=True)
+    return [str(rows[i][2]) for i in order]
+
+
+def passages_of(body, query, limit=120):
+    """The conversation cut into paragraph-sized passages, those sharing a word with the query first."""
+    pieces, current = [], ""
+    for paragraph in re.split(r"\n\s*\n", body):
+        paragraph = " ".join(paragraph.split())
+        if current and len(current) + len(paragraph) > 400:
+            pieces.append(current)
+            current = ""
+        current = f"{current} {paragraph}".strip()
+    if current:
+        pieces.append(current)
+    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS and len(w) > 2]
+    pieces.sort(key=lambda piece: not any(w in piece.lower() for w in words))
+    return [piece[:400] for piece in pieces[:limit]]
+
+
+def explain(key, query, paths):
+    """For each path, the passage Jev judges best shows the searched-for work; saved for the preview."""
+    with search_db() as db:
+        bodies = {p: b for p, b in db.execute(
+            f"SELECT path, body FROM docs WHERE path IN ({','.join('?' * len(paths))})", paths)}
+
+    def pick(path):
+        pieces = passages_of(bodies.get(path, ""), query)
+        if not pieces:
+            return path, None
+        criteria = {f"p{i}": piece for i, piece in enumerate(pieces)}
+        criteria["none"] = "No passage shows this work."
+        answer = jev(key, {"search": query}, {"which": {
+            "type": "choice",
+            "instructions": "Which passage from this coding session best shows the work described by `search`?",
+            "criteria": criteria}})["which"]
+        return path, None if answer["choice"] == "none" else criteria[answer["choice"]]
+
+    with ThreadPoolExecutor(max(1, len(paths))) as pool:
+        found = {path: passage for path, passage in pool.map(pick, paths) if passage}
+    EXPLAINED.write_text(json.dumps({"query": query, "passages": found}))
+    port = os.environ.get("FZF_PORT")
+    if port:
+        urllib.request.urlopen(urllib.request.Request(
+            f"http://localhost:{port}", data=b"refresh-preview", method="POST"), timeout=2).close()
+
+
+def explained(path, query):
+    try:
+        saved = json.loads(EXPLAINED.read_text())
+    except (OSError, ValueError):
+        return ""
+    passage = saved["passages"].get(path, "") if saved.get("query") == query else ""
+    return " ".join(re.sub(r"[*`#]+", "", passage).split())
+
+
+def ask(query, rows):
+    """Paths of the sessions ranked most relevant to the query, best first: by Jev when a TypeSafe key
+    is configured, by Claude otherwise or if Jev fails."""
+    key = typesafe_key()
+    if key:
+        rows, cards = ask_cards(query, rows)
+        try:
+            ranked = jev_rank(key, query, rows, cards)
+        except (OSError, ValueError, KeyError):
+            ranked = None
+        if ranked:
+            subprocess.Popen([os.path.abspath(sys.argv[0]), "explain", query, *ranked[:EXPLAIN_TOP]],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            return ranked
+    return claude_rank(query, rows)
+
+
+def claude_rank(query, rows):
+    """Paths of the sessions Claude ranks as most relevant to the query, best first."""
+    rows, cards = ask_cards(query, rows)
+    request = f"Search: {query}\n\nSessions:\n" + "\n".join(f"{i}. {card}" for i, card in enumerate(cards))
     base = ["claude", "-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
             "--output-format", "json", "--system-prompt", ASK_PROMPT]
     ranked = None
@@ -292,13 +451,17 @@ def ago(mtime, now=None):
     return time.strftime(fmt, time.localtime(mtime))
 
 
+def when(s):
+    return "active now" if s.active else ago(s.mtime)
+
+
 def is_here(s):
     return s.cwd == os.environ.get("PWD")
 
 
 def meta_parts(s, config_dir, show_account):
     """Project and age lead so a long branch never pushes recency out of view."""
-    parts = [s.project, ago(s.mtime)]
+    parts = [s.project, when(s)]
     if s.branch and s.branch != "HEAD":
         parts.append(s.branch)
     parts.append(f"{s.prompts} prompt" + ("" if s.prompts == 1 else "s"))
@@ -308,8 +471,8 @@ def meta_parts(s, config_dir, show_account):
 
 
 def recent_first(rows):
-    """Sessions from the directory the picker was opened in first, then everything by recency."""
-    return sorted(rows, key=lambda r: (is_here(r[0]), r[0].mtime), reverse=True)
+    """Sessions from the directory the picker was opened in first, then by recency, throwaway sessions last."""
+    return sorted(rows, key=lambda r: (not r[0].throwaway, is_here(r[0]), r[0].mtime), reverse=True)
 
 
 def in_order(rows, paths):
@@ -322,7 +485,7 @@ def items(rows):
     show_account = len({r[1] for r in rows}) > 1
     out = []
     for s, config_dir, path in rows:
-        context = f"{ago(s.mtime)} · {s.project}" + ("" if os.path.isdir(s.cwd) else " · folder removed")
+        context = f"{when(s)} · {s.project}" + ("" if os.path.isdir(s.cwd) else " · folder removed")
         if show_account:
             context += f" · {config_dir.name}"
         title = " ".join(s.title.split())
@@ -416,7 +579,8 @@ def preview(path):
         print(f"{BOLD}{one_line(s.title, width)}{RESET}")
         print(f"{SECONDARY}{one_line(' · '.join(meta_parts(s, config_dir, len(dirs) > 1)), width)}{RESET}")
         print(f"{SECONDARY}{one_line(where, width)}{RESET}")
-        found = snippet(path, os.environ.get("FZF_QUERY", ""))
+        query = os.environ.get("FZF_QUERY", "")
+        found = one_line(explained(path, query), width) or snippet(path, query)
         print(f"{SECONDARY}{found}{RESET}" if found else "")
         print()
     turns = conversation(path)
@@ -424,7 +588,9 @@ def preview(path):
         for role, text in turns[-8:]:
             print(f"{speaker(role)}\n" + "\n".join(render(text, width)) + "\n")
         return
-    last_ask = max((i for i, (role, _) in enumerate(turns) if role == "user"), default=None)
+    asks = [i for i, (role, text) in enumerate(turns) if role == "user"]
+    substantial = [i for i in asks if len(turns[i][1].split()) > 3]
+    last_ask = (substantial or asks or [None])[-1]
     if last_ask is not None:
         print(f"{speaker('user')}\n" + "\n".join(excerpt(render(turns[last_ask][1], width), 10, False, "rest of your message")))
     reply = next((text for role, text in reversed(turns) if role == "assistant"), None)
@@ -482,8 +648,8 @@ def theme():
 
 
 MARK = "\033[38;2;215;119;87m✻\033[0m"
-INPUT_LABEL = f" {BOLD}hop{RESET} "
-ASKING_LABEL = f" {MARK} Asking Claude… "
+INPUT_LABEL = f" {MARK} Claude sessions "
+ASKING_LABEL = f" {MARK} Searching by meaning… "
 def footer(*pairs):
     key, word = "\033[22;39m", SECONDARY
     hints = " · ".join(f"{key}{k}{RESET}{word} {action}{RESET}" for k, action in pairs)
@@ -495,8 +661,8 @@ def pick():
     selection, secondary, background = theme()
     os.environ["HOP_SECONDARY"] = secondary
     SECONDARY = truecolor(secondary, DIM)
-    hints = footer(("enter", "resume"), ("tab", "view"), ("⌥ enter", "ask Claude"))
-    recover = footer(("⌥ enter", "ask Claude"), ("ctrl-u", "clear search"))
+    hints = footer(("enter", "resume"), ("tab", "view"), ("⌥ enter", "ask"))
+    recover = footer(("⌥ enter", "ask"), ("ctrl-u", "clear search"))
     q = shlex.quote
     footer_cmd = f'[ "$FZF_MATCH_COUNT" -eq 0 ] && printf %s {q(recover)} || printf %s {q(hints)}'
     header_cmd = '[ "$FZF_MATCH_COUNT" -eq 0 ] && printf "No sessions match “%s”" "$FZF_QUERY" || printf " "'
@@ -505,7 +671,7 @@ def pick():
     secondary_color = secondary or "-1"
 
     fzf = [
-        "fzf", "--ansi", "--delimiter=\t", "--with-nth=6..",
+        "fzf", "--ansi", "--listen", "--delimiter=\t", "--with-nth=6..",
         "--disabled", "--layout=reverse", "--height=90%", "--min-height=20",
         "--margin=0,1", "--highlight-line", "--no-hscroll", "--scrollbar= │", "--ellipsis=…",
         "--pointer=", "--marker=", "--prompt=› ", "--ghost=Search sessions and conversations",
@@ -517,7 +683,7 @@ def pick():
         f"--bind=tab:transform-preview-label~{flip_label}~+refresh-preview",
         f"--bind=change:reload-sync({self_path} search {{q}})+refresh-preview",
         f"--bind=alt-enter:change-input-label({ASKING_LABEL})+reload({self_path} ask {{q}})+refresh-preview",
-        f"--bind=load:change-input-label({INPUT_LABEL})",
+        f"--bind=load:change-input-label({INPUT_LABEL})+refresh-preview",
         "--bind=ctrl-u:clear-query,ctrl-/:toggle-preview,alt-up:preview-page-up,alt-down:preview-page-down",
         f"--color=fg:-1,bg:-1,{selection}",
         f"--color=prompt:blue,info:-1:dim,border:dim,input-border:dim,scrollbar:dim,preview-scrollbar:dim,"
@@ -528,29 +694,52 @@ def pick():
     chosen = subprocess.run(fzf, input=items(recent_first(index())).encode(), stdout=subprocess.PIPE).stdout.decode()
     if not chosen:
         sys.exit(1)
-    _, cwd, session_id, config_dir, title = chosen.split("\t")[:5]
+    path, cwd, session_id, config_dir, title = chosen.split("\t")[:5]
+    entry = load_cache().get(path) or {}
+    active = bool(entry.get("session")) and Session(**entry["session"]).active
+    print(title + (f"{RESET}{SECONDARY} · may still be open in another window" if active else ""))
+    print(resume_command(cwd, session_id, config_dir))
+
+
+def resume_command(cwd, session_id, config_dir):
+    """The shell command that resumes a session. Deleted worktrees are common, so it runs from the
+    nearest directory that still exists, and it names the config dir only when it isn't the default."""
     while not os.path.isdir(cwd):
         cwd = os.path.dirname(cwd)
     default_config = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude")).expanduser().resolve()
-    env = "" if Path(config_dir) == default_config else f"CLAUDE_CONFIG_DIR={q(config_dir)} "
-    print(title)
-    print(f"cd {q(cwd)} && {env}claude --resume {session_id}")
+    env = "" if Path(config_dir) == default_config else f"CLAUDE_CONFIG_DIR={shlex.quote(str(config_dir))} "
+    return f"cd {shlex.quote(cwd)} && {env}claude --resume {session_id}"
+
+
+def emit(lines):
+    """fzf lines on stdout. Nothing at all for no results: a lone newline would be one blank result."""
+    if lines:
+        print(lines)
 
 
 if __name__ == "__main__":
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     command = sys.argv[1:2]
     if command == ["preview"]:
-        preview(sys.argv[2])
+        if len(sys.argv) > 2 and sys.argv[2]:
+            preview(sys.argv[2])
     elif command == ["pick"]:
         pick()
     elif command == ["search"]:
         rows = cached_rows()
         found = matches(sys.argv[2] if len(sys.argv) > 2 else "")
-        print(items(recent_first(rows) if found is None else in_order(rows, found)))
+        emit(items(recent_first(rows) if found is None else in_order(rows, found)))
+    elif command in (["--version"], ["version"]):
+        print(f"hop {VERSION}")
+    elif command == ["index"]:
+        print(f"{len(index())} sessions indexed")
+    elif command == ["explain"]:
+        key = typesafe_key()
+        if key:
+            explain(key, sys.argv[2], sys.argv[3:])
     elif command == ["ask"]:
         rows = cached_rows()
         query = sys.argv[2] if len(sys.argv) > 2 else ""
-        print(items(in_order(rows, ask(query, rows)) if query.strip() else recent_first(rows)))
+        emit(items(in_order(rows, ask(query, rows)) if query.strip() else recent_first(rows)))
     else:
         sys.exit(__doc__)

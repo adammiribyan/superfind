@@ -1,27 +1,85 @@
 # hop
 
-Search every AI coding-agent session on your Mac, then hop back into one: hop opens the session's directory and resumes it. Today it reads Claude Code sessions; other harnesses come later.
+Find any past AI coding session on your Mac and hop back into it. hop opens the session's folder and resumes it, right in the terminal pane you're in. Today it reads Claude Code sessions; other agents come later.
 
-Press Cmd-Shift-O in Ghostty, or Ctrl-X c in any zsh. Type to search titles, projects, branches, and the conversations themselves: your prompts and Claude's replies. Every word must match; title matches come first, and the preview shows the passage that matched. Press Option-Enter (⌥↩) to ask Claude instead: it ranks sessions by meaning, so a question like "where did we automate QA notes?" finds the right session even when the words differ. Asking takes a few seconds and costs under a cent per question. Enter runs `cd <dir> && claude --resume <id>` in the current pane and saves it to your shell history.
-
-Each session is one line: its title, then how long ago it was active and its project. Sessions from the directory you're in come first; everything else follows, newest first.
-
-The preview opens on where each session left off: your last request and the end of Claude's reply. Tab switches to the recent conversation. The preview sits beside the list in wide windows and below it in narrow ones; Ctrl-/ hides it, and Alt-Up and Alt-Down page through it. Colors come from your terminal theme, so the picker matches light and dark modes.
+![hop finding a session by meaning and resuming it](demo/hop.gif)
 
 ## Install
 
 ```sh
-brew install fzf   # or brew upgrade fzf; the layout needs a 2025 or newer release
+brew install fzf
 git clone <this repo> ~/src/hop
 ~/src/hop/install.sh
 ```
 
-The installer links `hop` into `~/.local/bin`, sources the zsh widget from `~/.zshrc`, and adds the Ghostty keybind. Re-running it changes nothing. It needs python3, which the Xcode Command Line Tools provide.
+Then open a new terminal tab. The installer links `hop` into `~/.local/bin`, loads the zsh widget from `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. It needs python3, which the Xcode Command Line Tools provide, and a recent fzf; the installer checks for the features it needs. Running it again changes nothing.
 
-## Behavior
+## Use
 
-- Sessions come from `~/.claude/projects`, plus every `~/.claude-*` directory, `$CLAUDE_CONFIG_DIR`, and any directories in colon-separated `$HOP_CLAUDE_DIRS`. When more than one directory has sessions, each row shows which one it came from, and resume sets `CLAUDE_CONFIG_DIR` to match.
-- Accounts you switch between with `/login` share one directory, so their sessions all appear. Resume uses whichever account is logged in now.
-- Sessions whose directory was deleted (common with worktrees) are marked `folder removed`. Resume runs from the nearest parent that still exists.
-- The index is cached in `~/.cache/hop/`: session details in `index.json`, conversation text in a SQLite full-text index, `search.db`. Only transcripts that changed since the last run get re-read.
-- Run `hop` to use the picker without the keybind. `hop search <words>` and `hop ask <question>` print matches without opening the picker.
+Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`.
+
+| Key | Does |
+|---|---|
+| type | Search titles, projects, branches, and the conversations themselves. Every word must match. Titles that match come first. |
+| ⌥ Enter | Ask: rank sessions by meaning, so "where did we stop charging people twice" finds "Checkout button double-charges on slow networks". |
+| Enter | Resume the selected session: `cd` into its folder and run `claude --resume`. The command lands in your shell history. |
+| Tab | Switch the preview between where the session left off and the recent conversation. |
+| Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
+| Ctrl-U | Clear the search. |
+
+Each row shows a session's title, how long ago it was active, and its project. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
+
+The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
+
+A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
+
+## Ask
+
+⌥ Enter ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
+
+Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
+
+| | Jev | Claude Haiku |
+|---|---|---|
+| Right session ranked first | 16–17 | 18–19 |
+| Right session in the top 3 | 19–20 | 19–20 |
+| Time to results, median | 1.3 s | 3.3–3.8 s |
+| Time to results, slowest | 2.3 s | 8.6 s |
+| Cost per question | $0.0036 | $0.0073 |
+
+Claude puts the right session first slightly more often. Jev is about three times faster and half the price.
+
+With Jev, the preview also shows the passage that best answers your question for the top five results. It appears about a second after the results.
+
+To use Jev, put the key in your environment or in a `.env` file next to the `hop` script (it is git-ignored):
+
+```sh
+TYPESAFE_API_KEY=your-key
+```
+
+**What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Typing never sends anything; keyword search runs locally.
+
+## Sessions it finds
+
+- `~/.claude/projects`, every `~/.claude-*` folder, `$CLAUDE_CONFIG_DIR`, and any folders listed in colon-separated `$HOP_CLAUDE_DIRS`. When sessions come from more than one folder, each row says which, and resuming sets `CLAUDE_CONFIG_DIR` to match.
+- Accounts you switch between with `/login` share one folder, so all their sessions appear. Resuming uses whichever account is logged in now.
+- A session whose folder was deleted, which is common with worktrees, is marked **folder removed** and resumes from the nearest parent folder that still exists.
+
+## Commands
+
+```sh
+hop                  # open the picker
+hop search <words>   # print matching sessions
+hop ask <question>   # print sessions ranked by meaning
+hop index            # build or refresh the index
+hop --version
+```
+
+The index lives in `~/.cache/hop/`. Each run re-reads only the transcripts that changed, so opening the picker stays instant.
+
+## Develop
+
+```sh
+python3 -m unittest discover -s tests   # behavior tests, using fake transcripts
+vhs demo/hop.tape                       # re-record demo/hop.gif from fake sessions
+```
