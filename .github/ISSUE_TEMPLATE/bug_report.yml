@@ -1,0 +1,55 @@
+name: Bug report
+description: superfind did something wrong or crashed.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what superfind did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open superfind in ...
+        2. Type ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: superfind version
+      description: The output of `superfind --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options: [Homebrew, go install, install.sh from a clone]
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: OS, shell, and terminal
+      placeholder: macOS 15.5, zsh, Ghostty 1.2
+    validations:
+      required: true
+  - type: checkboxes
+    id: agents
+    attributes:
+      label: Which agents' sessions are involved
+      options:
+        - label: Claude Code
+        - label: Codex
+        - label: Grok
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output or a screenshot
+      description: Leave out anything from your sessions that you don't want to make public.
