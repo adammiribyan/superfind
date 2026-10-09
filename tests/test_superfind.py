@@ -563,20 +563,23 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertNotIn("No reply yet", body)
 
     def test_no_color_turns_off_color_but_keeps_bold_and_dim(self):
-        path = self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."),
-                            title="Ledger migration")
+        path = self.session("a1", user("deploy the \x1b[31mledger\x1b[0m migration"), tool("Bash"),
+                            claude("Deployed \x1b[38;5;196mred\x1b[0m."), title="Ledger \x1b[44mmigration\x1b[0m")
         self.superfind("index")
         self.env["SUPERFIND_SECONDARY"] = "#ff0000"
         colored = self.run_superfind("search").stdout + self.run_superfind("preview", str(path)).stdout
         self.assertIn("\x1b[38;2;255;0;0m", colored)
         self.env["NO_COLOR"] = "1"
         plain = self.run_superfind("search").stdout + self.run_superfind("preview", str(path)).stdout
-        self.assertEqual(colors_in(plain), [])
-        self.assertIn("\x1b[1mLedger migration", plain)
+        stray = self.run_superfind("preview", "\x1b[31m/not-a-session\x1b[0m")
+        self.assertEqual((colors_in(plain), colors_in(stray.stderr), stray.returncode), ([], [], 1))
+        self.assertIn("\x1b[1mLedger", plain)
         self.assertIn("\x1b[2m", plain)
+        self.assertIn("Deployed ", plain)
 
     def test_search_no_longer_takes_a_deep_flag(self):
         self.session("a1", user("fix the deep build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.session("b2", user("fix the build cache"), tool("Bash"), claude("Fixed."), title="Build cache")
         self.assertEqual(self.titles("--deep", "build"), ["Build fix"])
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
@@ -994,6 +997,15 @@ class SuperfindBehavior(unittest.TestCase):
         sent = requests[0]
         cards = [c.split(" | ")[0] for k, c in sent["questions"]["which"]["criteria"].items() if k != "none"]
         self.assertEqual((sent["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
+        waiting = self.session("c3", user("migrate the ledger history"), tool("Bash"),
+                               claude("Should I run it on production now?"), title="Ledger history")
+        self.superfind("index")
+        self.judged(waiting, "waiting")
+        requests.clear()
+        self.run_superfind("ask", "is:waiting", "ledger")
+        sent = requests[0]
+        cards = [c.split(" | ")[0] for k, c in sent["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertEqual((sent["state"]["search"], cards), ("ledger", ["Ledger history"]))
 
     def test_the_preview_names_the_agent_that_replied(self):
         paths = {

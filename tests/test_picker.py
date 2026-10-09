@@ -488,6 +488,7 @@ class PickerColors(PtyPicker):
     def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
         before = self.read(until=b"\x1b[7m")
         self.assertIn(b"\x1b]11;?", before)
+        self.assertIn(b"\x1b[7m Ledger", before)
         time.sleep(0.6)
         os.write(self.terminal, self.COLORS)
         self.assertIn(self.TINT, self.read(until=self.TINT))

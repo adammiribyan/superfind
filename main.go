@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -103,12 +105,14 @@ _superfind_widget() {
 
 var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
 
+var stdout, stderr io.Writer = os.Stdout, os.Stderr
+
 func printRows(rows []session.Row, shown render.Tags) {
 	secondary := render.SecondaryFromEnv()
 	for _, r := range rows {
 		t := render.RowTextOf(r, shown)
 		display := " " + t.Title + "  " + secondary + render.RowContext(t, secondary) + render.Reset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.Title, display)
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.Title, display)
 	}
 }
 
@@ -147,12 +151,12 @@ func mustIndex(command string) []session.Row {
 	noticed := false
 	rows, err := session.Index(func(stale int) {
 		if term.IsTerminal(os.Stderr.Fd()) {
-			fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", stale)
+			fmt.Fprintf(stderr, "  Indexing %d sessions…", stale)
 			noticed = true
 		}
 	})
 	if noticed {
-		fmt.Fprint(os.Stderr, "\r\033[K")
+		fmt.Fprint(stderr, "\r\033[K")
 	}
 	if err != nil {
 		fail("superfind " + command + ": " + err.Error())
@@ -181,20 +185,24 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 }
 
 func fail(message string) {
-	fmt.Fprintln(os.Stderr, message)
+	fmt.Fprintln(stderr, message)
 	os.Exit(1)
 }
 
 func main() {
 	typesafe.UserAgent = "superfind/" + version
+	if render.NoColor {
+		stdout = &colorprofile.Writer{Forward: os.Stdout, Profile: colorprofile.Ascii}
+		stderr = &colorprofile.Writer{Forward: os.Stderr, Profile: colorprofile.Ascii}
+	}
 	args := os.Args[1:]
 	if len(args) == 0 {
-		fmt.Print(usage)
+		fmt.Fprint(stdout, usage)
 		return
 	}
 	switch args[0] {
 	case "--version", "version":
-		fmt.Println("superfind " + version)
+		fmt.Fprintln(stdout, "superfind "+version)
 	case "init":
 		setup, ok := "", len(args) > 1
 		if ok {
@@ -203,9 +211,9 @@ func main() {
 		if !ok {
 			fail("superfind init: which shell? superfind init zsh or superfind init bash")
 		}
-		fmt.Printf(setup, agent.ShellQuote(selfPath()))
+		fmt.Fprintf(stdout, setup, agent.ShellQuote(selfPath()))
 	case "index":
-		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
+		fmt.Fprintf(stdout, "%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
 		rows := session.Annotate(mustIndex("search"))
 		found, err := session.Search(mustOpenSearch(), strings.Join(args[1:], " "), rows)
@@ -265,7 +273,7 @@ func main() {
 		}
 		body, err := render.PreviewBody(req)
 		for _, line := range append(header, body...) {
-			fmt.Println(line)
+			fmt.Fprintln(stdout, line)
 		}
 		if err != nil {
 			os.Exit(1)
@@ -278,7 +286,7 @@ func main() {
 		if !indexed {
 			fail("superfind command: not an indexed session: " + args[1])
 		}
-		fmt.Println(agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
+		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":
 		chosen, err := tui.Pick()
 		if err != nil {
@@ -287,10 +295,10 @@ func main() {
 		if chosen == nil {
 			os.Exit(1)
 		}
-		fmt.Println(handoffTitle(*chosen))
-		fmt.Println(agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
+		fmt.Fprintln(stdout, handoffTitle(*chosen))
+		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(stderr, usage)
 		os.Exit(2)
 	}
 }
