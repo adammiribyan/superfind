@@ -32,6 +32,29 @@ func Printable(s string) string {
 	}, escapeSequence.ReplaceAllString(s, ""))
 }
 
+var (
+	leadingTag = regexp.MustCompile(`^<([A-Za-z][\w-]*)[^<>]*>`)
+	bareTag    = regexp.MustCompile(`^</?[^<>]*>$`)
+)
+
+func withoutWrappers(text string) string {
+	for {
+		text = strings.TrimSpace(text)
+		if bareTag.MatchString(text) {
+			return ""
+		}
+		m := leadingTag.FindStringSubmatch(text)
+		if m == nil || !strings.ContainsAny(m[1], "-_") {
+			return text
+		}
+		end := strings.Index(text, "</"+m[1]+">")
+		if end < 0 {
+			return ""
+		}
+		text = text[end+len(m[1])+3:]
+	}
+}
+
 type Event string
 
 const (

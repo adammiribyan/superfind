@@ -1398,6 +1398,20 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn(f"1 session file or folder couldn't be read, so their sessions may be missing or out of date: open {locked}",
                       result.stderr)
 
+    def test_a_prompt_that_starts_with_markup_is_still_a_prompt(self):
+        self.session("a1", user("<div>Hello</div> fix this component"), claude("Fixed the component."))
+        self.session("b2", user("<system-reminder>Be brief.</system-reminder>\ncommit this and open a PR"), tool("Bash"),
+                     claude("Opened."))
+        self.codex_session(uid(1), codex_meta(), codex_user("<div>Hello</div> fix this Codex component"),
+                           codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(), codex_user(
+            "<in-app-browser-context>\n<url>http://localhost</url>\n</in-app-browser-context>\n## My request for Codex:\nship the redirect fix"),
+            codex_reply("Shipped."))
+        self.session("c3", user("<local-command-stdout>ok</local-command-stdout>"), claude("Noted."))
+        self.session("d4", user("<system-reminder>a wrapper that never closes"), claude("Noted."))
+        self.assertEqual(sorted(self.titles()), ["<div>Hello</div> fix this Codex component", "<div>Hello</div> fix this component",
+                                                 "commit this and open a PR", "ship the redirect fix"])
+
 
 if __name__ == "__main__":
     unittest.main()
