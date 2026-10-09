@@ -3,6 +3,8 @@ package main
 import (
 	"path/filepath"
 
+	"github.com/adammiribyan/hop/internal/session"
+
 	"github.com/adammiribyan/hop/internal/agent"
 )
 
@@ -11,7 +13,7 @@ type tags struct {
 	homes  map[*agent.Agent]bool
 }
 
-func tagsFor(rows []Row) tags {
+func tagsFor(rows []session.Row) tags {
 	seen := map[*agent.Agent]map[string]bool{}
 	for _, r := range rows {
 		if seen[r.Agent] == nil {
@@ -26,7 +28,7 @@ func tagsFor(rows []Row) tags {
 	return t
 }
 
-func (t tags) of(r Row) []string {
+func (t tags) of(r session.Row) []string {
 	var out []string
 	if t.agents {
 		out = append(out, r.Agent.ID)
@@ -37,7 +39,7 @@ func (t tags) of(r Row) []string {
 	return out
 }
 
-func pickerLabel(rows []Row, in []agent.Place) string {
+func pickerLabel(rows []session.Row, in []agent.Place) string {
 	present := map[*agent.Agent]bool{}
 	for _, r := range rows {
 		present[r.Agent] = true

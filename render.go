@@ -8,6 +8,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/adammiribyan/hop/internal/session"
+
 	"github.com/adammiribyan/hop/internal/agent"
 
 	"github.com/charmbracelet/x/ansi"
@@ -279,7 +281,7 @@ type previewRequest struct {
 	secondary string
 }
 
-func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
+func previewHeader(req previewRequest, r session.Row, shown tags, db *sql.DB) []string {
 	width := req.width - 2
 	s := r.Session
 	where := tilde(s.Cwd)
@@ -288,7 +290,7 @@ func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
 	}
 	found := oneLine(plainPassage(req.explained), width)
 	if found == "" && db != nil {
-		found = snippet(db, req.path, req.query)
+		found = session.Snippet(db, req.path, req.query, ansiBold+ansiAccent, ansiReset)
 	}
 	header := []string{
 		ansiBold + oneLine(s.Title, width) + ansiReset,

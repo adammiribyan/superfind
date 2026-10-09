@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/adammiribyan/hop/internal/session"
+
 	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
@@ -31,25 +33,25 @@ const askPrompt = "You rank a developer's past coding sessions by how relevant t
 	"not shared words. Reply with only a JSON array of the numbers of up to 15 relevant sessions, best first, " +
 	"or [] if none are relevant."
 
-func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string, error) {
-	var kept []Row
-	for _, r := range recentFirst(rows) {
+func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []string, error) {
+	var kept []session.Row
+	for _, r := range session.RecentFirst(rows) {
 		if !r.Session.Throwaway() {
 			kept = append(kept, r)
 		}
 	}
 	passages := map[string]string{}
-	openings, err := queryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
+	openings, err := session.QueryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
 	if err != nil {
 		return nil, nil, err
 	}
 	var anyWord []string
-	for _, w := range meaningfulWords(query) {
+	for _, w := range session.MeaningfulWords(query) {
 		anyWord = append(anyWord, `"`+w+`"*`)
 	}
 	var matched [][2]string
 	if len(anyWord) > 0 {
-		matched, err = queryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
+		matched, err = session.QueryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
 			strings.Join(anyWord, " OR "))
 		if err != nil {
 			return nil, nil, err
@@ -67,7 +69,7 @@ func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string, error) {
 	return kept, cards, nil
 }
 
-func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
+func jevRank(key, query string, rows []session.Row, cards []string) ([]string, error) {
 	if len(cards) == 0 {
 		return nil, nil
 	}
@@ -173,7 +175,7 @@ var errNoAnswer = errors.New("no answer")
 
 var rankList = regexp.MustCompile(`\[[\d,\s]*\]`)
 
-func claudeRank(query string, kept []Row, cards []string) ([]string, error) {
+func claudeRank(query string, kept []session.Row, cards []string) ([]string, error) {
 	var request strings.Builder
 	request.WriteString("Search: " + query + "\n\nSessions:\n")
 	for i, c := range cards {
@@ -219,7 +221,7 @@ type askFailure struct{ reason string }
 
 func (a askFailure) Error() string { return "Deep search failed: " + a.reason + "." }
 
-func ask(db *sql.DB, query string, rows []Row) ([]string, error) {
+func ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
 	kept, cards, err := askCards(db, query, rows)
 	if err != nil {
 		return nil, askFailure{"the search index couldn't be read (" + err.Error() + ")"}
@@ -257,7 +259,7 @@ func passagesOf(body, query string) []string {
 		pieces = append(pieces, current)
 	}
 	var words []string
-	for _, w := range meaningfulWords(query) {
+	for _, w := range session.MeaningfulWords(query) {
 		if utf8.RuneCountInString(w) > 2 {
 			words = append(words, w)
 		}

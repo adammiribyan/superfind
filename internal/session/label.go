@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"encoding/json"
@@ -46,7 +46,7 @@ func statusLabelFor(name string) string {
 	return ""
 }
 
-const waitingLabel = "waiting on you"
+const WaitingLabel = "waiting on you"
 
 var lastEvents = map[agent.Event]string{
 	agent.Replied:     "{agent}'s last action was writing a reply to the developer.",
@@ -116,7 +116,7 @@ type statusEntry struct {
 
 func statuses() map[string]statusEntry {
 	known := map[string]statusEntry{}
-	if raw, err := os.ReadFile(cachePath("status.json")); err == nil {
+	if raw, err := os.ReadFile(CachePath("status.json")); err == nil {
 		json.Unmarshal(raw, &known)
 	}
 	return known
@@ -131,15 +131,15 @@ func statusLabel(r Row, known map[string]statusEntry) string {
 	if err != nil {
 		return ""
 	}
-	age := now() - mtime
+	age := Now() - mtime
 	if e.FileID != id || age < activeSeconds || age >= labelDays*86400 {
 		return ""
 	}
 	return statusLabelFor(e.Status)
 }
 
-func labelSessions(key string, rows []Row) error {
-	lock, err := os.OpenFile(cachePath("status.lock"), os.O_CREATE|os.O_WRONLY, 0o644)
+func Label(key string, rows []Row) error {
+	lock, err := os.OpenFile(CachePath("status.lock"), os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func labelSessions(key string, rows []Row) error {
 			continue
 		}
 		e, ok := known[r.Path]
-		recent := now()-mtime < labelDays*86400
+		recent := Now()-mtime < labelDays*86400
 		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.FileID == id) {
 			todo = append(todo, job{r, id})
 		}
@@ -203,7 +203,7 @@ func labelSessions(key string, rows []Row) error {
 	if err != nil {
 		return err
 	}
-	if err := writeAtomically(cachePath("status.json"), data); err != nil {
+	if err := writeAtomically(CachePath("status.json"), data); err != nil {
 		return fmt.Errorf("saving labels: %w", err)
 	}
 	if len(failures) > 0 {

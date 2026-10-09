@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/adammiribyan/hop/internal/session"
+
 	"github.com/adammiribyan/hop/internal/agent"
 	"github.com/adammiribyan/hop/internal/typesafe"
 
@@ -124,14 +126,14 @@ type explainDone struct {
 type colorsSettled struct{}
 
 type indexed struct {
-	rows []Row
+	rows []session.Row
 	err  error
 }
 type labelsTick struct{}
 
 type picker struct {
-	all        []Row
-	shown      []Row
+	all        []session.Row
+	shown      []session.Row
 	db         *sql.DB
 	problem    string
 	dbProblem  string
@@ -162,18 +164,18 @@ type picker struct {
 	explained   map[string]string
 	message     string
 
-	chosen   *Row
+	chosen   *session.Row
 	quitting bool
 }
 
-func newPicker(rows []Row, db *sql.DB, problem string) picker {
+func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "Search sessions and conversations"
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: recentFirst(annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, agent.Places()),
+		all: session.RecentFirst(session.Annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, agent.Places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 	}
 	m.problem, m.dbProblem = problem, problem
@@ -182,7 +184,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 	}
 	m.message = m.problem
 	m.shown = m.all
-	if info, err := os.Stat(cachePath("status.json")); err == nil {
+	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
 	}
 	m.colors.forcedPlain = os.Getenv("HOP_PLAIN_COLORS") != ""
@@ -195,7 +197,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		func() tea.Msg {
-			rows, err := index(nil)
+			rows, err := session.Index(nil)
 			return indexed{rows, err}
 		},
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
@@ -242,7 +244,7 @@ func (m *picker) settleColors() {
 	m.styleInput()
 }
 
-func (m picker) focused() *Row {
+func (m picker) focused() *session.Row {
 	if m.cursor >= 0 && m.cursor < len(m.shown) {
 		return &m.shown[m.cursor]
 	}
@@ -269,7 +271,7 @@ func (m *picker) filter() {
 	case m.db == nil:
 		m.shown = m.all
 	default:
-		shown, err := searchRows(m.db, query, m.all)
+		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
 		switch {
 		case err != nil:
@@ -353,7 +355,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 }
 
 func (m picker) startAsk() (picker, tea.Cmd) {
-	query, rows := narrow(m.input.Value(), m.all)
+	query, rows := session.Narrow(m.input.Value(), m.all)
 	if query == "" {
 		return m, nil
 	}
@@ -426,13 +428,13 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all, m.tags, m.label = recentFirst(annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, agent.Places())
+		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, agent.Places())
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
 		}
 		if m.askedFor != "" {
-			m.shown = inOrder(m.all, pathsOf(m.shown))
+			m.shown = session.InOrder(m.all, pathsOf(m.shown))
 			m.message = m.problem
 		} else {
 			m.filter()
@@ -444,13 +446,13 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterMove()
 	case labelsTick:
 		next := tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} })
-		info, err := os.Stat(cachePath("status.json"))
+		info, err := os.Stat(session.CachePath("status.json"))
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
 		}
 		m.statusSeen = info.ModTime()
-		m.all = annotate(m.all)
-		m.shown = inOrder(m.all, pathsOf(m.shown))
+		m.all = session.Annotate(m.all)
+		m.shown = session.InOrder(m.all, pathsOf(m.shown))
 		updated, load := m.loadPreview()
 		return updated, tea.Batch(next, load)
 	case bodyLoaded:
@@ -476,7 +478,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.err.Error()
 			return m, nil
 		}
-		m.shown, m.cursor, m.offset, m.askedFor = inOrder(m.all, msg.paths), 0, 0, msg.query
+		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
 		if len(m.shown) == 0 {
 			m.message = "Deep search found nothing for “" + msg.query + "”"
 		}
@@ -553,7 +555,7 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return updated, tea.Batch(cmd, load)
 }
 
-func (m picker) rowLine(r Row, selected bool, width int) string {
+func (m picker) rowLine(r session.Row, selected bool, width int) string {
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -693,7 +695,7 @@ func (m picker) View() tea.View {
 	return view
 }
 
-func pathsOf(rows []Row) []string {
+func pathsOf(rows []session.Row) []string {
 	paths := make([]string, len(rows))
 	for i, r := range rows {
 		paths[i] = r.Path
@@ -701,9 +703,9 @@ func pathsOf(rows []Row) []string {
 	return paths
 }
 
-func pick() (*Row, error) {
+func pick() (*session.Row, error) {
 	problem := ""
-	db, err := openSearch()
+	db, err := session.OpenSearch()
 	if err != nil {
 		problem = "Search is unavailable: " + err.Error()
 	}
@@ -712,7 +714,7 @@ func pick() (*Row, error) {
 		return nil, fmt.Errorf("hop pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
-	final, err := tea.NewProgram(newPicker(cachedRows(), db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return nil, err
 	}

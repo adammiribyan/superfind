@@ -8,15 +8,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/adammiribyan/hop/internal/session"
 
 	"github.com/adammiribyan/hop/internal/agent"
 	"github.com/adammiribyan/hop/internal/typesafe"
 
 	"github.com/charmbracelet/x/term"
 )
+
+const version = "0.9.0"
 
 const usage = `hop: find a past AI coding session and hop back into it. It reads Claude Code, Codex, and Grok sessions.
 
@@ -115,7 +118,7 @@ func rowContext(t rowText, secondary string) string {
 	return flag + strings.Join(t.context, " · ")
 }
 
-func printRows(rows []Row, shown tags) {
+func printRows(rows []session.Row, shown tags) {
 	secondary := secondaryFromEnv()
 	for _, r := range rows {
 		t := rowTextOf(r, shown)
@@ -124,51 +127,7 @@ func printRows(rows []Row, shown tags) {
 	}
 }
 
-func narrow(query string, rows []Row) (string, []Row) {
-	var words, statuses []string
-	var from []*agent.Agent
-	for _, w := range strings.Fields(query) {
-		switch {
-		case strings.HasPrefix(w, "is:"):
-			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
-				statuses = append(statuses, label)
-			}
-		case strings.HasPrefix(w, "agent:"):
-			if a := agent.Named(strings.ToLower(w[6:])); a != nil {
-				from = append(from, a)
-			}
-		default:
-			words = append(words, w)
-		}
-	}
-	if len(statuses) > 0 || len(from) > 0 {
-		var kept []Row
-		for _, r := range rows {
-			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
-				kept = append(kept, r)
-			}
-		}
-		rows = kept
-	}
-	return strings.Join(words, " "), rows
-}
-
-func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
-	words, rows := narrow(query, rows)
-	if db == nil {
-		return recentFirst(rows), nil
-	}
-	found, searched, err := matches(db, words)
-	if err != nil {
-		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
-	}
-	if !searched {
-		return recentFirst(rows), nil
-	}
-	return inOrder(rows, found), nil
-}
-
-func handoffTitle(r Row) string {
+func handoffTitle(r session.Row) string {
 	title := strings.Join(strings.Fields(r.Session.Title), " ")
 	if r.Session.Active() {
 		title += ansiReset + ansiDim + " · may still be open in another window"
@@ -192,16 +151,16 @@ func selfPath() string {
 }
 
 func mustOpenSearch() *sql.DB {
-	db, err := openSearch()
+	db, err := session.OpenSearch()
 	if err != nil {
-		fail("hop: can't open the search index in " + cacheDir() + ": " + err.Error())
+		fail("hop: can't open the search index in " + session.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
 
-func mustIndex(command string) []Row {
+func mustIndex(command string) []session.Row {
 	noticed := false
-	rows, err := index(func(stale int) {
+	rows, err := session.Index(func(stale int) {
 		if term.IsTerminal(os.Stderr.Fd()) {
 			fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", stale)
 			noticed = true
@@ -216,7 +175,7 @@ func mustIndex(command string) []Row {
 	return rows
 }
 
-func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
+func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session.Row) {
 	path := filepath.Join(agent.Resolve(filepath.Dir(arg)), filepath.Base(arg))
 	p, ok := agent.Locate(path, agent.Places())
 	if !ok {
@@ -227,13 +186,13 @@ func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
 		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
-	rows = annotate(mustIndex(command))
+	rows = session.Annotate(mustIndex(command))
 	for _, r := range rows {
 		if r.Path == path {
 			return r, true, rows
 		}
 	}
-	return Row{Agent: p.Agent, Home: p.Home, Path: path}, false, rows
+	return session.Row{Agent: p.Agent, Home: p.Home, Path: path}, false, rows
 }
 
 func fail(message string) {
@@ -263,7 +222,7 @@ func main() {
 	case "index":
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
-		rows := annotate(mustIndex("search"))
+		rows := session.Annotate(mustIndex("search"))
 		shown := tagsFor(rows)
 		db := mustOpenSearch()
 		deep, words := false, []string{}
@@ -276,16 +235,16 @@ func main() {
 		}
 		query := strings.Join(words, " ")
 		if !deep {
-			found, err := searchRows(db, query, rows)
+			found, err := session.Search(db, query, rows)
 			if err != nil {
 				fail("hop search: " + err.Error())
 			}
 			printRows(found, shown)
 			return
 		}
-		query, eligible := narrow(query, rows)
+		query, eligible := session.Narrow(query, rows)
 		if query == "" {
-			printRows(recentFirst(eligible), shown)
+			printRows(session.RecentFirst(eligible), shown)
 			return
 		}
 		paths, err := ask(db, query, eligible)
@@ -293,13 +252,13 @@ func main() {
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		printRows(inOrder(rows, paths), shown)
+		printRows(session.InOrder(rows, paths), shown)
 	case "label":
 		key := typesafe.Key()
 		if key == "" {
 			fail("hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env")
 		}
-		if err := labelSessions(key, mustIndex("label")); err != nil {
+		if err := session.Label(key, mustIndex("label")); err != nil {
 			fail("hop label: " + err.Error())
 		}
 	case "preview":

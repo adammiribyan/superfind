@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"cmp"
@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,8 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+const cacheVersion = 12
 
 func parse(f found) (*Session, string, error) {
 	t, err := agent.ReadTranscript(f.Agent, f.path)
@@ -52,7 +55,7 @@ type cacheFile struct {
 }
 
 func loadCache() map[string]cacheEntry {
-	raw, err := os.ReadFile(cachePath("index.json"))
+	raw, err := os.ReadFile(CachePath("index.json"))
 	if err != nil {
 		return map[string]cacheEntry{}
 	}
@@ -83,10 +86,10 @@ func writeAtomically(path string, data []byte) error {
 }
 
 func lockFile(name string) (func(), error) {
-	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+	if err := os.MkdirAll(CacheDir(), 0o755); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(cachePath(name), os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(CachePath(name), os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -102,10 +105,10 @@ func saveCache(files map[string]cacheEntry) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomically(cachePath("index.json"), data)
+	return writeAtomically(CachePath("index.json"), data)
 }
 
-func cachedRows() []Row {
+func CachedRows() []Row {
 	in := agent.Places()
 	var rows []Row
 	for path, e := range loadCache() {
@@ -116,11 +119,11 @@ func cachedRows() []Row {
 	return rows
 }
 
-func openSearch() (*sql.DB, error) {
-	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+func OpenSearch() (*sql.DB, error) {
+	if err := os.MkdirAll(CacheDir(), 0o755); err != nil {
 		return nil, err
 	}
-	path, err := filepath.Abs(cachePath("search.db"))
+	path, err := filepath.Abs(CachePath("search.db"))
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +153,14 @@ type parsed struct {
 	body    string
 }
 
-func index(announce func(stale int)) ([]Row, error) {
+func Index(announce func(stale int)) ([]Row, error) {
 	unlock, err := lockFile("index.lock")
 	if err != nil {
 		return nil, fmt.Errorf("locking the index: %w", err)
 	}
 	defer unlock()
 	old := loadCache()
-	if _, err := os.Stat(cachePath("search.db")); err != nil {
+	if _, err := os.Stat(CachePath("search.db")); err != nil {
 		old = map[string]cacheEntry{}
 	}
 	var all []found
@@ -243,7 +246,7 @@ func index(announce func(stale int)) ([]Row, error) {
 }
 
 func updateSearch(results map[string]parsed, gone []string, discarded bool) error {
-	db, err := openSearch()
+	db, err := OpenSearch()
 	if err != nil {
 		return err
 	}
@@ -290,7 +293,7 @@ up us was we were what when where which who why will with would you your`) {
 
 var wordPattern = regexp.MustCompile(`[\p{L}\p{N}_]+`)
 
-func meaningfulWords(query string) []string {
+func MeaningfulWords(query string) []string {
 	var out []string
 	for _, w := range wordPattern.FindAllString(strings.ToLower(query), -1) {
 		if !stopwords[w] && len([]rune(w)) > 1 {
@@ -302,13 +305,13 @@ func meaningfulWords(query string) []string {
 
 func ftsQuery(query string) string {
 	var parts []string
-	for _, w := range meaningfulWords(query) {
+	for _, w := range MeaningfulWords(query) {
 		parts = append(parts, `"`+w+`"*`)
 	}
 	return strings.Join(parts, " ")
 }
 
-func queryPairs(db *sql.DB, query string, args ...any) ([][2]string, error) {
+func QueryPairs(db *sql.DB, query string, args ...any) ([][2]string, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -333,7 +336,7 @@ func matches(db *sql.DB, query string) ([]string, bool, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, scoped := range []string{"title : (" + match + ")", match} {
-		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
+		pairs, err := QueryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
 		if err != nil {
 			return nil, true, err
 		}
@@ -347,16 +350,60 @@ func matches(db *sql.DB, query string) ([]string, bool, error) {
 	return out, true, nil
 }
 
-func snippet(db *sql.DB, path, query string) string {
+func Snippet(db *sql.DB, path, query, before, after string) string {
 	match := ftsQuery(query)
 	if match == "" || db == nil {
 		return ""
 	}
 	var text string
 	err := db.QueryRow("SELECT snippet(docs, 2, ?, ?, '…', 10) FROM docs WHERE docs MATCH ? AND path = ?",
-		ansiBold+ansiAccent, ansiReset, match, path).Scan(&text)
+		before, after, match, path).Scan(&text)
 	if err != nil {
 		return ""
 	}
 	return strings.Join(strings.Fields(text), " ")
+}
+
+func Narrow(query string, rows []Row) (string, []Row) {
+	var words, statuses []string
+	var from []*agent.Agent
+	for _, w := range strings.Fields(query) {
+		switch {
+		case strings.HasPrefix(w, "is:"):
+			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
+				statuses = append(statuses, label)
+			}
+		case strings.HasPrefix(w, "agent:"):
+			if a := agent.Named(strings.ToLower(w[6:])); a != nil {
+				from = append(from, a)
+			}
+		default:
+			words = append(words, w)
+		}
+	}
+	if len(statuses) > 0 || len(from) > 0 {
+		var kept []Row
+		for _, r := range rows {
+			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+	return strings.Join(words, " "), rows
+}
+
+func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
+	words, rows := Narrow(query, rows)
+	if db == nil {
+		return RecentFirst(rows), nil
+	}
+	found, searched, err := matches(db, words)
+	if err != nil {
+		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
+	}
+	if !searched {
+		return RecentFirst(rows), nil
+	}
+	return InOrder(rows, found), nil
 }
