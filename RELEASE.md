@@ -6,7 +6,7 @@ The morning checklist. Do the steps in order. Commands run in zsh from the main 
 cd ~/src/tries/2026-10-09-claude-sessions-search
 ```
 
-## 0. Before anything else: fix the signing certificate secret
+## 0. Before anything else: reset the signing certificate secret
 
 The signing check on PR #6 builds all four binaries, then stops at signing with:
 
@@ -14,54 +14,39 @@ The signing check on PR #6 builds all four binaries, then stops at signing with:
 unable to decode p12 file: pkcs12: trailing data found
 ```
 
-All five signing secrets are set. `MACOS_SIGN_P12` decodes from base64, but the bytes are not a clean `.p12` file: something follows the end of the certificate data. goreleaser reads it with Go's `software.sslmate.com/src/go-pkcs12`, which refuses that. Nothing can ship until this is fixed, because every release signs.
-
-Download the `.p12` from the 1Password item "superfind Developer ID .p12 export" (vault Private) and save it as `Certificates.p12`; the item also holds its password. Use Homebrew's OpenSSL, not `/usr/bin/openssl` (that one is LibreSSL):
+The cause: `MACOS_SIGN_P12` was set by piping `op read` into `base64`, and `op read` adds a newline to its output, so one stray byte follows the certificate. OpenSSL ignores that byte; Go's `pkcs12`, which goreleaser uses, refuses it. `--out-file` writes the file's exact bytes instead. Unlock 1Password, then:
 
 ```sh
-ossl=$(brew --prefix openssl)/bin/openssl
+op read --account my.1password.com --out-file /tmp/superfind.p12 "op://Private/superfind Developer ID .p12 export/superfind.p12" \
+  && base64 -i /tmp/superfind.p12 | gh secret set MACOS_SIGN_P12 -R adammiribyan/superfind \
+  && rm /tmp/superfind.p12
+gh secret list -R adammiribyan/superfind | grep MACOS_SIGN_P12    # the date should be today
 ```
 
-1. Check that OpenSSL opens it. It asks for the `.p12` password.
+That's all that's needed. When the secret's date moves, the release session reruns the signing check on PR #6 and records the proof there, then marks #6 ready. To rerun it yourself:
 
-   ```sh
-   $ossl pkcs12 -legacy -in Certificates.p12 -noout && echo opens
-   ```
+```sh
+run=$(gh run list -b release -w signing -L1 --json databaseId --jq '.[0].databaseId')
+gh run rerun "$run" && sleep 5 && gh run watch "$run" --exit-status
+```
 
-   This `.p12` uses the old encryption Keychain Access writes, which is why `-legacy` is there.
+The `signing` workflow signs and notarizes a snapshot. Then, on an Apple Silicon and an Intel Mac, it checks for the Developer ID authority, the hardened runtime, and the timestamp; checks that Gatekeeper reports `source=Notarized Developer ID`; and runs the binary with a quarantine attribute set. Green means the release will sign the same way.
 
-2. Write a clean copy. You get three prompts: the old password, then the new file's password twice. Use the same password as before, or update `MACOS_SIGN_PASSWORD` to the new one. The private key only passes through the pipe; it is never written to disk unencrypted.
+If it still fails on the certificate, sign locally through the same goreleaser code to see the problem on your own machine. This signs only; it does not notarize or publish:
 
-   ```sh
-   $ossl pkcs12 -legacy -in Certificates.p12 -nodes | $ossl pkcs12 -export -out superfind-signing.p12
-   ```
+```sh
+op read --account my.1password.com --out-file /tmp/superfind.p12 "op://Private/superfind Developer ID .p12 export/superfind.p12"
+cd ~/src/tries/2026-10-09-claude-sessions-search-release
+read -rs "P?.p12 password: "; echo
+MACOS_SIGN_P12=$(base64 -i /tmp/superfind.p12) MACOS_SIGN_PASSWORD=$P \
+MACOS_NOTARY_ISSUER_ID= MACOS_NOTARY_KEY_ID= MACOS_NOTARY_KEY= \
+  goreleaser release --snapshot --clean
+unset P; rm /tmp/superfind.p12
+codesign -dv --verbose=4 dist/superfind_darwin_arm64_v8.0/superfind 2>&1 | grep -E 'Authority=Developer ID|flags=|Timestamp='
+cd -
+```
 
-3. Sign with it locally, through the same goreleaser code CI uses. This signs only. It does not notarize and does not publish anything.
-
-   ```sh
-   cd ~/src/tries/2026-10-09-claude-sessions-search-release
-   read -rs "P?.p12 password: "; echo
-   MACOS_SIGN_P12=$(base64 -i ~/path/to/superfind-signing.p12) MACOS_SIGN_PASSWORD=$P \
-   MACOS_NOTARY_ISSUER_ID= MACOS_NOTARY_KEY_ID= MACOS_NOTARY_KEY= \
-     goreleaser release --snapshot --clean
-   unset P
-   codesign -dv --verbose=4 dist/superfind_darwin_arm64_v8.0/superfind 2>&1 | grep -E 'Authority=Developer ID|flags=|Timestamp='
-   cd -
-   ```
-
-   You want `Authority=Developer ID Application: …`, `flags=0x10000(runtime)`, and a `Timestamp=` line. goreleaser logs `will not try to notarize`; that is expected here.
-
-4. Replace the secret, then rerun the signing check on PR #6:
-
-   ```sh
-   base64 -i ~/path/to/superfind-signing.p12 | gh secret set MACOS_SIGN_P12
-   run=$(gh run list -b release -w signing -L1 --json databaseId --jq '.[0].databaseId')
-   gh run rerun "$run" && sleep 5 && gh run watch "$run" --exit-status
-   ```
-
-   The `signing` workflow signs and notarizes a snapshot. Then, on an Apple Silicon and an Intel Mac, it checks for the Developer ID authority, the hardened runtime, and the timestamp; checks that Gatekeeper reports `source=Notarized Developer ID`; and runs the binary with a quarantine attribute set. Green means the release will sign the same way.
-
-5. Attach `superfind-signing.p12` to the same 1Password item (keep the old file there too, labelled as the original), then delete both loose copies from your disk.
+You want `Authority=Developer ID Application: … (25B5ZUUCLF)`, `flags=0x10000(runtime)`, and a `Timestamp=` line. goreleaser logs `will not try to notarize` here; that's expected.
 
 ## 1. Merge the pull requests, in this order
 
@@ -199,7 +184,7 @@ gh run watch "$run" --exit-status
 `release.yml` runs three jobs. No release and no cask reach users until the last one:
 
 1. **build**: stops if any of the six secrets is empty, if the tap token can't reach `homebrew-tap`, if `v0.9.0` is already published, or if the tag doesn't match `superfind --version`. Then it builds the four binaries, signs the two darwin ones, sends them to Apple, waits up to 20 minutes for notarization (usually a few minutes), and uploads everything to a **draft** release that only you can see.
-2. **verify**: on an Apple Silicon and an Intel Mac, downloads the darwin archive from the draft and checks it the same way as in step 0.4.
+2. **verify**: on an Apple Silicon and an Intel Mac, downloads the darwin archive from the draft and checks it the same way as in step 0.
 3. **publish**: pushes `Casks/superfind.rb` to `homebrew-tap`, then publishes the draft as the latest release. Rerunning it is safe: if the release is already published, it stops there.
 
 If **build** or **verify** fails, nothing is published. The usual cause is that Apple was slow: goreleaser only logs a notarization timeout, and **verify** is what catches it. Apple usually finishes within the hour. Rerun the failed jobs then:
@@ -251,9 +236,11 @@ They live in the 1Password item "superfind Developer ID .p12 export" (my.1passwo
 A Developer ID Application certificate is valid for 5 years from the day Apple issued it. This one expires on **2031-09-17**. Add a calendar reminder for 2031-08-17. To check the date from the file:
 
 ```sh
-$ossl pkcs12 -in superfind-signing.p12 -nokeys | $ossl x509 -noout -subject -enddate
+op read --account my.1password.com --out-file /tmp/superfind.p12 "op://Private/superfind Developer ID .p12 export/superfind.p12"
+$(brew --prefix openssl)/bin/openssl pkcs12 -legacy -in /tmp/superfind.p12 -nokeys | $(brew --prefix openssl)/bin/openssl x509 -noout -subject -enddate
+rm /tmp/superfind.p12
 ```
- To renew, make a new Developer ID Application certificate, export it from Keychain Access as a `.p12`, then do steps 0.2 to 0.4 with the new file. Binaries signed before the old certificate expires keep running afterwards, because each signature carries a secure timestamp.
+ To renew, make a new Developer ID Application certificate, export it from Keychain Access as a `.p12`, attach the new `.p12` to the 1Password item, and set `MACOS_SIGN_P12` and `MACOS_SIGN_PASSWORD` from it as in step 0. Binaries signed before the old certificate expires keep running afterwards, because each signature carries a secure timestamp.
 
 ## The pieces, for later
 
