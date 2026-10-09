@@ -168,7 +168,10 @@ func index(announce func(stale int)) ([]Row, error) {
 	}
 	var all []found
 	for _, p := range places() {
-		names := p.agent.threadNames(p.home)
+		var names map[string]string
+		if p.agent.names != nil {
+			names = p.agent.names(p.home)
+		}
 		for _, path := range p.agent.sessions(p.home) {
 			if id, mtime, err := p.agent.stat(path); err == nil {
 				all = append(all, found{p, path, id, mtime, names[p.agent.idOf(path)]})

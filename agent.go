@@ -76,13 +76,6 @@ func (a *agent) sessions(home string) []string {
 	return matches
 }
 
-func (a *agent) threadNames(home string) map[string]string {
-	if a.names == nil {
-		return nil
-	}
-	return a.names(home)
-}
-
 func (a *agent) stat(path string) (fileID, float64, error) {
 	info, err := os.Stat(path)
 	if err != nil {
