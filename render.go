@@ -249,11 +249,11 @@ func render(text string, width int) []string {
 	return lines
 }
 
-func speaker(role string) string {
+func speaker(role string, a *agent) string {
 	if role == "user" {
 		return ansiAccent + ansiBold + "you" + ansiReset
 	}
-	return ansiBold + "claude" + ansiReset
+	return ansiBold + a.id + ansiReset
 }
 
 func excerpt(lines []string, keep int, fromEnd bool, note, secondary string) []string {
@@ -268,6 +268,7 @@ func excerpt(lines []string, keep int, fromEnd bool, note, secondary string) []s
 }
 
 type previewRequest struct {
+	agent     *agent
 	path      string
 	width     int
 	recent    bool
@@ -276,14 +277,9 @@ type previewRequest struct {
 	secondary string
 }
 
-func previewHeader(req previewRequest, cache map[string]cacheEntry, known map[string]statusEntry, db *sql.DB) []string {
+func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
 	width := req.width - 2
-	e, ok := cache[req.path]
-	if !ok || e.Session == nil {
-		return nil
-	}
-	s := *e.Session
-	dirs := configDirs()
+	s := r.Session
 	where := tilde(s.Cwd)
 	if survivor := survivingDir(s.Cwd); survivor != s.Cwd {
 		where = "folder removed · resumes from " + tilde(survivor)
@@ -294,7 +290,7 @@ func previewHeader(req previewRequest, cache map[string]cacheEntry, known map[st
 	}
 	header := []string{
 		ansiBold + oneLine(s.Title, width) + ansiReset,
-		req.secondary + oneLine(strings.Join(metaParts(s, configDirOf(req.path, dirs), len(dirs) > 1, statusLabel(req.path, known)), " · "), width) + ansiReset,
+		req.secondary + oneLine(strings.Join(metaParts(r, shown), " · "), width) + ansiReset,
 		req.secondary + oneLine(where, width) + ansiReset,
 		"",
 	}
@@ -314,14 +310,14 @@ func previewBody(req previewRequest) ([]string, error) {
 	if req.recent {
 		enough = func(turns []turn) bool { return len(turns) >= recentTurns }
 	}
-	turns, err := readEnding(req.path, enough)
+	turns, err := readEnding(req.agent, req.path, enough)
 	if err != nil {
 		return []string{req.secondary + clipText("  Couldn't read this session: "+err.Error(), width) + ansiReset}, err
 	}
 	var body []string
 	if req.recent {
 		for _, t := range turns[max(len(turns)-recentTurns, 0):] {
-			body = append(body, speaker(t.role))
+			body = append(body, speaker(t.role, req.agent))
 			body = append(body, render(t.text, width)...)
 			body = append(body, "")
 		}
@@ -341,7 +337,7 @@ func previewBody(req previewRequest) ([]string, error) {
 		lastAsk = lastAny
 	}
 	if lastAsk >= 0 {
-		body = append(body, speaker("user"))
+		body = append(body, speaker("user", req.agent))
 		body = append(body, excerpt(render(turns[lastAsk].text, width), 10, false, "rest of your message", req.secondary)...)
 	}
 	reply := ""
@@ -353,10 +349,10 @@ func previewBody(req previewRequest) ([]string, error) {
 	}
 	switch {
 	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].role == "assistant"):
-		body = append(body, "", speaker("assistant"))
+		body = append(body, "", speaker("assistant", req.agent))
 		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.secondary)...)
 	case lastAsk >= 0:
-		body = append(body, "", req.secondary+"  No reply yet. Claude stopped before answering."+ansiReset)
+		body = append(body, "", req.secondary+"  No reply yet. "+req.agent.label+" stopped before answering."+ansiReset)
 	}
 	return body, nil
 }

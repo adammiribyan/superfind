@@ -18,12 +18,12 @@ type statusKind struct {
 }
 
 var statusKinds = []statusKind{
-	{"waiting", "waiting on you", "Claude cannot finish the developer's current request without them: it asked " +
+	{"waiting", "waiting on you", "{agent} cannot finish the developer's current request without them: it asked " +
 		"a question it needs answered, or needs their approval, credentials, or a choice before continuing."},
-	{"unfinished", "unfinished", "Work on the developer's last request stopped before it was done: Claude was " +
+	{"unfinished", "unfinished", "Work on the developer's last request stopped before it was done: {agent} was " +
 		"mid-step, was interrupted, hit an error or limit, or never answered."},
 	{"finished", "", "The developer's last request was completed. An optional offer of more work, such as " +
-		"\"want me to also…?\", does not mean Claude is waiting."},
+		"\"want me to also…?\", does not mean {agent} is waiting."},
 	{"unclear", "", "The ending does not show which of the other states applies."},
 }
 
@@ -46,10 +46,10 @@ func statusLabelFor(name string) string {
 const waitingLabel = "waiting on you"
 
 var lastEvents = map[event]string{
-	replied:     "Claude's last action was writing a reply to the developer.",
-	calledTool:  "Claude's last action was starting a tool (a command, edit, or search) whose result never arrived.",
-	prompted:    "The developer's last action was sending a request that Claude never answered.",
-	interrupted: "The developer interrupted Claude while it was working.",
+	replied:     "{agent}'s last action was writing a reply to the developer.",
+	calledTool:  "{agent}'s last action was starting a tool (a command, edit, or search) whose result never arrived.",
+	prompted:    "The developer's last action was sending a request that {agent} never answered.",
+	interrupted: "The developer interrupted {agent} while it was working.",
 }
 
 type endingTurn struct {
@@ -62,36 +62,36 @@ type sessionEnding struct {
 	RecentTurns []endingTurn `json:"recent_turns"`
 }
 
-func ending(path string) (sessionEnding, error) {
-	t, err := readTranscript(path)
+func ending(a *agent, path string) (sessionEnding, error) {
+	t, err := readTranscript(a, path)
 	if err != nil {
 		return sessionEnding{}, err
 	}
 	var recent []endingTurn
 	for _, said := range t.turns[max(len(t.turns)-6, 0):] {
-		who := "claude"
+		who := a.id
 		if said.role == "user" {
 			who = "developer"
 		}
 		r := []rune(said.text)
 		recent = append(recent, endingTurn{who, string(r[max(len(r)-700, 0):])})
 	}
-	return sessionEnding{lastEvents[t.last], recent}, nil
+	return sessionEnding{a.phrase(lastEvents[t.last]), recent}, nil
 }
 
-func judgeStatus(key, path string) (string, float64, error) {
+func judgeStatus(key string, r Row) (string, float64, error) {
 	criteria := map[string]string{}
 	for _, k := range statusKinds {
-		criteria[k.name] = k.description
+		criteria[k.name] = r.Agent.phrase(k.description)
 	}
-	end, err := ending(path)
+	end, err := ending(r.Agent, r.Path)
 	if err != nil {
 		return "", 0, err
 	}
 	answers, err := jev(key, end, map[string]any{"status": map[string]any{
 		"type": "choice",
-		"instructions": "This is the end of a coding session between a developer and Claude. " +
-			"In what state did the session end?",
+		"instructions": r.Agent.phrase("This is the end of a coding session between a developer and {agent}. " +
+			"In what state did the session end?"),
 		"criteria": criteria,
 	}})
 	if err != nil {
@@ -119,17 +119,17 @@ func statuses() map[string]statusEntry {
 	return known
 }
 
-func statusLabel(path string, known map[string]statusEntry) string {
-	e, ok := known[path]
+func statusLabel(r Row, known map[string]statusEntry) string {
+	e, ok := known[r.Path]
 	if !ok || e.P < statusShownAt {
 		return ""
 	}
-	info, err := os.Stat(path)
+	id, err := r.Agent.stat(r.Path)
 	if err != nil {
 		return ""
 	}
-	age := now() - stamp(info)
-	if e.fileID != identify(info) || age < activeSeconds || age >= labelDays*86400 {
+	age := now() - id.seconds()
+	if e.fileID != id || age < activeSeconds || age >= labelDays*86400 {
 		return ""
 	}
 	return statusLabelFor(e.Status)
@@ -153,19 +153,19 @@ func labelSessions(key string, rows []Row) error {
 		}
 	}
 	type job struct {
-		path string
-		info os.FileInfo
+		row Row
+		id  fileID
 	}
 	var todo []job
 	for _, r := range rows {
-		info, err := os.Stat(r.Path)
+		id, err := r.Agent.stat(r.Path)
 		if err != nil {
 			continue
 		}
 		e, ok := known[r.Path]
-		recent := now()-stamp(info) < labelDays*86400
-		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.fileID == identify(info)) {
-			todo = append(todo, job{r.Path, info})
+		recent := now()-id.seconds() < labelDays*86400
+		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.fileID == id) {
+			todo = append(todo, job{r, id})
 		}
 	}
 	if len(todo) == 0 && !pruned {
@@ -180,12 +180,12 @@ func labelSessions(key string, rows []Row) error {
 		go func() {
 			defer wg.Done()
 			for j := range work {
-				status, p, err := judgeStatus(key, j.path)
+				status, p, err := judgeStatus(key, j.row)
 				mu.Lock()
 				if err != nil {
 					failures = append(failures, err)
 				} else {
-					known[j.path] = statusEntry{identify(j.info), status, math.Round(p*1000) / 1000}
+					known[j.row.Path] = statusEntry{j.id, status, math.Round(p*1000) / 1000}
 				}
 				mu.Unlock()
 			}

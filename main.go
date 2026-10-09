@@ -110,21 +110,12 @@ func rowContext(t rowText, secondary string) string {
 	return flag + strings.Join(t.context, " · ")
 }
 
-func showsAccounts(rows []Row) bool {
-	dirs := map[string]bool{}
-	for _, r := range rows {
-		dirs[r.ConfigDir] = true
-	}
-	return len(dirs) > 1
-}
-
-func printRows(rows []Row) {
+func printRows(rows []Row, shown tags) {
 	secondary := secondaryFromEnv()
-	accounts := showsAccounts(rows)
 	for _, r := range rows {
-		t := rowTextOf(r, accounts)
+		t := rowTextOf(r, shown)
 		display := " " + t.title + "  " + secondary + rowContext(t, secondary) + ansiReset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.ConfigDir, t.title, display)
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.title, display)
 	}
 }
 
@@ -166,18 +157,6 @@ func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		return recentFirst(rows), nil
 	}
 	return inOrder(rows, found), nil
-}
-
-func resumeCommand(cwd, sessionID, configDir string) string {
-	defaultConfig := os.Getenv("CLAUDE_CONFIG_DIR")
-	if defaultConfig == "" {
-		defaultConfig = filepath.Join(home(), ".claude")
-	}
-	env := ""
-	if resolve(configDir) != resolve(defaultConfig) {
-		env = "CLAUDE_CONFIG_DIR=" + shellQuote(configDir) + " "
-	}
-	return "cd " + shellQuote(survivingDir(cwd)) + " && " + env + "claude --resume " + shellQuote(sessionID)
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
@@ -237,6 +216,21 @@ func mustIndex(command string) []Row {
 	return rows
 }
 
+func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
+	path := resolve(arg)
+	p, ok := locate(path, places())
+	if !ok {
+		fail("hop " + command + ": not a session hop reads: " + arg)
+	}
+	rows = annotate(mustIndex(command))
+	for _, r := range rows {
+		if r.Path == path {
+			return r, true, rows
+		}
+	}
+	return Row{Agent: p.agent, Home: p.home, Path: path}, false, rows
+}
+
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(1)
@@ -264,6 +258,7 @@ func main() {
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
 		rows := annotate(mustIndex("search"))
+		shown := tagsFor(rows)
 		db := mustOpenSearch()
 		deep, words := false, []string{}
 		for _, arg := range args[1:] {
@@ -279,11 +274,11 @@ func main() {
 			if err != nil {
 				fail("hop search: " + err.Error())
 			}
-			printRows(found)
+			printRows(found, shown)
 			return
 		}
 		if strings.TrimSpace(query) == "" {
-			printRows(recentFirst(rows))
+			printRows(recentFirst(rows), shown)
 			return
 		}
 		paths, err := ask(db, query, rows)
@@ -291,7 +286,7 @@ func main() {
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		printRows(inOrder(rows, paths))
+		printRows(inOrder(rows, paths), shown)
 	case "label":
 		key := typesafeKey()
 		if key == "" {
@@ -304,7 +299,7 @@ func main() {
 		if len(args) < 2 {
 			fail("hop preview: which transcript?")
 		}
-		req := previewRequest{path: args[1], width: 80, secondary: secondaryFromEnv()}
+		req := previewRequest{width: 80, secondary: secondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--recent":
@@ -321,10 +316,11 @@ func main() {
 				}
 			}
 		}
-		mustIndex("preview")
-		header := previewHeader(req, loadCache(), statuses(), mustOpenSearch())
-		if header != nil {
-			header = append(header, "")
+		r, indexed, rows := sessionAt("preview", args[1])
+		req.agent, req.path = r.Agent, r.Path
+		var header []string
+		if indexed {
+			header = append(previewHeader(req, r, tagsFor(rows), mustOpenSearch()), "")
 		}
 		body, err := previewBody(req)
 		for _, line := range append(header, body...) {
@@ -337,13 +333,11 @@ func main() {
 		if len(args) < 2 {
 			fail("hop command: which transcript?")
 		}
-		path := resolve(args[1])
-		mustIndex("command")
-		e, ok := loadCache()[path]
-		if !ok || e.Session == nil {
+		r, indexed, _ := sessionAt("command", args[1])
+		if !indexed {
 			fail("hop command: not an indexed session: " + args[1])
 		}
-		fmt.Println(resumeCommand(e.Session.Cwd, e.Session.ID, configDirOf(path, configDirs())))
+		fmt.Println(resumeCommand(r))
 	case "pick":
 		chosen, err := pick()
 		if err != nil {
@@ -353,7 +347,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(handoffTitle(*chosen))
-		fmt.Println(resumeCommand(chosen.Session.Cwd, chosen.Session.ID, chosen.ConfigDir))
+		fmt.Println(resumeCommand(*chosen))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
