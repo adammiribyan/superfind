@@ -13,7 +13,7 @@ cd ~/src/tries/2026-10-09-claude-sessions-search
 Since about 23:04Z on 2026-10-09, GitHub has refused to start every Actions job on this repo with: "The job was not started because recent account payments have failed or your spending limit needs to be increased." Until that is fixed, no check runs: not the tests, not the signing check, not the release. Fix it one of two ways:
 
 - Fix the payment or raise the Actions spending limit at https://github.com/settings/billing. A private repo pays for every minute, and macOS minutes cost 10 times Linux ones; the signing check and the release each run two macOS jobs.
-- Or make the repo public now (step 2 below). Actions is free for public repos. The repo is ready to go public before the PRs merge.
+- Or make the repo public now (step 2 below). Actions is free for public repos. Going public before the merges means people see `main` as it is now, still named hop in places; that is your call.
 
 Check that a job really starts: push nothing, just rerun the newest test run and watch it:
 
