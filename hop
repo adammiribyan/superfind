@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Pick any Claude Code session on this machine with fzf, or preview one.
+"""hop: search past AI coding-agent sessions, then hop back into one. Today it reads Claude Code sessions.
 
-  claude-sessions pick       run the picker; prints the chosen session's title, then the
-                             shell command that resumes it
-  claude-sessions preview F  pinned header, then where the session left off, or the recent
-                             conversation when fzf's preview label says so
-  claude-sessions search Q   fzf lines for sessions whose title or conversation contains Q
-  claude-sessions ask Q      fzf lines for the sessions Claude judges most relevant to Q
+  hop pick       run the picker; prints the chosen session's title, then the
+                 shell command that resumes it
+  hop preview F  pinned header, then where the session left off, or the recent
+                 conversation when fzf's preview label says so
+  hop search Q   fzf lines for sessions whose title or conversation contains Q
+  hop ask Q      fzf lines for the sessions Claude judges most relevant to Q
 """
 import json
 import shlex
@@ -25,7 +25,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 HOME = Path.home()
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "claude-sessions" / "index.json"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "hop" / "index.json"
 CACHE_VERSION = 7
 SEARCH_DB = CACHE.with_name("search.db")
 
@@ -54,7 +54,7 @@ def config_dirs():
     candidates = [HOME / ".claude", *sorted(HOME.glob(".claude-*"))]
     if os.environ.get("CLAUDE_CONFIG_DIR"):
         candidates.insert(0, Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser())
-    extra = os.environ.get("CLAUDE_SESSIONS_DIRS", "")
+    extra = os.environ.get("HOP_CLAUDE_DIRS", "")
     candidates += [Path(p).expanduser() for p in extra.split(":") if p]
     seen, dirs = set(), []
     for d in candidates:
@@ -71,7 +71,7 @@ def truecolor(hx, fallback):
     return "\033[38;2;{};{};{}m".format(*(int(hx[i : i + 2], 16) for i in (1, 3, 5)))
 
 
-SECONDARY = truecolor(os.environ.get("CLAUDE_SESSIONS_SECONDARY", ""), DIM)
+SECONDARY = truecolor(os.environ.get("HOP_SECONDARY", ""), DIM)
 
 SLASH_COMMAND = re.compile(r"<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)", re.S)
 
@@ -482,7 +482,7 @@ def theme():
 
 
 MARK = "\033[38;2;215;119;87m✻\033[0m"
-INPUT_LABEL = f" {MARK} Claude sessions "
+INPUT_LABEL = f" {BOLD}hop{RESET} "
 ASKING_LABEL = f" {MARK} Asking Claude… "
 def footer(*pairs):
     key, word = "\033[22;39m", SECONDARY
@@ -493,7 +493,7 @@ def footer(*pairs):
 def pick():
     global SECONDARY
     selection, secondary, background = theme()
-    os.environ["CLAUDE_SESSIONS_SECONDARY"] = secondary
+    os.environ["HOP_SECONDARY"] = secondary
     SECONDARY = truecolor(secondary, DIM)
     hints = footer(("enter", "resume"), ("tab", "view"), ("⌥ enter", "ask Claude"))
     recover = footer(("⌥ enter", "ask Claude"), ("ctrl-u", "clear search"))

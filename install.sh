@@ -9,11 +9,25 @@ command -v fzf >/dev/null || { echo "fzf missing: run brew install fzf" >&2; exi
 fzf --filter=x --ghost=x --footer=x --gap-line= --input-label-pos=3 --highlight-line </dev/null >/dev/null 2>&1 && : || [ $? -ne 2 ] ||
   { echo "fzf $(fzf --version | cut -d' ' -f1) is too old for the picker's layout: run brew upgrade fzf" >&2; exit 1; }
 
-mkdir -p "$bin"
-ln -sf "$repo/claude-sessions" "$bin/claude-sessions"
-echo "linked $bin/claude-sessions"
+if grep -q 'claude-sessions\.zsh"' "$HOME/.zshrc" 2>/dev/null; then
+  sed -i '' '/claude-sessions\.zsh"/d' "$HOME/.zshrc"
+  echo "removed the old claude-sessions line from ~/.zshrc"
+fi
+if [ -L "$bin/claude-sessions" ]; then
+  rm "$bin/claude-sessions"
+  echo "removed the old claude-sessions link"
+fi
+cache="${XDG_CACHE_HOME:-$HOME/.cache}"
+if [ -d "$cache/claude-sessions" ] && [ ! -e "$cache/hop" ]; then
+  mv "$cache/claude-sessions" "$cache/hop"
+  echo "moved the search index to $cache/hop"
+fi
 
-source_line="source \"$repo/claude-sessions.zsh\""
+mkdir -p "$bin"
+ln -sf "$repo/hop" "$bin/hop"
+echo "linked $bin/hop"
+
+source_line="source \"$repo/hop.zsh\""
 if ! grep -qF "$source_line" "$HOME/.zshrc" 2>/dev/null; then
   printf '\n%s\n' "$source_line" >> "$HOME/.zshrc"
   echo "added widget to ~/.zshrc"
@@ -30,4 +44,4 @@ if ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
   echo "added Cmd-Shift-O to $ghostty (reload Ghostty config with Cmd-Shift-,)"
 fi
 
-echo "done: open a new shell, then press Cmd-Shift-O in Ghostty or Ctrl-X c anywhere"
+echo "done: open a new shell, then press Cmd-Shift-O in Ghostty, Ctrl-X c anywhere, or run hop"

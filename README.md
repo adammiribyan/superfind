@@ -1,6 +1,6 @@
-# claude-sessions
+# hop
 
-Fuzzy-search every Claude Code session on your Mac, then jump into its directory and resume it.
+Search every AI coding-agent session on your Mac, then hop back into one: hop opens the session's directory and resumes it. Today it reads Claude Code sessions; other harnesses come later.
 
 Press Cmd-Shift-O in Ghostty, or Ctrl-X c in any zsh. Type to search titles, projects, branches, and the conversations themselves: your prompts and Claude's replies. Every word must match; title matches come first, and the preview shows the passage that matched. Press Option-Enter (⌥↩) to ask Claude instead: it ranks sessions by meaning, so a question like "where did we automate QA notes?" finds the right session even when the words differ. Asking takes a few seconds and costs under a cent per question. Enter runs `cd <dir> && claude --resume <id>` in the current pane and saves it to your shell history.
 
@@ -12,16 +12,16 @@ The preview opens on where each session left off: your last request and the end 
 
 ```sh
 brew install fzf   # or brew upgrade fzf; the layout needs a 2025 or newer release
-git clone <this repo> ~/src/claude-sessions
-~/src/claude-sessions/install.sh
+git clone <this repo> ~/src/hop
+~/src/hop/install.sh
 ```
 
-The installer links `claude-sessions` into `~/.local/bin`, sources the zsh widget from `~/.zshrc`, and adds the Ghostty keybind. Re-running it changes nothing. It needs python3, which the Xcode Command Line Tools provide.
+The installer links `hop` into `~/.local/bin`, sources the zsh widget from `~/.zshrc`, and adds the Ghostty keybind. Re-running it changes nothing. It needs python3, which the Xcode Command Line Tools provide.
 
 ## Behavior
 
-- Sessions come from `~/.claude/projects`, plus every `~/.claude-*` directory, `$CLAUDE_CONFIG_DIR`, and any directories in colon-separated `$CLAUDE_SESSIONS_DIRS`. When more than one directory has sessions, each row shows which one it came from, and resume sets `CLAUDE_CONFIG_DIR` to match.
+- Sessions come from `~/.claude/projects`, plus every `~/.claude-*` directory, `$CLAUDE_CONFIG_DIR`, and any directories in colon-separated `$HOP_CLAUDE_DIRS`. When more than one directory has sessions, each row shows which one it came from, and resume sets `CLAUDE_CONFIG_DIR` to match.
 - Accounts you switch between with `/login` share one directory, so their sessions all appear. Resume uses whichever account is logged in now.
 - Sessions whose directory was deleted (common with worktrees) are marked `folder removed`. Resume runs from the nearest parent that still exists.
-- The index is cached in `~/.cache/claude-sessions/`: session details in `index.json`, conversation text in a SQLite full-text index, `search.db`. Only transcripts that changed since the last run get re-read.
-- Run `ccs` to use the picker without the keybind.
+- The index is cached in `~/.cache/hop/`: session details in `index.json`, conversation text in a SQLite full-text index, `search.db`. Only transcripts that changed since the last run get re-read.
+- Run `hop` to use the picker without the keybind. `hop search <words>` and `hop ask <question>` print matches without opening the picker.
