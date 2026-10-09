@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 
 HOP = Path(os.environ.get("HOP_BIN", Path(__file__).resolve().parent.parent / "bin" / "hop"))
@@ -66,6 +67,26 @@ def codex_aborted():
     return line(timestamp="2026-10-09T10:00:00Z", type="event_msg", payload={"type": "turn_aborted", "reason": "interrupted"})
 
 
+def grok_user(text, raw=False, **extra):
+    wrapped = text if raw else f"<user_query>\n{text}\n</user_query>"
+    return line(type="user", content=[{"type": "text", "text": wrapped}], prompt_index=0, **extra)
+
+
+def grok_reply(text, tools=0):
+    return line(type="assistant", content=text, model_id="grok-4.7",
+                tool_calls=[{"id": f"call{i}", "name": "run_terminal_cmd", "arguments": "{}"} for i in range(tools)])
+
+
+def grok_result():
+    return line(type="tool_result", content="ok", tool_call_id="call0")
+
+
+def grok_synthetic(text):
+    return line(type="user", content=[{"type": "text", "text": text}], synthetic_reason="system_reminder")
+
+
+GROK_SYSTEM = line(type="system", content="You are Grok.")
+GROK_OPENER = line(type="user", content=[{"type": "text", "text": "<user_info>\nOS: macOS\n</user_info>\n<rules>\nbe careful\n</rules>"}])
 CODEX_ENVIRONMENT = "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_context>"
 
 
@@ -97,6 +118,27 @@ class HopBehavior(unittest.TestCase):
     def codex_name(self, session_id, name, home=".codex"):
         with open(self.home / home / "session_index.jsonl", "a") as index:
             index.write(line(id=session_id, thread_name=name, updated_at="2026-10-09T10:00:00Z") + "\n")
+
+    def grok_session(self, session_id, cwd, *lines, title=None, manual=False, kind=None, home=".grok", summary=True):
+        folder = self.home / home / "sessions" / urllib.parse.quote(cwd, safe="") / session_id
+        folder.mkdir(parents=True)
+        chat = folder / "chat_history.jsonl"
+        chat.write_text("\n".join(lines) + "\n")
+        written = [chat]
+        if summary:
+            written.append(folder / "summary.json")
+            self.grok_summary(chat, cwd, title, manual, kind)
+        self.tick(*written)
+        return chat.resolve()
+
+    def grok_summary(self, chat, cwd, title=None, manual=False, kind=None):
+        fields = {"info": {"id": chat.parent.name, "cwd": cwd}, "head_branch": "main", "title_is_manual": manual,
+                  "created_at": "2026-10-09T10:00:00Z", "num_messages": 4}
+        if title:
+            fields.update(session_summary=title, generated_title=title)
+        if kind:
+            fields["session_kind"] = kind
+        (chat.parent / "summary.json").write_text(json.dumps(fields, indent=2))
 
     def record_typesafe(self):
         import http.server
@@ -661,6 +703,104 @@ class HopBehavior(unittest.TestCase):
         self.hop("index")
         self.assertEqual(self.hop("preview", str(path)).splitlines()[5:],
                          ["you", "  now add a test for the retries", "", "codex", "  Added a retry test."])
+
+    def test_a_grok_session_is_listed_and_resumes_with_grok(self):
+        path = self.grok_session(uid(1), "/tmp", GROK_SYSTEM, GROK_OPENER, grok_user("rate the code in this repo"),
+                                 grok_reply("", tools=1), grok_result(), grok_reply("It reads well."), title="Rating the code")
+        self.assertEqual(self.titles(), ["Rating the code"])
+        self.assertEqual(self.hop("command", str(path)), f"cd /tmp && grok --resume {uid(1)}\n")
+
+    def test_a_grok_home_other_than_the_default_is_passed_to_grok(self):
+        work = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), home="work-grok")
+        self.grok_session(uid(2), "/tmp", grok_user("rename the export job"), grok_reply("Renamed.", tools=1))
+        home = self.home.resolve()
+        self.env["HOP_GROK_DIRS"] = str(home / "work-grok")
+        self.assertEqual(self.rows(), ["rename the export job  1d ago · tmp · .grok",
+                                       "fix the build  1d ago · tmp · work-grok"])
+        self.assertEqual(self.hop("command", str(work)), f"cd /tmp && GROK_HOME={home}/work-grok grok --resume {uid(1)}\n")
+        shutil.rmtree(self.home / ".grok")
+        self.env["GROK_HOME"] = str(home / "work-grok")
+        self.assertEqual(self.hop("command", str(work)), f"cd /tmp && grok --resume {uid(1)}\n")
+
+    def test_a_grok_title_that_arrives_after_the_chat_is_picked_up(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("rate the code in this repo"), grok_reply("It reads well."))
+        self.assertEqual(self.titles(), ["rate the code in this repo"])
+        self.grok_summary(chat, "/tmp", title="Rating the code")
+        self.tick(chat.parent / "summary.json")
+        self.assertEqual(self.titles(), ["Rating the code"])
+
+    def test_a_grok_reply_written_after_the_summary_is_picked_up(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("rate the code in this repo"), grok_reply("It reads well."),
+                                 title="Rating the code")
+        self.assertEqual(self.titles("kubernetes"), [])
+        with open(chat, "a") as history:
+            history.write(grok_reply("Also check the kubernetes manifests.") + "\n")
+        self.tick(chat)
+        self.assertEqual(self.titles("kubernetes"), ["Rating the code"])
+        self.assertIn("  Also check the kubernetes manifests.", self.hop("preview", str(chat)))
+
+    def test_a_grok_session_without_a_summary_takes_its_folder_from_the_directory_name(self):
+        self.grok_session(uid(1), "/work/billing", grok_user("fix the build"), grok_reply("Fixed."), summary=False)
+        self.hop("index")
+        self.assertEqual([row.split("\t")[1] for row in self.hop("search").splitlines()], ["/work/billing"])
+
+    def test_a_grok_summary_that_cannot_be_read_is_read_again_next_time(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix")
+        summary = chat.parent / "summary.json"
+        good = summary.read_text()
+        summary.write_text("x" + good[1:])
+        self.tick(summary)
+        self.assertEqual(self.run_hop("index").returncode, 0)
+        self.assertEqual(self.titles(), [])
+        stamp = os.stat(summary).st_mtime_ns
+        summary.write_text(good)
+        os.utime(summary, ns=(stamp, stamp))
+        self.assertEqual(self.titles(), ["Build fix"])
+
+    def test_grok_subagent_runs_are_hidden(self):
+        self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix")
+        self.grok_session(uid(2), "/tmp", grok_user("inspect the failing test"), grok_reply("Inspected."),
+                          title="Failing test", kind="subagent")
+        self.assertEqual(self.titles(), ["Build fix"])
+
+    def test_grok_prompts_are_the_words_inside_the_query_tag(self):
+        chat = self.grok_session(
+            uid(1), "/tmp", GROK_SYSTEM, GROK_OPENER, grok_synthetic("<system-reminder>Keep working on:\n<user_query>\nadd retries to the uploader\n</user_query>\n"
+                                                    "</system-reminder>"),
+            grok_user("add retries to the uploader"), grok_reply("", tools=1), grok_result(),
+            grok_user("The user interrupted the previous turn:\n<user_query>\nstop\n</user_query>\n"
+                      "Make sure to complete any unfinished tasks from previous turns.", raw=True,
+                      prior_turn_interrupt="mid_turn_abort"),
+            grok_reply("Stopped."),
+            grok_user("The user sent a message while you were working:\n<user_query>\nuse the request library\n</user_query>\n"
+                      "Make sure to complete any unfinished tasks from previous turns.", raw=True),
+            grok_reply("Switched to the request library."), title="Uploader retries")
+        self.hop("index")
+        preview = self.hop("preview", str(chat))
+        self.assertEqual(preview.splitlines()[1].split(" · ")[-1], "3 prompts")
+        self.assertIn("you\n  use the request library\n", preview)
+        self.assertNotIn("Make sure", preview)
+
+    def test_a_grok_prompt_with_no_reply_says_grok_stopped(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("deploy the ledger migration"), grok_reply("", tools=1),
+                                 grok_result(), grok_reply("Deployed to staging."),
+                                 grok_user("now deploy it to production please"), title="Ledger deploy")
+        self.hop("index")
+        self.assertEqual(self.hop("preview", str(chat)).splitlines()[-1], "  No reply yet. Grok stopped before answering.")
+        requests = self.record_typesafe()
+        self.run_hop("label")
+        state = requests[0]["state"]
+        self.assertEqual((state["last_event"], [t["who"] for t in state["recent_turns"]]),
+                         ("The developer's last action was sending a request that Grok never answered.",
+                          ["developer", "grok", "developer"]))
+
+    def test_a_hostile_grok_folder_name_cannot_inject_shell_commands(self):
+        folder = self.home.resolve() / "a'b;echo PWNED"
+        folder.mkdir()
+        chat = self.grok_session(uid(1), str(folder), grok_user("fix the build"), grok_reply("Fixed."), summary=False)
+        self.hop("index")
+        quoted = str(folder).replace("'", "'\"'\"'")
+        self.assertEqual(self.hop("command", str(chat)), f"cd '{quoted}' && grok --resume {uid(1)}\n")
 
 
 if __name__ == "__main__":
