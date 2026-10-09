@@ -13,21 +13,17 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 ## Install
 
-superfind is a single binary with no other dependencies. It resumes a session with the agent that made it, so it needs [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session.
+superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 on the first build.
 
 ### With Homebrew or Go
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
-```
-
-Or, with Go 1.26 or newer:
-
-```sh
+# or
 go install github.com/adammiribyan/superfind@latest
 ```
 
-Then add one line to your shell's startup file, so choosing a session can change your shell's folder:
+Then add one line to your shell's startup file. It defines the `superfind` and `sfd` commands, which open the picker and move your shell to the folder of the session you choose:
 
 ```sh
 eval "$(superfind init zsh)"     # in ~/.zshrc
@@ -42,7 +38,7 @@ keybind = super+shift+o=text:\x18c
 
 ### From source
 
-This replaces the steps above. You need Go 1.21 or newer. The first build downloads superfind's modules, and Go 1.26 as well if your Go is older than that.
+Use this instead of the steps above; it does all of them.
 
 ```sh
 git clone https://github.com/adammiribyan/superfind.git
@@ -50,44 +46,48 @@ cd superfind
 ./install.sh
 ```
 
-`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you. It adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the Cmd-Shift-O keybind to your Ghostty config (`~/.config/ghostty/config`, or `~/Library/Application Support/com.mitchellh.ghostty/config` on macOS when only that one exists), creating the file if needed; reload Ghostty's config with Cmd-Shift-, (comma) to use it. Running it again rebuilds superfind but never adds a line twice.
+`install.sh` builds superfind, copies it to `~/.local/bin`, and adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the keybind above to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
 
-`~/.local/bin` doesn't need to be on your PATH. The setup line defines `superfind` and `sfd` as shell functions that run the binary by its full path, so every command below works in your shell. Add `~/.local/bin` to your PATH only to run superfind from scripts or other shells.
+`~/.local/bin` doesn't need to be on your PATH: the setup line runs superfind by its full path. Add it to your PATH only to run superfind from scripts or other shells.
 
-### Then
+### Check it works
 
-The setup line takes effect in shells started after you add it, so open a new terminal tab, or `source` the startup file in the shell you have. Then type `superfind`, or `sfd` for short. If that doesn't open the picker, `type superfind` should say it is a shell function; if it doesn't, the setup line didn't run.
+The setup line takes effect in shells started after you add it, so open a new terminal tab, or `source` the startup file in the shell you have. Then type `superfind`, or `sfd` for short. If the picker doesn't open, run `type superfind`: it should say superfind is a shell function. If it doesn't, the setup line didn't run.
 
 ## Use
 
-Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen and leaves your terminal exactly as it was when you choose or cancel.
+Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
 
 | Key | Does |
 |---|---|
-| type | Search titles, projects, branches, and the conversations themselves for the words you type. Every word must match. Titles that match come first. |
+| Type words | Search titles, projects, branches, and the conversations themselves. Every word must match. Titles that match come first. |
 | Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
-| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). superfind prints `Resuming` and the session's title, then the agent takes over the terminal. When you leave the agent, your shell stays in the session's folder. The command lands in your shell history, as in `cd ~/code/storefront && claude --resume <id>`. |
+| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
 | Ctrl-U | Clear the search. |
 | Esc, Ctrl-C | Close the picker without resuming anything. |
-| `is:waiting` | Show only sessions waiting on you. `is:unfinished` works the same way. |
-| `agent:codex` | Show only Codex sessions. `agent:claude` and `agent:grok` work the same way. |
+
+Add `agent:claude`, `agent:codex`, or `agent:grok` to your words to show one agent's sessions, and `is:waiting` or `is:unfinished` to show the sessions marked [waiting on you](#waiting-on-you).
 
 Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
+When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command lands in your shell history, such as `cd /Users/you/code/storefront && claude --resume <id>`, and when you leave the agent, your shell stays in that folder.
+
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
+
+superfind takes its colors from your terminal. If your terminal doesn't report them, the selected row is shown in reverse video instead of tinted. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video.
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds. While it asks, the search box is titled "Asking…" and the list is empty. Then the title goes back to "Sessions" and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search. For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
+Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While it asks, the search box is titled "Asking…". Then the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search.
 
-Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
+For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list.
 
-The picker doesn't show which one answered: it is Jev whenever a key is set.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
 
 Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
 
@@ -99,17 +99,19 @@ Measured on 21 test searches, each phrased differently from the session it shoul
 | Time to results, slowest | 1.7 s | 8.6 s |
 | Cost per search | $0.0036 | $0.0073 |
 
-Claude puts the right session first slightly more often. Jev is about three times faster and half the price.
+Claude puts the right session first slightly more often. Jev is two to three times faster at the median, five times faster at the slowest, and half the price.
 
-With Jev, the preview also shows the passage that best matches your search for the top five results. It appears about a second after the results.
+With Jev, the preview also shows the passage that best matches your search for the top five results. It appears shortly after the results.
 
-Without a TypeSafe key, ask uses Claude Haiku through your Claude Code login, whichever agent made the sessions, so it needs Claude Code installed and counts toward your Claude plan. To use Jev instead, get a key from [TypeSafe](https://docs.typesafe.ai) and set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/superfind/env` (in a source checkout, a git-ignored `.env` at the repo root also works):
+Without a TypeSafe key, ask uses Claude Haiku through your Claude Code login, whichever agent made the sessions, so it needs Claude Code installed and counts toward your Claude plan. To use Jev instead, get a key from [TypeSafe](https://docs.typesafe.ai) and set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/superfind/env`:
 
 ```sh
 TYPESAFE_API_KEY=your-key
 ```
 
-Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`. If asking fails, the line under the search box says why, and typing goes back to search. For example, "Claude Code didn't answer" usually means Claude Code isn't installed or isn't logged in; run `claude` once to log in.
+Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`.
+
+If asking fails, the line under the search box says why, and typing goes back to search. For example, "Claude Code didn't answer" usually means Claude Code isn't installed or isn't logged in; run `claude` once to log in.
 
 ## Waiting on you
 
@@ -119,7 +121,7 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 ## What leaves your machine
 
-Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+Asking sends your description, and each session's title, project, age, last request, and one short passage, to the ranker: to TypeSafe with a key, to Anthropic without one, and to Anthropic as well when TypeSafe fails to answer. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Labeling sends the ending (its last six turns, clipped) of each session written in the last two weeks to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
@@ -129,7 +131,7 @@ superfind has no telemetry, analytics, or update checks. The requests above are 
 - Codex: `~/.codex/sessions`, every `~/.codex-*` folder, `$CODEX_HOME`, and `$SUPERFIND_CODEX_DIRS`. Sessions you archived and threads Codex started on its own, such as subagents and reviews, are left out.
 - Grok: `~/.grok/sessions`, every `~/.grok-*` folder, `$GROK_HOME`, and `$SUPERFIND_GROK_DIRS`. Subagent runs are left out.
 - When one agent's sessions come from more than one folder, each row says which, and resuming sets that agent's home variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME`) to match.
-- Accounts you switch between with `/login` share one folder, so all their sessions appear. Resuming uses whichever account is logged in now.
+- Claude Code accounts you switch between with `/login` share one folder, so all their sessions appear. Resuming uses whichever account is logged in now.
 - A session whose folder was deleted, which is common with worktrees, is marked **folder removed** and resumes from the nearest parent folder that still exists.
 
 ## Commands
@@ -141,6 +143,7 @@ superfind search <words>     # print sessions that contain every word
 superfind ask <words>        # print the sessions that best fit your description
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
 superfind command <session>  # print the command that resumes a session
+superfind pick               # open the picker, then print the chosen session's title and resume command
 superfind index              # build or refresh the index
 superfind label              # mark sessions waiting on you (needs a TypeSafe key)
 superfind --version
@@ -148,9 +151,20 @@ superfind --version
 
 `search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and the row as the picker shows it. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it to `preview` or `command`.
 
-The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set. Each run re-reads only the sessions that changed, so opening the picker stays instant. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
+The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set. Each run re-reads only the sessions that changed, and the picker opens from the index while it refreshes in the background. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 
-superfind takes its colors from your terminal. Until your terminal reports them, superfind shows the selected row in reverse video, and it switches to the tinted row as soon as they arrive. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video, and always shows the selected row in reverse video.
+## Settings
+
+These environment variables change what superfind does:
+
+| Variable | Does | See |
+|---|---|---|
+| `TYPESAFE_API_KEY` | Ask with Jev and turn on labels. Can also go in `~/.config/superfind/env`. | [Ask](#ask-for-the-session-you-remember) |
+| `TYPESAFE_URL` | Send TypeSafe requests to another endpoint. | [Ask](#ask-for-the-session-you-remember) |
+| `SUPERFIND_CLAUDE_DIRS`, `SUPERFIND_CODEX_DIRS`, `SUPERFIND_GROK_DIRS` | Read sessions from more folders, separated by colons. | [Sessions it finds](#sessions-it-finds) |
+| `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME` | Read each agent's sessions from where that agent keeps them. | [Sessions it finds](#sessions-it-finds) |
+| `XDG_CACHE_HOME` | Keep the index in `$XDG_CACHE_HOME/superfind/`. | [Commands](#commands) |
+| `NO_COLOR` | Turn color off. | [Use](#use) |
 
 ## Uninstall
 
@@ -162,7 +176,7 @@ rm "$(go env GOPATH)/bin/superfind"                # go install, or $GOBIN/super
 rm ~/.local/bin/superfind                          # install.sh
 ```
 
-Delete the `eval "$(superfind init …)"` line from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
+Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
 
 ```sh
 rm -rf ~/.cache/superfind ~/.config/superfind      # and $XDG_CACHE_HOME/superfind if you set XDG_CACHE_HOME

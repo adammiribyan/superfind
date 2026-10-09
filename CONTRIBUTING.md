@@ -4,7 +4,7 @@ Thanks for helping. Bug reports, fixes, and ideas are all welcome. For a larger 
 
 ## Build
 
-You need Go 1.26 or newer.
+You need Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 on the first build.
 
 ```sh
 go build -o bin/superfind .
