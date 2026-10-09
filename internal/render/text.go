@@ -190,7 +190,7 @@ func wrap(text string, width int, first, rest string) []string {
 				space = 1
 			}
 			head, tail := cutToWidth(chunks[0], space)
-			if space <= 0 {
+			if space <= 0 || (used > 0 && displayWidth(head) > space) {
 				head, tail = "", chunks[0]
 			}
 			if h := strings.LastIndex(head, "-"); h > 0 && strings.Trim(head[:h], "-") != "" {
