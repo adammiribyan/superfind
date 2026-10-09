@@ -80,8 +80,15 @@ func loadCache() map[string]cacheEntry {
 	return c.Files
 }
 
+func makeCacheDir() error {
+	if err := os.MkdirAll(CacheDir(), 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(CacheDir(), 0o700)
+}
+
 func writeAtomically(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := makeCacheDir(); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
@@ -100,10 +107,10 @@ func writeAtomically(path string, data []byte) error {
 }
 
 func lockFile(name string) (func(), error) {
-	if err := os.MkdirAll(CacheDir(), 0o755); err != nil {
+	if err := makeCacheDir(); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(CachePath(name), os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(CachePath(name), os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -134,11 +141,22 @@ func CachedRows() []Row {
 }
 
 func OpenSearch() (*sql.DB, error) {
-	if err := os.MkdirAll(CacheDir(), 0o755); err != nil {
+	if err := makeCacheDir(); err != nil {
 		return nil, err
 	}
 	path, err := filepath.Abs(CachePath("search.db"))
 	if err != nil {
+		return nil, err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		os.Chmod(path+suffix, 0o600)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	if err := os.Chmod(path, 0o600); err != nil {
 		return nil, err
 	}
 	location := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"}
@@ -233,6 +251,9 @@ func Index(announce func(stale int)) ([]Row, error) {
 			names = p.Agent.Names(p.Home)
 		}
 		for _, path := range p.Agent.Sessions(p.Home) {
+			if strings.HasPrefix(p.Agent.IDOf(path), "-") {
+				continue
+			}
 			if id, mtime, err := p.Agent.Stat(path); err == nil {
 				all = append(all, found{p, path, id, mtime, names[p.Agent.IDOf(path)]})
 			}
