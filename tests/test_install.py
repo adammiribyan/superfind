@@ -39,6 +39,19 @@ class Installer(unittest.TestCase):
         self.assertEqual(self.install("bash").returncode, 0)
         self.assertEqual(self.startup_file("bash").read_text(), '\neval "$("$HOME/.local/bin/superfind" init bash)"\n')
 
+    def test_a_failed_copy_leaves_the_installed_superfind_working(self):
+        self.assertEqual(self.install("zsh").returncode, 0)
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "cp").write_text('#!/bin/sh\n: > "$2"\nexit 1\n')
+        (stub / "cp").chmod(0o755)
+        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES}
+        self.assertNotEqual(subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True).returncode, 0)
+        installed = self.home / ".local" / "bin"
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), ["superfind"])
+        result = subprocess.run([str(installed / "superfind"), "--version"], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout.startswith("superfind ")), (0, True))
+
     def test_superfind_keeps_working_after_the_clone_is_deleted(self):
         self.install("zsh")
         shutil.rmtree(self.clone)

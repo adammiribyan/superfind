@@ -7,8 +7,9 @@ bin="$HOME/.local/bin"
 command -v go >/dev/null || { echo "go missing: install Go 1.26 or newer from https://go.dev/dl" >&2; exit 1; }
 (cd "$repo" && go build -o bin/superfind .)
 mkdir -p "$bin"
-rm -f "$bin/superfind"
-cp "$repo/bin/superfind" "$bin/superfind"
+trap 'rm -f "$bin/.superfind.$$"' EXIT
+cp "$repo/bin/superfind" "$bin/.superfind.$$"
+mv -f "$bin/.superfind.$$" "$bin/superfind"
 echo "installed $bin/superfind ($("$bin/superfind" --version))"
 
 case "$(basename "${SHELL:-}")" in
