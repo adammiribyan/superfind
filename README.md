@@ -42,7 +42,7 @@ keybind = super+shift+o=text:\x18c
 
 ### From source
 
-You need Go. If yours is older than 1.26, Go downloads the 1.26 toolchain on the first build.
+You need Go. The first build downloads superfind's modules, and the Go 1.26 toolchain too if your Go is older.
 
 ```sh
 git clone https://github.com/adammiribyan/superfind.git
@@ -50,11 +50,13 @@ cd superfind
 ./install.sh
 ```
 
-`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you: it adds the setup line to your shell's startup file, and the Cmd-Shift-O keybind to your Ghostty config if Ghostty is installed. Running it again changes nothing. `~/.local/bin` doesn't need to be on your PATH, because the setup line runs superfind from there by its full path. Add it to your PATH only if you want to run superfind from scripts or other shells.
+`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you. It adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the Cmd-Shift-O keybind to your Ghostty config, creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
+
+`~/.local/bin` doesn't need to be on your PATH. The setup line defines `superfind` and `sfd` as shell functions that run the binary by its full path, so every command below works in your shell. Add `~/.local/bin` to your PATH only to run superfind from scripts or other shells.
 
 ### Then
 
-Open a new terminal tab and type `superfind`, or `sfd` for short.
+The setup line takes effect in shells started after you add it, so open a new terminal tab, or `source` the startup file in the shell you have. Then type `superfind`, or `sfd` for short.
 
 ## Use
 
@@ -64,7 +66,7 @@ Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shi
 |---|---|
 | type | Search titles, projects, branches, and the conversations themselves for the words you type. Every word must match. Titles that match come first. |
 | Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
-| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). The command lands in your shell history. |
+| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). superfind prints `Resuming` and the session's title, then the agent takes over the terminal. The command lands in your shell history. |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
@@ -81,7 +83,7 @@ A session written in the last two minutes shows **active now**, because it's pro
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the picker and press **Ctrl-R**. While it asks, the search box is titled "Asking…". Then superfind lists only the sessions that fit, best match first, so the list may hold just one. Typing again goes back to search. For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
+Often you remember what a session was about but not the words it used. Type a description in the picker and press **Ctrl-R**. While it asks, the search box is titled "Asking…" and the list is empty. Then the title goes back to "Sessions" and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search. For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
 
