@@ -1420,6 +1420,12 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("the"), ["C extension"])
         self.assertEqual(sorted(self.titles("to")), ["Rust port"])
 
+    def test_filters_in_the_query_do_not_hide_the_matching_passage(self):
+        path = self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        for query in ("redirect", "agent:claude redirect", "is:unfinished redirect"):
+            self.assertIn("redirect", self.superfind("preview", str(path), "--query", query).splitlines()[3], query)
+
 
 if __name__ == "__main__":
     unittest.main()
