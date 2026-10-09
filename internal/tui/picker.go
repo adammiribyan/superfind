@@ -2,6 +2,7 @@ package tui
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"image/color"
 	"os"
@@ -160,6 +161,7 @@ type picker struct {
 
 	cursor, offset int
 	width, height  int
+	screenHeight   int
 	colors         theme
 
 	recent      bool
@@ -172,6 +174,7 @@ type picker struct {
 
 	chosen   *session.Row
 	quitting bool
+	reindex  bool
 }
 
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
@@ -200,12 +203,14 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	return m
 }
 
+func index() tea.Msg {
+	rows, err := session.Index(nil)
+	return indexed{rows, err}
+}
+
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		func() tea.Msg {
-			rows, err := session.Index(nil)
-			return indexed{rows, err}
-		},
+		index,
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
 		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
@@ -242,9 +247,7 @@ func (m *picker) styleInput() {
 	styles.Focused.Prompt = m.colors.accent
 	styles.Focused.Text = lipgloss.NewStyle()
 	styles.Focused.Placeholder = m.colors.muted
-	if m.colors.noColor {
-		styles.Cursor.Color = nil
-	}
+	styles.Cursor.Color = nil
 	m.input.SetStyles(styles)
 }
 
@@ -282,10 +285,13 @@ func (m *picker) filter() {
 	default:
 		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
+		if errors.Is(err, session.ErrDamaged) {
+			m.db, m.shown, m.reindex = nil, m.all, true
+		}
 		switch {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
-		case len(m.shown) == 0:
+		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
 	}
@@ -412,6 +418,7 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.screenHeight = msg.Height
 		m.width, m.height = max(msg.Width-2*marginSide, 1), max(msg.Height-marginTop, 1)
 		m.input.SetWidth(max(m.layout().listWidth-14, 4))
 		return m.afterMove()
@@ -438,9 +445,19 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
+		if msg.err == nil {
+			if db, err := session.OpenSearch(); err == nil {
+				if m.db != nil && !m.asking {
+					m.db.Close()
+				}
+				m.db, m.dbProblem = db, ""
+			}
+		}
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
+		} else if len(m.all) == 0 && m.problem == "" {
+			m.problem = render.NoSessions()
 		}
 		if m.askedFor != "" {
 			m.shown = session.InOrder(m.all, pathsOf(m.shown))
@@ -560,6 +577,10 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.search()
+	if m.reindex {
+		m.reindex = false
+		cmd = tea.Batch(cmd, index)
+	}
 	updated, load := m.afterMove()
 	return updated, tea.Batch(cmd, load)
 }
@@ -608,7 +629,9 @@ func (m picker) inputBox(width int) []string {
 func (m picker) footer(width int) string {
 	muted := m.colors.muted
 	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
-	if len(m.shown) == 0 {
+	if len(m.all) == 0 {
+		pairs = [][2]string{{"esc", "quit"}}
+	} else if len(m.shown) == 0 {
 		pairs = [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
 	line, used := "", 1
@@ -686,12 +709,13 @@ func (m picker) View() tea.View {
 	default:
 		screen = append(column, "", m.footer(m.width))
 	}
-	screen = screen[:min(len(screen), m.height)]
+	screen = append(make([]string, marginTop), screen[:min(len(screen), m.height)]...)
+	screen = screen[:min(len(screen), m.screenHeight)]
 	side := strings.Repeat(" ", marginSide)
-	for i := range screen {
+	for i := marginTop; i < len(screen); i++ {
 		screen[i] = side + screen[i]
 	}
-	view := tea.NewView(strings.Repeat("\n", marginTop) + strings.Join(screen, "\n"))
+	view := tea.NewView(strings.Join(screen, "\n"))
 	view.AltScreen = true
 	if c := m.input.Cursor(); c != nil && !m.asking && m.height > 1 {
 		c.Position.X += 2 + marginSide

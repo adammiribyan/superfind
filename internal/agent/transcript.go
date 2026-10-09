@@ -6,7 +6,30 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
 )
+
+const bidiControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+func Bidi(r rune) bool { return strings.ContainsRune(bidiControls, r) }
+
+func dropped(r rune) bool {
+	return (r < 0x20 && !strings.ContainsRune("\t\n\r\v\f", r)) || (r >= 0x7f && r < 0xa0) || Bidi(r)
+}
+
+func Printable(s string) string {
+	if !strings.ContainsFunc(s, dropped) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if dropped(r) {
+			return -1
+		}
+		return r
+	}, ansi.Strip(s))
+}
 
 type Event string
 
@@ -29,7 +52,7 @@ type Transcript struct {
 	Turns                            []Turn
 	ToolCalls                        int
 	Last                             Event
-	Hidden                           bool
+	Hidden, Incomplete               bool
 }
 
 type reader interface {
