@@ -213,6 +213,11 @@ func index() tea.Msg {
 	return indexed{rows, problems, err}
 }
 
+func rebuild() tea.Msg {
+	rows, problems, err := session.Rebuild(nil)
+	return indexed{rows, problems, err}
+}
+
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		index,
@@ -614,7 +619,7 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.search()
 	if m.reindex {
 		m.reindex = false
-		cmd = tea.Batch(cmd, index)
+		cmd = tea.Batch(cmd, rebuild)
 	}
 	updated, load := m.afterMove()
 	return updated, tea.Batch(cmd, load)
@@ -783,12 +788,20 @@ func Pick() (*session.Row, error) {
 	if render.NoColor {
 		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
 	}
-	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), options...).Run()
+	start := newPicker(session.CachedRows(), db, problem)
+	final, err := tea.NewProgram(start, options...).Run()
+	start.asks.stop()
+	stopped := make(chan struct{})
+	go func() {
+		start.asks.running.Wait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+	}
 	if err != nil {
 		return nil, err
 	}
-	m := final.(picker)
-	m.asks.stop()
-	m.asks.running.Wait()
-	return m.chosen, nil
+	return final.(picker).chosen, nil
 }

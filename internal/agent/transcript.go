@@ -101,6 +101,15 @@ func openFile(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
+func readSmall(path string) ([]byte, error) {
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, longestLine))
+}
+
 func eachLine(path string, fn func(raw []byte) bool) error {
 	f, err := openFile(path)
 	if err != nil {
@@ -187,7 +196,9 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 			if end == 0 {
 				end = len(buf)
 			}
-			r.feed(buf[:end])
+			if end <= longestLine {
+				r.feed(buf[:end])
+			}
 			buf = buf[end:]
 		}
 		turns := r.done().Turns

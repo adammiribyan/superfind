@@ -221,6 +221,7 @@ func runClaude(ctx context.Context, args []string, input string) ([]byte, error)
 	defer os.RemoveAll(dir)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	cmd.Stdin = strings.NewReader(input)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

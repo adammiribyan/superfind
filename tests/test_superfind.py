@@ -192,7 +192,7 @@ class SuperfindBehavior(unittest.TestCase):
         stub.mkdir(exist_ok=True)
         log = self.home / "claude.log"
         answer = json.dumps({"result": reply})
-        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\nprintf '%s\\t%s\\t%s\\n' \"$(pwd)\" \"$(ls -A | wc -l | tr -d ' ')\" \"$*\" >> {log}\n"
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\nprintf '%s\\t%s\\t%s\\t%s\\n' \"$(pwd)\" \"$(ls -A | wc -l | tr -d ' ')\" \"$*\" \"$CLAUDE_CODE_DISABLE_AUTO_MEMORY\" >> {log}\n"
                                      f"echo '{answer}'\n")
         (stub / "claude").chmod(0o755)
         self.env["PATH"] = f"{stub}:/usr/bin:/bin"
@@ -1242,7 +1242,8 @@ class SuperfindBehavior(unittest.TestCase):
         result = subprocess.run([str(SUPERFIND), "ask", "where did we migrate the ledger"], env=self.env, cwd=work,
                                 capture_output=True, text=True)
         self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()]), (0, ["Ledger migration"]))
-        [(folder, entries, args)] = [l.split("\t") for l in log.read_text().splitlines()]
+        [(folder, entries, args, memory_off)] = [l.split("\t") for l in log.read_text().splitlines()]
+        self.assertEqual(memory_off, "1")
         self.assertNotEqual(Path(folder).resolve(), work.resolve())
         self.assertEqual(entries, "0")
         self.assertIn("--setting-sources= --strict-mcp-config", args)
@@ -1466,6 +1467,51 @@ class SuperfindBehavior(unittest.TestCase):
                 result = subprocess.run([str(SUPERFIND), *args], env=self.env, stdout=full, stderr=subprocess.PIPE, text=True)
             self.assertEqual(result.returncode, 1, args)
             self.assertIn("superfind: couldn't write the output", result.stderr, args)
+
+    def test_a_grok_summary_that_is_a_fifo_or_device_neither_hangs_nor_fills_memory(self):
+        fifo = self.grok_session(uid(1), "/work/a", grok_user("fix the build"), grok_reply("Fixed."), summary=False)
+        os.mkfifo(fifo.parent / "summary.json")
+        zero = self.grok_session(uid(2), "/work/b", grok_user("rename the job"), grok_reply("Renamed."), summary=False)
+        os.symlink("/dev/zero", zero.parent / "summary.json")
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, timeout=30)
+        self.assertEqual(sorted(self.titles()), ["fix the build", "rename the job"])
+
+    def test_previewing_a_session_with_an_enormous_line_skips_it_without_using_memory_for_it(self):
+        path = self.projects / "a1.jsonl"
+        with open(path, "w") as f:
+            f.write(user("rotate the signing keys please") + "\n")
+            f.write(claude("x" * 40_000_000) + "\n")
+            f.write(claude("Rotated.") + "\n")
+        self.superfind("index")
+        measure = ("import resource, subprocess, sys; r = subprocess.run(sys.argv[1:], capture_output=True, text=True); "
+                   "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss); print(r.stdout)")
+        out = subprocess.run([sys.executable, "-c", measure, str(SUPERFIND), "preview", str(path)], env=self.env,
+                             capture_output=True, text=True, timeout=120).stdout
+        peak, preview = out.split("\n", 1)
+        megabytes = int(peak) / (1 << 20) if sys.platform == "darwin" else int(peak) / 1024
+        self.assertLess(megabytes, 250)
+        self.assertIn("Rotated.", preview)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_claude_home_that_cannot_be_read_keeps_its_sessions_and_says_so(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        home = self.home / ".claude"
+        home.chmod(0)
+        self.addCleanup(home.chmod, 0o755)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn("couldn't be read", result.stderr)
+
+    def test_a_hidden_grok_subagent_stays_hidden_while_its_summary_is_half_written(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix",
+                                 kind="subagent")
+        self.grok_session(uid(2), "/tmp", grok_user("rename the job"), grok_reply("Renamed."), title="Job rename")
+        self.assertEqual(self.titles(), ["Job rename"])
+        summary = chat.parent / "summary.json"
+        summary.write_text(summary.read_text()[:20])
+        self.tick(summary)
+        self.assertEqual(self.titles(), ["Job rename"])
 
 
 if __name__ == "__main__":

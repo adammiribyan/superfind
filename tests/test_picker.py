@@ -559,6 +559,54 @@ class PickerBehavior(unittest.TestCase):
                 pass
         self.assertEqual(alive, [])
 
+    def test_interrupting_the_picker_during_an_ask_stops_claude_too(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $PPID > {pids}.parent\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        self.open_picker(linger=True)
+        self.keys("ledger", "C-r")
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        os.kill(int(Path(f"{pids}.parent").read_text()), 2)
+        self.result()
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
+
+    def test_a_damaged_index_found_while_typing_is_removed_only_under_the_index_lock(self):
+        import sqlite3
+        self.three_sessions()
+        for n in range(30):
+            self.session(f"pad{n}", f"Padding {n}", user(f"pad session {n} " + "filler " * 300), tool("Bash"), claude("Done."))
+        self.open_picker()
+        self.wait_for("33/33")
+        db_path = self.home / ".cache" / "superfind" / "search.db"
+        db = sqlite3.connect(db_path)
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.keys("charged")
+        time.sleep(1.5)
+        self.assertTrue(db_path.exists())
+        lock.close()
+        self.wait_for("1/33")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)

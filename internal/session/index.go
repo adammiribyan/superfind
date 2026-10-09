@@ -194,7 +194,7 @@ func discardSearch() {
 	}
 }
 
-var ErrDamaged = errors.New("the search index was damaged, so it is being rebuilt")
+var ErrDamaged = errors.New("the search index is damaged and needs a rebuild")
 
 func damaged(err error) bool {
 	var e *sqlite.Error
@@ -247,12 +247,19 @@ func Unreadable(problems []error) string {
 		len(problems), noun, problems[0])
 }
 
-func Index(announce func(stale int)) ([]Row, []error, error) {
+func Index(announce func(stale int)) ([]Row, []error, error) { return index(announce, false) }
+
+func Rebuild(announce func(stale int)) ([]Row, []error, error) { return index(announce, true) }
+
+func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	unlock, err := lockFile("index.lock")
 	if err != nil {
 		return nil, nil, fmt.Errorf("locking the index: %w", err)
 	}
 	defer unlock()
+	if rebuild {
+		discardSearch()
+	}
 	old := loadCache()
 	if !searchHolds(old) {
 		old = map[string]cacheEntry{}
@@ -336,7 +343,7 @@ func Index(announce func(stale int)) ([]Row, []error, error) {
 			fresh[f.path] = entry
 		}
 		s, listed := partial[f.path]
-		if !listed {
+		if !listed || (known && entry.Session == nil) {
 			s = entry.Session
 		}
 		if s != nil {
@@ -532,7 +539,6 @@ func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
 	}
 	found, searched, err := matches(db, words)
 	if damaged(err) || (err == nil && searched && len(found) == 0 && !intact(db)) {
-		discardSearch()
 		return nil, ErrDamaged
 	}
 	if err != nil {
