@@ -23,6 +23,19 @@ import (
 
 const cacheVersion = 13
 
+const (
+	titleRunes  = 200
+	promptRunes = 400
+)
+
+func clip(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
 func parse(f found) (*Session, string, bool, error) {
 	t, err := agent.ReadTranscript(f.Agent, f.path)
 	if err != nil {
@@ -38,8 +51,8 @@ func parse(f found) (*Session, string, bool, error) {
 	body := agent.Printable(strings.Join(t.Messages, "\n"))
 	return &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
-		Title:      cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt),
-		LastPrompt: cmp.Or(t.LastPrompt, latestPrompt), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
+		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
+		LastPrompt: clip(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
 		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime,
 	}, body, t.Incomplete, nil
 }
@@ -169,6 +182,16 @@ func damaged(err error) bool {
 	return errors.As(err, &e) && (e.Code()&0xff == 11 || e.Code()&0xff == 26)
 }
 
+var checked sync.Map
+
+func intact(db *sql.DB) bool {
+	if _, done := checked.LoadOrStore(db, true); done {
+		return true
+	}
+	_, err := db.Exec("INSERT INTO docs(docs) VALUES('integrity-check')")
+	return !damaged(err)
+}
+
 func searchCount() (int, error) {
 	db, err := OpenSearch()
 	if err != nil {
@@ -189,9 +212,8 @@ type found struct {
 }
 
 type parsed struct {
-	session    *Session
-	body       string
-	incomplete bool
+	session *Session
+	body    string
 }
 
 func Index(announce func(stale int)) ([]Row, error) {
@@ -227,6 +249,7 @@ func Index(announce func(stale int)) ([]Row, error) {
 		announce(len(stale))
 	}
 	results := make(map[string]parsed, len(stale))
+	partial := map[string]*Session{}
 	var mu sync.Mutex
 	work := make(chan found)
 	var wg sync.WaitGroup
@@ -240,7 +263,11 @@ func Index(announce func(stale int)) ([]Row, error) {
 					continue
 				}
 				mu.Lock()
-				results[f.path] = parsed{s, body, incomplete}
+				if incomplete {
+					partial[f.path] = s
+				} else {
+					results[f.path] = parsed{s, body}
+				}
 				mu.Unlock()
 			}
 		}()
@@ -257,15 +284,15 @@ func Index(announce func(stale int)) ([]Row, error) {
 		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
 			entry, known = cacheEntry{f.id, f.name, p.session}, true
-			if p.incomplete {
-				entry.FileID = agent.FileID{}
-			}
 		}
-		if !known {
-			continue
+		if known {
+			fresh[f.path] = entry
 		}
-		fresh[f.path] = entry
-		if s := entry.Session; s != nil {
+		s, listed := partial[f.path]
+		if !listed {
+			s = entry.Session
+		}
+		if s != nil {
 			rows = append(rows, Row{Session: *s, Agent: f.Agent, Home: f.Home, Path: f.path})
 		}
 	}
@@ -443,7 +470,7 @@ func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		return RecentFirst(rows), nil
 	}
 	found, searched, err := matches(db, words)
-	if damaged(err) {
+	if damaged(err) || (err == nil && searched && len(found) == 0 && !intact(db)) {
 		discardSearch()
 		return nil, ErrDamaged
 	}

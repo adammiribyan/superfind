@@ -256,16 +256,37 @@ func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) ([]s
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)
 
+const passageRunes = 400
+
+func windows(text string) []string {
+	var out []string
+	r := []rune(text)
+	for len(r) > passageRunes {
+		cut := passageRunes
+		for i := passageRunes; i > passageRunes/2; i-- {
+			if r[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, string(r[:cut]))
+		for r = r[cut:]; len(r) > 0 && r[0] == ' '; r = r[1:] {
+		}
+	}
+	return append(out, string(r))
+}
+
 func passagesOf(body, query string) []string {
 	var pieces []string
 	current := ""
 	for _, paragraph := range paragraphBreak.Split(body, -1) {
-		paragraph = strings.Join(strings.Fields(paragraph), " ")
-		if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(paragraph) > 400 {
-			pieces = append(pieces, current)
-			current = ""
+		for _, part := range windows(strings.Join(strings.Fields(paragraph), " ")) {
+			if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(part) > passageRunes {
+				pieces = append(pieces, current)
+				current = ""
+			}
+			current = strings.TrimSpace(current + " " + part)
 		}
-		current = strings.TrimSpace(current + " " + paragraph)
 	}
 	if current != "" {
 		pieces = append(pieces, current)
@@ -286,13 +307,7 @@ func passagesOf(body, query string) []string {
 		return false
 	}
 	sort.SliceStable(pieces, func(a, b int) bool { return mentions(pieces[a]) && !mentions(pieces[b]) })
-	pieces = pieces[:min(len(pieces), 120)]
-	for i, p := range pieces {
-		if r := []rune(p); len(r) > 400 {
-			pieces[i] = string(r[:400])
-		}
-	}
-	return pieces
+	return pieces[:min(len(pieces), 120)]
 }
 
 func Explain(ctx context.Context, db *sql.DB, key, query string, paths []string) map[string]string {

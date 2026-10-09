@@ -6,9 +6,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"regexp"
 	"strings"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 const bidiControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -19,6 +18,8 @@ func dropped(r rune) bool {
 	return (r < 0x20 && !strings.ContainsRune("\t\n\r\v\f", r)) || (r >= 0x7f && r < 0xa0) || Bidi(r)
 }
 
+var escapeSequence = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|[\\]P_^X][^\x07\x1b\n]*(?:\x07|\x1b\\\\)|[ -/]*[0-~])")
+
 func Printable(s string) string {
 	if !strings.ContainsFunc(s, dropped) {
 		return s
@@ -28,7 +29,7 @@ func Printable(s string) string {
 			return -1
 		}
 		return r
-	}, ansi.Strip(s))
+	}, escapeSequence.ReplaceAllString(s, ""))
 }
 
 type Event string

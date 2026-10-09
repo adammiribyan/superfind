@@ -1255,6 +1255,64 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind("ask", "quantum knitting patterns")
             self.assertEqual((result.returncode, result.stdout, result.stderr, len(requests)), (0, "", "", 1))
 
+    def test_a_stray_escape_hides_none_of_the_conversation_from_search(self):
+        self.session("a1", user("log: ERROR \x1b]8;;broken then the kubernetes cluster died"), tool("Bash"),
+                     claude("The pods ran out of memory."), user("raise the limits to 4Gi"), claude("Raised."))
+        self.assertEqual(self.titles("kubernetes"), ["log: ERROR 8;;broken then the kubernetes cluster died"])
+        for word in ("memory", "limits", "4Gi"):
+            self.assertEqual(len(self.titles(word)), 1, word)
+        preview = self.run_superfind("preview", str(self.projects / "a1.jsonl"), "--recent").stdout
+        self.assertIn("broken then the kubernetes cluster died", ANSI.sub("", preview))
+        self.assertNotIn("\x1b]", preview)
+
+    def test_a_listed_grok_session_with_a_half_written_summary_writes_nothing_on_later_runs(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix")
+        self.session("a1", user("rotate the keys"), claude("Rotated."), title="Key rotation")
+        summary = chat.parent / "summary.json"
+        summary.write_text(summary.read_text()[:20])
+        self.tick(summary)
+        self.assertEqual(sorted(self.titles()), ["Key rotation", "fix the build"])
+        import sqlite3
+        cache = self.home / ".cache" / "superfind"
+
+        def written():
+            db = sqlite3.connect(cache / "search.db")
+            rows = db.execute("SELECT rowid, path FROM docs ORDER BY rowid").fetchall()
+            db.close()
+            return (cache / "index.json").stat().st_mtime_ns, rows
+
+        before = written()
+        time.sleep(0.05)
+        self.assertEqual(sorted(self.titles()), ["Key rotation", "fix the build"])
+        self.assertEqual(written(), before)
+
+    def test_a_search_index_whose_structure_was_wiped_is_rebuilt_when_a_search_finds_nothing(self):
+        import sqlite3
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        for damage in ("UPDATE docs_data SET block = zeroblob(length(block)) WHERE id = 10",
+                       "UPDATE docs_config SET v = 0 WHERE k = 'version'"):
+            self.superfind("index")
+            db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+            db.execute(damage)
+            db.commit()
+            db.close()
+            self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"], damage)
+
+    def test_a_pasted_first_prompt_makes_a_short_title_and_a_short_ask_card(self):
+        pasted = "PASTED_LOG " + "log line with SECRET=hunter2 " * 700 + "END"
+        self.session("a1", user(pasted), tool("Bash"), claude("That log shows a timeout."))
+        self.superfind("index")
+        [title] = self.titles()
+        self.assertLessEqual(len(title), 200)
+        cache = json.loads((self.home / ".cache" / "superfind" / "index.json").read_text())
+        [entry] = cache["files"].values()
+        self.assertLessEqual(len(entry["session"]["last_prompt"]), 400)
+        requests = self.record_typesafe()
+        self.run_superfind("ask", "where was the timeout")
+        cards = [c for k, c in requests[0]["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertLessEqual(max(len(c) for c in cards), 700)
+
 
 if __name__ == "__main__":
     unittest.main()
