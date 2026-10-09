@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"errors"
@@ -277,9 +278,41 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 	return located[len(located)-1], false, rows
 }
 
+var output *bufio.Writer
+
+func exit(code int) {
+	if err := output.Flush(); err != nil && code == 0 {
+		fmt.Fprintln(stderr, "superfind: couldn't write the output: "+err.Error())
+		code = 1
+	}
+	os.Exit(code)
+}
+
 func fail(message string) {
 	fmt.Fprintln(stderr, message)
-	os.Exit(1)
+	exit(1)
+}
+
+func usageError(message string) {
+	fmt.Fprintln(stderr, message)
+	exit(2)
+}
+
+func searchWords(command string, args []string) string {
+	var words []string
+	for i, arg := range args {
+		switch {
+		case arg == "--":
+			return strings.Join(append(words, args[i+1:]...), " ")
+		case arg == "--deep" && command == "search":
+			usageError("superfind search: --deep is now its own command: superfind ask WORDS")
+		case strings.HasPrefix(arg, "--"):
+			usageError("superfind " + command + ": there is no " + arg + " option. To search for it, put -- first: superfind " +
+				command + " -- " + arg)
+		}
+		words = append(words, arg)
+	}
+	return strings.Join(words, " ")
 }
 
 func main() {
@@ -288,7 +321,13 @@ func main() {
 		stdout = &colorprofile.Writer{Forward: os.Stdout, Profile: colorprofile.Ascii}
 		stderr = &colorprofile.Writer{Forward: os.Stderr, Profile: colorprofile.Ascii}
 	}
-	args := os.Args[1:]
+	output = bufio.NewWriter(stdout)
+	stdout = output
+	run(os.Args[1:])
+	exit(0)
+}
+
+func run(args []string) {
 	if len(args) == 0 {
 		fmt.Fprint(stdout, usage)
 		return
@@ -315,7 +354,7 @@ func main() {
 			setup, ok = shellSetups[args[1]]
 		}
 		if !ok {
-			fail("superfind init: which shell? superfind init zsh or superfind init bash")
+			usageError("superfind init: which shell? superfind init zsh or superfind init bash")
 		}
 		fmt.Fprintf(stdout, setup, agent.ShellQuote(selfPath()))
 	case "index":
@@ -325,7 +364,8 @@ func main() {
 		}
 		fmt.Fprintf(stdout, "%d %s indexed\n", n, noun)
 	case "search":
-		rows, query := session.Annotate(mustIndex("search")), strings.Join(args[1:], " ")
+		query := searchWords("search", args[1:])
+		rows := session.Annotate(mustIndex("search"))
 		found, err := session.Search(mustOpenSearch(), query, rows)
 		if errors.Is(err, session.ErrDamaged) {
 			rows = session.Annotate(mustIndex("search"))
@@ -339,7 +379,7 @@ func main() {
 		rows := session.Annotate(mustIndex("ask"))
 		shown := render.TagsFor(rows)
 		db := mustOpenSearch()
-		query, eligible := session.Narrow(strings.Join(args[1:], " "), rows)
+		query, eligible := session.Narrow(searchWords("ask", args[1:]), rows)
 		if query == "" {
 			printRows(session.RecentFirst(eligible), shown)
 			return
@@ -367,7 +407,7 @@ func main() {
 				req.Recent = true
 			case arg == "--width" || arg == "--query":
 				if i+1 == len(args) {
-					fail("superfind preview: " + arg + " needs a value. See superfind help preview.")
+					usageError("superfind preview: " + arg + " needs a value. See superfind help preview.")
 				}
 				i++
 				if arg == "--query" {
@@ -376,19 +416,19 @@ func main() {
 				}
 				width, err := strconv.Atoi(args[i])
 				if err != nil || width < 1 {
-					fail("superfind preview: --width needs a number of columns, like --width 80.")
+					usageError("superfind preview: --width needs a number of columns, like --width 80.")
 				}
 				req.Width = width
 			case strings.HasPrefix(arg, "-"):
-				fail("superfind preview: there is no " + arg + " option. See superfind help preview.")
+				usageError("superfind preview: there is no " + arg + " option. See superfind help preview.")
 			case target != "":
-				fail("superfind preview: one session at a time, not " + arg + " too.")
+				usageError("superfind preview: one session at a time, not " + arg + " too.")
 			default:
 				target = arg
 			}
 		}
 		if target == "" {
-			fail("superfind preview: which session? Pass a path that superfind search prints first.")
+			usageError("superfind preview: which session? Pass a path that superfind search prints first.")
 		}
 		r, indexed, rows := sessionAt("preview", target)
 		req.Agent, req.Path = r.Agent, r.Path
@@ -401,11 +441,11 @@ func main() {
 			fmt.Fprintln(stdout, line)
 		}
 		if err != nil {
-			os.Exit(1)
+			exit(1)
 		}
 	case "command":
 		if len(args) < 2 {
-			fail("superfind command: which session?")
+			usageError("superfind command: which session?")
 		}
 		r, indexed, _ := sessionAt("command", args[1])
 		if !indexed {
@@ -418,7 +458,7 @@ func main() {
 			fail(err.Error())
 		}
 		if chosen == nil {
-			os.Exit(1)
+			exit(1)
 		}
 		fmt.Fprintln(stdout, handoffTitle(*chosen))
 		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
@@ -430,6 +470,8 @@ func main() {
 func asksForHelp(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--":
+			return false
 		case "--query", "--width":
 			i++
 		case "--help", "-h":
@@ -453,5 +495,5 @@ func explain(name string) {
 func unknownCommand(name string) {
 	fmt.Fprintf(stderr, "superfind: there is no %q command. The commands are %s, and %s.\nRun superfind --help to see what each one does.\n",
 		name, strings.Join(commandNames[:len(commandNames)-1], ", "), commandNames[len(commandNames)-1])
-	os.Exit(2)
+	exit(2)
 }
