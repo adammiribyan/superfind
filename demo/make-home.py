@@ -3,7 +3,15 @@ import os
 import shutil
 import sys
 import time
+import urllib.parse
 from pathlib import Path
+
+AGENTS = {
+    "Retry webhooks without duplicate refunds": "codex",
+    "Search results ignore synonyms": "grok",
+    "Cut staging costs": "codex",
+    "Onboarding copy review": "grok",
+}
 
 SESSIONS = [
     ("storefront", "Checkout button double-charges on slow networks", "feat/checkout-guard", [
@@ -70,34 +78,81 @@ def line(**entry):
     return json.dumps(entry, separators=(",", ":"))
 
 
+def claude_lines(cwd, branch, title, turns):
+    lines = []
+    for role, text in turns:
+        if role == "user":
+            lines.append(line(type="user", cwd=str(cwd), gitBranch=branch, message={"role": "user", "content": text}))
+        else:
+            lines.append(line(type="assistant", message={"role": "assistant", "content": [
+                {"type": "tool_use", "id": f"tool-{len(lines)}", "name": "Edit", "input": {}}]}))
+            lines.append(line(type="assistant", message={"role": "assistant",
+                                                         "content": [{"type": "text", "text": text}]}))
+    lines.append(line(type="ai-title", aiTitle=title))
+    return lines
+
+
+def codex_lines(cwd, branch, uuid, turns):
+    lines = [line(type="session_meta", payload={"id": uuid, "cwd": str(cwd), "git": {"branch": branch}})]
+    for role, text in turns:
+        if role == "user":
+            lines.append(line(type="response_item", payload={"type": "message", "role": "user",
+                                                             "content": [{"type": "input_text", "text": text}]}))
+        else:
+            lines.append(line(type="response_item", payload={"type": "function_call", "name": "shell"}))
+            lines.append(line(type="response_item", payload={"type": "function_call_output"}))
+            lines.append(line(type="response_item", payload={"type": "message", "role": "assistant",
+                                                             "content": [{"type": "output_text", "text": text}]}))
+    return lines
+
+
+def grok_lines(turns):
+    lines = []
+    for n, (role, text) in enumerate(turns):
+        if role == "user":
+            lines.append(line(type="user", content=[{"type": "text", "text": f"<user_query>\n{text}\n</user_query>"}],
+                              prompt_index=n))
+        else:
+            lines.append(line(type="assistant", content="", tool_calls=[
+                {"id": f"call-{n}", "name": "run_terminal_command", "arguments": "{}"}]))
+            lines.append(line(type="tool_result", tool_call_id=f"call-{n}", content="ok"))
+            lines.append(line(type="assistant", content=text))
+    return lines
+
+
 def main(home):
     home = Path(home)
     shutil.rmtree(home, ignore_errors=True)
-    stand_in = home / "bin" / "claude"
-    stand_in.parent.mkdir(parents=True, exist_ok=True)
-    stand_in.write_text("#!/bin/sh\nexit 0\n")
-    stand_in.chmod(0o755)
+    for name in ("claude", "codex", "grok"):
+        stand_in = home / "bin" / name
+        stand_in.parent.mkdir(parents=True, exist_ok=True)
+        stand_in.write_text("#!/bin/sh\nexit 0\n")
+        stand_in.chmod(0o755)
     now = time.time()
     for age, (project, title, branch, turns) in enumerate(SESSIONS):
         cwd = home / "code" / project
         cwd.mkdir(parents=True, exist_ok=True)
-        folder = home / ".claude" / "projects" / ("-" + str(cwd).strip("/").replace("/", "-").replace(".", "-"))
-        folder.mkdir(parents=True, exist_ok=True)
-        lines = []
-        for role, text in turns:
-            if role == "user":
-                lines.append(line(type="user", cwd=str(cwd), gitBranch=branch,
-                                  message={"role": "user", "content": text}))
-            else:
-                lines.append(line(type="assistant", message={"role": "assistant", "content": [
-                    {"type": "tool_use", "id": f"tool-{len(lines)}", "name": "Edit", "input": {}}]}))
-                lines.append(line(type="assistant", message={"role": "assistant",
-                                                             "content": [{"type": "text", "text": text}]}))
-        lines.append(line(type="ai-title", aiTitle=title))
-        path = folder / f"demo-{age:02d}.jsonl"
-        path.write_text("\n".join(lines) + "\n")
         stamp = now - 600 - age * age * 5400
-        os.utime(path, (stamp, stamp))
+        uuid = f"01a10000-0000-7000-8000-{age:012d}"
+        agent = AGENTS.get(title, "claude")
+        if agent == "claude":
+            folder = home / ".claude" / "projects" / ("-" + str(cwd).strip("/").replace("/", "-").replace(".", "-"))
+            paths = [(folder / f"demo-{age:02d}.jsonl", claude_lines(cwd, branch, title, turns))]
+        elif agent == "codex":
+            folder = home / ".codex" / "sessions" / "2026" / "10" / "09"
+            paths = [(folder / f"rollout-2026-10-09T10-00-00-{uuid}.jsonl", codex_lines(cwd, branch, uuid, turns))]
+            (home / ".codex").mkdir(parents=True, exist_ok=True)
+            with open(home / ".codex" / "session_index.jsonl", "a") as index:
+                index.write(line(id=uuid, thread_name=title, updated_at="2026-10-09T10:00:00Z") + "\n")
+        else:
+            folder = home / ".grok" / "sessions" / urllib.parse.quote(str(cwd), safe="") / uuid
+            paths = [(folder / "chat_history.jsonl", grok_lines(turns)),
+                     (folder / "summary.json", [json.dumps({"info": {"id": uuid, "cwd": str(cwd)},
+                                                            "session_summary": title, "head_branch": branch})])]
+        folder.mkdir(parents=True, exist_ok=True)
+        for path, lines in paths:
+            path.write_text("\n".join(lines) + "\n")
+            os.utime(path, (stamp, stamp))
 
 
 if __name__ == "__main__":
