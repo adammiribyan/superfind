@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""Pick any Claude Code session on this machine with fzf, or preview one.
+
+  claude-sessions pick       run the picker; prints the chosen session's title, then the
+                             shell command that resumes it
+  claude-sessions preview F  pinned header, then where the session left off, or the recent
+                             conversation when fzf's preview label says so
+"""
+import json
+import shlex
+import subprocess
+import re
+import textwrap
+import os
+import select
+import signal
+import termios
+import tty
+import sys
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+HOME = Path.home()
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "claude-sessions" / "index.json"
+CACHE_VERSION = 6
+
+ACCENT, DIM, BOLD, RESET = "\033[34m", "\033[2m", "\033[1m", "\033[0m"
+
+WORKTREE_MARK = "/.claude/worktrees/"
+
+
+@dataclass
+class Session:
+    session_id: str
+    cwd: str
+    title: str
+    last_prompt: str
+    branch: str
+    prompts: int
+    mtime: float
+
+    @property
+    def project(self):
+        root = self.cwd.split(WORKTREE_MARK)[0]
+        return Path(root).name or root
+
+
+def config_dirs():
+    candidates = [HOME / ".claude", *sorted(HOME.glob(".claude-*"))]
+    if os.environ.get("CLAUDE_CONFIG_DIR"):
+        candidates.insert(0, Path(os.environ["CLAUDE_CONFIG_DIR"]).expanduser())
+    extra = os.environ.get("CLAUDE_SESSIONS_DIRS", "")
+    candidates += [Path(p).expanduser() for p in extra.split(":") if p]
+    seen, dirs = set(), []
+    for d in candidates:
+        d = d.resolve()
+        if d not in seen and (d / "projects").is_dir():
+            seen.add(d)
+            dirs.append(d)
+    return dirs
+
+
+def truecolor(hx, fallback):
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", hx):
+        return fallback
+    return "\033[38;2;{};{};{}m".format(*(int(hx[i : i + 2], 16) for i in (1, 3, 5)))
+
+
+SECONDARY = truecolor(os.environ.get("CLAUDE_SESSIONS_SECONDARY", ""), DIM)
+
+SLASH_COMMAND = re.compile(r"<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)", re.S)
+
+
+def prompt_text(text):
+    """What the user typed, with slash commands shown as `/name args`; empty for machine-generated turns."""
+    command = SLASH_COMMAND.search(text)
+    if command:
+        return f"{command.group(1)} {command.group(2) or ''}".strip()
+    if text.startswith(("<", "Caveat:", "[Request interrupted")):
+        return ""
+    return text
+
+
+def message_text(entry):
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    return ""
+
+
+def parse(path, mtime):
+    cwd = relocated = custom = ai = last_prompt = first_prompt = branch = ""
+    prompts = 0
+    with open(path, "rb") as f:
+        for raw in f:
+            if b'"type":"user"' in raw and b'"tool_use_id"' not in raw:
+                e = json.loads(raw)
+                cwd = cwd or e.get("cwd") or ""
+                branch = e.get("gitBranch") or branch
+                text = prompt_text(message_text(e).strip())
+                if not e.get("isMeta") and text:
+                    prompts += 1
+                    first_prompt = first_prompt or text
+            elif not cwd and b'"cwd":"' in raw:
+                cwd = json.loads(raw).get("cwd") or ""
+            elif b'"type":"custom-title"' in raw:
+                custom = json.loads(raw).get("customTitle") or custom
+            elif b'"type":"ai-title"' in raw:
+                ai = json.loads(raw).get("aiTitle") or ai
+            elif b'"type":"last-prompt"' in raw:
+                last_prompt = json.loads(raw).get("lastPrompt") or last_prompt
+            elif b'"type":"relocated"' in raw:
+                relocated = json.loads(raw).get("relocatedCwd") or relocated
+    cwd = relocated or cwd
+    if not cwd or not (first_prompt or last_prompt):
+        return None
+    title = custom or ai or first_prompt or last_prompt
+    return Session(path.stem, cwd, title, last_prompt or first_prompt, branch, max(prompts, 1), mtime)
+
+
+def one_line(text, width):
+    text = " ".join(text.split())
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def tilde(path):
+    home = str(HOME)
+    return "~" + path[len(home):] if path == home or path.startswith(home + "/") else path
+
+
+def load_cache():
+    try:
+        data = json.loads(CACHE.read_text())
+        return data["files"] if data.get("version") == CACHE_VERSION else {}
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
+def save_cache(files):
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CACHE.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"version": CACHE_VERSION, "files": files}))
+    tmp.replace(CACHE)
+
+
+def index():
+    old, new = load_cache(), {}
+    rows = []
+    for config_dir in config_dirs():
+        for path in (config_dir / "projects").glob("*/*.jsonl"):
+            st = path.stat()
+            key = str(path)
+            hit = old.get(key)
+            if hit and hit["mtime"] == st.st_mtime and hit["size"] == st.st_size:
+                session = Session(**hit["session"]) if hit["session"] else None
+            else:
+                try:
+                    session = parse(path, st.st_mtime)
+                except (OSError, ValueError):
+                    session = None
+            new[key] = {"mtime": st.st_mtime, "size": st.st_size, "session": session and asdict(session)}
+            if session:
+                rows.append((session, config_dir, path))
+    if new != old:
+        save_cache(new)
+    return rows
+
+
+def ago(mtime, now=None):
+    seconds = (now or time.time()) - mtime
+    for limit, unit, label in ((60, 1, "just now"), (3600, 60, "m"), (86400, 3600, "h"), (7 * 86400, 86400, "d")):
+        if seconds < limit:
+            return label if unit == 1 else f"{int(seconds // unit)}{label} ago"
+    fmt = "%b %-d" if time.localtime(mtime).tm_year == time.localtime().tm_year else "%b %-d %Y"
+    return time.strftime(fmt, time.localtime(mtime))
+
+
+def is_here(s):
+    return s.cwd == os.environ.get("PWD")
+
+
+def meta_parts(s, config_dir, show_account):
+    """Project and age lead so a long branch never pushes recency out of view."""
+    parts = [s.project, ago(s.mtime)]
+    if s.branch and s.branch != "HEAD":
+        parts.append(s.branch)
+    parts.append(f"{s.prompts} prompt" + ("" if s.prompts == 1 else "s"))
+    if show_account:
+        parts.append(config_dir.name)
+    return parts
+
+
+def items():
+    """Tab-separated fzf lines: path, cwd, session id, config dir, title, then the display."""
+    rows = sorted(index(), key=lambda r: (is_here(r[0]), r[0].mtime), reverse=True)
+    show_account = len({r[1] for r in rows}) > 1
+    out = []
+    for s, config_dir, path in rows:
+        context = f"{ago(s.mtime)} · {s.project}" + ("" if os.path.isdir(s.cwd) else " · folder removed")
+        if show_account:
+            context += f" · {config_dir.name}"
+        title = " ".join(s.title.split())
+        display = f" {title}  {SECONDARY}{context}{RESET}"
+        out.append(f"{path}\t{s.cwd}\t{s.session_id}\t{config_dir}\t{title}\t{display}")
+    return "\n".join(out)
+
+
+INLINE = [
+    (re.compile(r"\*\*(.+?)\*\*"), BOLD + r"\1" + RESET),
+    (re.compile(r"`([^`]+)`"), DIM + "`" + RESET + r"\1" + DIM + "`" + RESET),
+]
+
+
+def clip(line, width):
+    return line if len(line) <= width else line[: width - 1] + f"{DIM}…{RESET}"
+
+
+def render(text, width):
+    """Light Markdown: bold headings, framed tables and code kept at full contrast, prose wrapped."""
+    lines, fenced = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            lines.append("    " + clip(line, width - 4))
+        elif stripped.startswith("|"):
+            cells = clip(stripped, width - 2)
+            lines.append("  " + re.sub(r"\|", f"{DIM}|{RESET}", cells))
+        elif stripped.startswith("#"):
+            lines.append(f"  {BOLD}{clip(stripped.lstrip('#').strip(), width - 2)}{RESET}")
+        else:
+            indent = " " * (len(line) - len(line.lstrip()))
+            bullet = stripped[:2] in ("- ", "* ") or re.match(r"\d+\. ", stripped)
+            hang = indent + ("  " if bullet else "")
+            wrapped = textwrap.wrap(stripped, width - 2, initial_indent=indent, subsequent_indent=hang) or [""]
+            for w in wrapped:
+                for pattern, sub in INLINE:
+                    w = pattern.sub(sub, w)
+                lines.append("  " + w)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def conversation(path):
+    """(role, text) turns with consecutive turns by the same speaker merged."""
+    turns = []
+    with open(path, "rb") as f:
+        for raw in f:
+            if b'"type":"user"' not in raw and b'"type":"assistant"' not in raw:
+                continue
+            e = json.loads(raw)
+            text = message_text(e).strip()
+            if e["type"] == "user":
+                text = prompt_text(text)
+            if e.get("isMeta") or not text:
+                continue
+            if turns and turns[-1][0] == e["type"]:
+                turns[-1] = (e["type"], turns[-1][1] + "\n\n" + text)
+            else:
+                turns.append((e["type"], text))
+    return turns
+
+
+def speaker(role):
+    return f"{ACCENT}{BOLD}you{RESET}" if role == "user" else f"{BOLD}claude{RESET}"
+
+
+def excerpt(lines, keep, from_end, note):
+    if len(lines) <= keep:
+        return lines
+    marker = f"  {SECONDARY}… {note}{RESET}"
+    return [marker] + lines[-keep:] if from_end else lines[:keep] + [marker]
+
+
+def preview(path):
+    width = int(os.environ.get("FZF_PREVIEW_COLUMNS", "80")) - 2
+    recent = "Recent" in os.environ.get("FZF_PREVIEW_LABEL", "")
+    cached = load_cache().get(path) or {}
+    s = Session(**cached["session"]) if cached.get("session") else None
+    if s:
+        dirs = config_dirs()
+        config_dir = next((d for d in dirs if path.startswith(str(d) + "/")), Path(""))
+        survivor = s.cwd
+        while not os.path.isdir(survivor):
+            survivor = os.path.dirname(survivor)
+        where = tilde(s.cwd) if survivor == s.cwd else f"folder removed · resumes from {tilde(survivor)}"
+        print(f"{BOLD}{one_line(s.title, width)}{RESET}")
+        print(f"{SECONDARY}{one_line(' · '.join(meta_parts(s, config_dir, len(dirs) > 1)), width)}{RESET}")
+        print(f"{SECONDARY}{one_line(where, width)}{RESET}")
+        print()
+    turns = conversation(path)
+    if recent:
+        for role, text in turns[-8:]:
+            print(f"{speaker(role)}\n" + "\n".join(render(text, width)) + "\n")
+        return
+    last_ask = max((i for i, (role, _) in enumerate(turns) if role == "user"), default=None)
+    if last_ask is not None:
+        print(f"{speaker('user')}\n" + "\n".join(excerpt(render(turns[last_ask][1], width), 10, False, "rest of your message")))
+    reply = next((text for role, text in reversed(turns) if role == "assistant"), None)
+    if reply and (last_ask is None or turns[-1][0] == "assistant"):
+        print(f"\n{speaker('assistant')}\n" + "\n".join(excerpt(render(reply, width), 18, True, "earlier in this reply")))
+    elif last_ask is not None:
+        print(f"\n{SECONDARY}  No reply yet. Claude stopped before answering.{RESET}")
+
+
+def query_palette(timeout=0.15):
+    """Ask the terminal for its background, foreground, and blue (OSC 11, 10, 4;4). None when it won't say."""
+    try:
+        fd = os.open("/dev/tty", os.O_RDWR)
+    except OSError:
+        return None
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        os.write(fd, b"\033]11;?\033\\\033]10;?\033\\\033]4;4;?\033\\\033[c")
+        buf = b""
+        while not re.search(rb"\033\[\?[\d;]*c", buf):
+            if not select.select([fd], [], [], timeout)[0]:
+                break
+            buf += os.read(fd, 1024)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        os.close(fd)
+    found = {}
+    for key, r, g, b in re.findall(rb"\033\](11|10|4;4);rgb:([0-9a-f]+)/([0-9a-f]+)/([0-9a-f]+)", buf, re.I):
+        found[key.decode()] = tuple(int(c, 16) / (16 ** len(c) - 1) for c in (r, g, b))
+    return found if {"11", "10", "4;4"} <= found.keys() else None
+
+
+def mix(a, b, t):
+    return tuple(x + (y - x) * t for x, y in zip(a, b))
+
+
+def hexcolor(rgb):
+    return "#" + "".join(f"{round(c * 255):02x}" for c in rgb)
+
+
+def luminance(rgb):
+    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+
+
+def theme():
+    """(fzf --color spec for the selected row and matches, secondary text hex or "")."""
+    palette = query_palette()
+    if not palette:
+        return "fg+:-1:reverse,bg+:-1,hl:blue,hl+:-1:reverse:bold", ""
+    bg, fg, blue = palette["11"], palette["10"], palette["4;4"]
+    accent = hexcolor(blue)
+    tint = hexcolor(mix(bg, blue, 0.16 if luminance(bg) < 0.5 else 0.10))
+    return f"fg+:-1,bg+:{tint},hl:{accent},hl+:{accent}:bold", hexcolor(mix(bg, fg, 0.70))
+
+
+MARK = "\033[38;2;215;119;87m✻\033[0m"
+def footer(*pairs):
+    key, word = "\033[22;39m", SECONDARY
+    hints = " · ".join(f"{key}{k}{RESET}{word} {action}{RESET}" for k, action in pairs)
+    return f"⠀\n {hints}\n⠀"
+
+
+def pick():
+    global SECONDARY
+    selection, secondary = theme()
+    os.environ["CLAUDE_SESSIONS_SECONDARY"] = secondary
+    SECONDARY = truecolor(secondary, DIM)
+    hints = footer(("enter", "resume"), ("tab", "conversation"), ("esc", "cancel"))
+    hints_back = footer(("enter", "resume"), ("tab", "where you left off"), ("esc", "cancel"))
+    recover = footer(("ctrl-u", "clear search"), ("esc", "cancel"))
+    q = shlex.quote
+    footer_cmd = (f'if [ "$FZF_MATCH_COUNT" -eq 0 ]; then printf %s {q(recover)}; '
+                  f'else case "$FZF_PREVIEW_LABEL" in *Recent*) printf %s {q(hints_back)};; '
+                  f'*) printf %s {q(hints)};; esac; fi')
+    header_cmd = '[ "$FZF_MATCH_COUNT" -eq 0 ] && printf "No sessions match “%s”" "$FZF_QUERY" || printf " "'
+    flip_label = 'case "$FZF_PREVIEW_LABEL" in *Recent*) echo " Where you left off ";; *) echo " Recent conversation ";; esac'
+    self_path = q(os.path.abspath(sys.argv[0]))
+    secondary_color = secondary or "-1"
+
+    fzf = [
+        "fzf", "--ansi", "--delimiter=\t", "--with-nth=6..",
+        "--exact", "--tiebreak=index", "--layout=reverse", "--height=90%", "--min-height=20",
+        "--margin=0,1", "--highlight-line", "--no-hscroll", "--scrollbar= │", "--ellipsis=…",
+        "--pointer=", "--marker=", "--prompt=› ", "--ghost=Search titles, projects, branches",
+        "--input-border=rounded", f"--input-label= {MARK} Claude sessions ", "--input-label-pos=3",
+        "--info=inline-right", "--header= ", f"--footer={hints}", "--footer-border=none",
+        f"--preview={self_path} preview {{1}}", "--preview-label= Where you left off ",
+        "--preview-window=right,55%,border-left,wrap,follow,noinfo,~4,<50(down,45%,border-top,wrap,follow,noinfo,~4)",
+        f"--bind=result:transform-header({header_cmd})+transform-footer:{footer_cmd}",
+        f"--bind=tab:transform-preview-label~{flip_label}~+refresh-preview+transform-footer:{footer_cmd}",
+        "--bind=ctrl-u:clear-query,ctrl-/:toggle-preview,alt-up:preview-page-up,alt-down:preview-page-down",
+        f"--color=fg:-1,bg:-1,{selection}",
+        f"--color=prompt:blue,info:-1:dim,border:dim,input-border:dim,scrollbar:dim,preview-scrollbar:dim,"
+        f"input-label:-1:bold,header:{secondary_color},preview-label:{secondary_color}",
+        "--color=footer:-1,ghost:dim,query:-1:regular,preview-fg:-1,preview-bg:-1,separator:dim",
+    ]
+    chosen = subprocess.run(fzf, input=items().encode(), stdout=subprocess.PIPE).stdout.decode()
+    if not chosen:
+        sys.exit(1)
+    _, cwd, session_id, config_dir, title = chosen.split("\t")[:5]
+    while not os.path.isdir(cwd):
+        cwd = os.path.dirname(cwd)
+    default_config = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude")).expanduser().resolve()
+    env = "" if Path(config_dir) == default_config else f"CLAUDE_CONFIG_DIR={q(config_dir)} "
+    print(title)
+    print(f"cd {q(cwd)} && {env}claude --resume {session_id}")
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    command = sys.argv[1:2]
+    if command == ["preview"]:
+        preview(sys.argv[2])
+    elif command == ["pick"]:
+        pick()
+    else:
+        sys.exit(__doc__)
