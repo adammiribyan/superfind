@@ -1373,6 +1373,31 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(list(json.loads(status.read_text()).values())[0]["status"], "waiting")
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_folder_that_cannot_be_read_keeps_its_sessions_and_says_so(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        projects = self.home / ".claude" / "projects"
+        projects.chmod(0)
+        self.addCleanup(projects.chmod, 0o755)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn("1 session file or folder couldn't be read", result.stderr)
+        self.assertIn("permission denied", result.stderr)
+        self.assertEqual([r.split("\t")[4] for r in self.run_superfind("search", "redirect").stdout.splitlines()],
+                         ["Login redirect"])
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads files whatever their mode")
+    def test_a_session_file_that_cannot_be_read_is_reported(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        locked = self.session("b2", user("rotate the keys"), claude("Rotated."), title="Key rotation")
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o644)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn(f"1 session file or folder couldn't be read, so their sessions may be missing or out of date: open {locked}",
+                      result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

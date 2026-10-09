@@ -230,7 +230,7 @@ func mustOpenSearch() *sql.DB {
 
 func mustIndex(command string) []session.Row {
 	noticed := false
-	rows, err := session.Index(func(stale int) {
+	rows, problems, err := session.Index(func(stale int) {
 		if term.IsTerminal(os.Stderr.Fd()) {
 			fmt.Fprintf(stderr, "  Indexing %d sessions…", stale)
 			noticed = true
@@ -241,6 +241,9 @@ func mustIndex(command string) []session.Row {
 	}
 	if err != nil {
 		fail("superfind " + command + ": " + err.Error())
+	}
+	if unreadable := session.Unreadable(problems); unreadable != "" {
+		fmt.Fprintln(stderr, "superfind "+command+": "+unreadable)
 	}
 	return rows
 }

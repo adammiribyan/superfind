@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -72,9 +74,41 @@ func (a *Agent) homes() []string {
 
 var globMeta = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`)
 
-func (a *Agent) Sessions(home string) []string {
-	matches, _ := filepath.Glob(filepath.Join(globMeta.Replace(home), a.glob))
-	return matches
+func (a *Agent) Sessions(home string) ([]string, []error) {
+	var paths []string
+	var unreadable []error
+	var walk func(dir string, parts []string)
+	walk = func(dir string, parts []string) {
+		var names []string
+		if strings.ContainsAny(parts[0], "*?[") {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					unreadable = append(unreadable, err)
+				}
+				return
+			}
+			for _, e := range entries {
+				if matched, _ := filepath.Match(parts[0], e.Name()); matched {
+					names = append(names, e.Name())
+				}
+			}
+		} else {
+			names = []string{parts[0]}
+		}
+		for _, name := range names {
+			path := filepath.Join(dir, name)
+			if len(parts) == 1 {
+				if _, err := os.Lstat(path); err == nil {
+					paths = append(paths, path)
+				}
+			} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+				walk(path, parts[1:])
+			}
+		}
+	}
+	walk(home, strings.Split(a.glob, "/"))
+	return paths, unreadable
 }
 
 func (a *Agent) Stat(path string) (FileID, float64, error) {

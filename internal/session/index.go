@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -234,10 +235,22 @@ type parsed struct {
 	body    string
 }
 
-func Index(announce func(stale int)) ([]Row, error) {
+func Unreadable(problems []error) string {
+	if len(problems) == 0 {
+		return ""
+	}
+	noun := "session files or folders"
+	if len(problems) == 1 {
+		noun = "session file or folder"
+	}
+	return fmt.Sprintf("%d %s couldn't be read, so their sessions may be missing or out of date: %v",
+		len(problems), noun, problems[0])
+}
+
+func Index(announce func(stale int)) ([]Row, []error, error) {
 	unlock, err := lockFile("index.lock")
 	if err != nil {
-		return nil, fmt.Errorf("locking the index: %w", err)
+		return nil, nil, fmt.Errorf("locking the index: %w", err)
 	}
 	defer unlock()
 	old := loadCache()
@@ -245,12 +258,23 @@ func Index(announce func(stale int)) ([]Row, error) {
 		old = map[string]cacheEntry{}
 	}
 	var all []found
-	for _, p := range agent.Places() {
+	var problems []error
+	var blocked []string
+	places := agent.Places()
+	for _, p := range places {
 		var names map[string]string
 		if p.Agent.Names != nil {
 			names = p.Agent.Names(p.Home)
 		}
-		for _, path := range p.Agent.Sessions(p.Home) {
+		paths, unreadable := p.Agent.Sessions(p.Home)
+		for _, err := range unreadable {
+			problems = append(problems, err)
+			var e *fs.PathError
+			if errors.As(err, &e) {
+				blocked = append(blocked, e.Path+"/")
+			}
+		}
+		for _, path := range paths {
 			if strings.HasPrefix(p.Agent.IDOf(path), "-") {
 				continue
 			}
@@ -280,10 +304,12 @@ func Index(announce func(stale int)) ([]Row, error) {
 			defer wg.Done()
 			for f := range work {
 				s, body, incomplete, err := parse(f)
+				mu.Lock()
 				if err != nil {
+					problems = append(problems, err)
+					mu.Unlock()
 					continue
 				}
-				mu.Lock()
 				if incomplete {
 					partial[f.path] = s
 				} else {
@@ -317,6 +343,16 @@ func Index(announce func(stale int)) ([]Row, error) {
 			rows = append(rows, Row{Session: *s, Agent: f.Agent, Home: f.Home, Path: f.path})
 		}
 	}
+	for path, entry := range old {
+		_, seen := fresh[path]
+		under := slices.ContainsFunc(blocked, func(dir string) bool { return strings.HasPrefix(path, dir) })
+		if p, ok := agent.Locate(path, places); !seen && under && ok {
+			fresh[path] = entry
+			if entry.Session != nil {
+				rows = append(rows, Row{Session: *entry.Session, Agent: p.Agent, Home: p.Home, Path: path})
+			}
+		}
+	}
 	var gone []string
 	for p := range old {
 		if _, ok := fresh[p]; !ok {
@@ -326,15 +362,15 @@ func Index(announce func(stale int)) ([]Row, error) {
 	discarded := len(old) == 0
 	if len(results) > 0 || len(gone) > 0 || discarded {
 		if err := updateSearch(results, gone, discarded); err != nil {
-			return rows, fmt.Errorf("updating the search index: %w", err)
+			return rows, problems, fmt.Errorf("updating the search index: %w", err)
 		}
 	}
 	if len(results) > 0 || len(gone) > 0 || len(fresh) != len(old) {
 		if err := saveCache(fresh); err != nil {
-			return rows, fmt.Errorf("saving the session cache: %w", err)
+			return rows, problems, fmt.Errorf("saving the session cache: %w", err)
 		}
 	}
-	return rows, nil
+	return rows, problems, nil
 }
 
 func updateSearch(results map[string]parsed, gone []string, discarded bool) error {
