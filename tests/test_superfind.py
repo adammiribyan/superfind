@@ -1426,6 +1426,21 @@ class SuperfindBehavior(unittest.TestCase):
         for query in ("redirect", "agent:claude redirect", "is:unfinished redirect"):
             self.assertIn("redirect", self.superfind("preview", str(path), "--query", query).splitlines()[3], query)
 
+    def test_a_session_in_a_symlinked_project_folder_resumes_from_the_path_search_printed(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        alias = self.home / "alias"
+        alias.symlink_to(self.home / ".claude")
+        through_alias = alias / "projects" / self.projects.name / "a1.jsonl"
+        self.assertEqual(self.superfind("command", str(through_alias)), "cd /tmp && claude --resume a1\n")
+        real = self.home / "real-project"
+        self.projects.rename(real)
+        self.projects.symlink_to(real)
+        self.superfind("index")
+        printed = self.superfind("search", "redirect").split("\t")[0]
+        self.assertEqual(self.superfind("command", printed), "cd /tmp && claude --resume a1\n")
+        self.assertIn("Fixed.", self.superfind("preview", printed))
+
 
 if __name__ == "__main__":
     unittest.main()
