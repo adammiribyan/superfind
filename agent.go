@@ -81,19 +81,19 @@ func (a *agent) threadNames(home string) map[string]string {
 	return a.names(home)
 }
 
-func (a *agent) stat(path string) (fileID, error) {
+func (a *agent) stat(path string) (fileID, float64, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return fileID{}, err
+		return fileID{}, 0, err
 	}
 	id := fileID{info.ModTime().UnixNano(), info.Size()}
 	if a.sidecar != "" {
 		if side, err := os.Stat(filepath.Join(filepath.Dir(path), a.sidecar)); err == nil {
-			id.ModNanos = max(id.ModNanos, side.ModTime().UnixNano())
+			id.ModNanos += side.ModTime().UnixNano()
 			id.Size += side.Size()
 		}
 	}
-	return id, nil
+	return id, float64(info.ModTime().UnixNano()) / 1e9, nil
 }
 
 func (a *agent) phrase(s string) string { return strings.ReplaceAll(s, "{agent}", a.label) }
@@ -126,7 +126,8 @@ func locate(path string, in []place) (place, bool) {
 	var best place
 	found := false
 	for _, p := range in {
-		if strings.HasPrefix(path, p.home+"/") && (!found || len(p.home) > len(best.home)) {
+		owned, _ := filepath.Match(filepath.Join(p.home, p.agent.glob), path)
+		if owned && (!found || len(p.home) > len(best.home)) {
 			best, found = p, true
 		}
 	}

@@ -108,8 +108,6 @@ type fileID struct {
 	Size     int64 `json:"size"`
 }
 
-func (f fileID) seconds() float64 { return float64(f.ModNanos) / 1e9 }
-
 func oneLine(text string, width int) string {
 	text = strings.Join(strings.Fields(text), " ")
 	if displayWidth(text) <= width {

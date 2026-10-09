@@ -14,7 +14,8 @@ import time
 import unittest
 from pathlib import Path
 
-from test_hop import HOP, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, line, tool, uid, user
+from test_hop import (HOP, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, grok_reply, grok_user, line,
+                      tool, uid, user)
 
 
 def tmux(*args):
@@ -296,6 +297,29 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker(header="✻ Sessions")
         self.keys("Enter")
         self.assertEqual(self.result(), (0, f"fix the build\ncd /tmp && codex resume {uid(1)}\n"))
+
+    def test_two_agents_sharing_one_home_keep_their_own_resume_commands(self):
+        shared = self.home / "shared"
+        rollout = shared / "sessions" / "2026" / "10" / "09" / f"rollout-2026-10-09T10-00-00-{uid(1)}.jsonl"
+        rollout.parent.mkdir(parents=True)
+        rollout.write_text("\n".join([codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                      codex_reply("Fixed.")]) + "\n")
+        chat = shared / "sessions" / "%2Ftmp" / uid(2) / "chat_history.jsonl"
+        chat.parent.mkdir(parents=True)
+        chat.write_text("\n".join([grok_user("rate the code"), grok_reply("It reads well.", tools=1)]) + "\n")
+        (chat.parent / "summary.json").write_text(json.dumps({"info": {"cwd": "/tmp"}, "session_summary": "Code rating"}))
+        for path in (rollout, chat, chat.parent / "summary.json"):
+            self.clock += 3600
+            os.utime(path, (self.clock, self.clock))
+        self.env.update(CODEX_HOME=str(shared), GROK_HOME=str(shared))
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False, header="✻ Sessions")
+        self.wait_for("2/2")
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, f"Code rating\ncd /tmp && grok --resume {uid(2)}\n"))
 
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()

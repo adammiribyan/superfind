@@ -124,11 +124,11 @@ func statusLabel(r Row, known map[string]statusEntry) string {
 	if !ok || e.P < statusShownAt {
 		return ""
 	}
-	id, err := r.Agent.stat(r.Path)
+	id, mtime, err := r.Agent.stat(r.Path)
 	if err != nil {
 		return ""
 	}
-	age := now() - id.seconds()
+	age := now() - mtime
 	if e.fileID != id || age < activeSeconds || age >= labelDays*86400 {
 		return ""
 	}
@@ -158,12 +158,12 @@ func labelSessions(key string, rows []Row) error {
 	}
 	var todo []job
 	for _, r := range rows {
-		id, err := r.Agent.stat(r.Path)
+		id, mtime, err := r.Agent.stat(r.Path)
 		if err != nil {
 			continue
 		}
 		e, ok := known[r.Path]
-		recent := now()-id.seconds() < labelDays*86400
+		recent := now()-mtime < labelDays*86400
 		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.fileID == id) {
 			todo = append(todo, job{r, id})
 		}

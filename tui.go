@@ -304,7 +304,7 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 		explained: m.explained[r.Path], secondary: m.colors.mutedSeq}
 	m.header = previewHeader(req, *r, m.tags, m.db)
 	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent}
-	if id, err := r.Agent.stat(r.Path); err == nil {
+	if id, _, err := r.Agent.stat(r.Path); err == nil {
 		key.file = id
 	}
 	m.showing = key

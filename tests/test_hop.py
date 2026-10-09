@@ -781,9 +781,29 @@ class HopBehavior(unittest.TestCase):
     def test_a_grok_title_that_arrives_after_the_chat_is_picked_up(self):
         chat = self.grok_session(uid(1), "/tmp", grok_user("rate the code in this repo"), grok_reply("It reads well."))
         self.assertEqual(self.titles(), ["rate the code in this repo"])
-        self.grok_summary(chat, "/tmp", title="Rating the code")
-        self.tick(chat.parent / "summary.json")
+        summary = chat.parent / "summary.json"
+        size, written = summary.stat().st_size, os.stat(chat).st_mtime
+        retitled = json.dumps({"info": {"cwd": "/tmp"}, "session_summary": "Rating the code"})
+        self.assertLessEqual(len(retitled), size)
+        summary.write_text(retitled.ljust(size))
+        os.utime(summary, (written - 30, written - 30))
         self.assertEqual(self.titles(), ["Rating the code"])
+
+    def test_a_grok_edit_that_keeps_its_size_and_predates_the_summary_is_noticed(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("tune the alpha retries"), grok_reply("Done.", tools=1),
+                                 title="Retries")
+        self.assertEqual(self.titles("omega"), [])
+        written = os.stat(chat).st_mtime
+        chat.write_text(chat.read_text().replace("alpha", "omega"))
+        os.utime(chat, (written - 30, written - 30))
+        self.assertEqual(self.titles("omega"), ["Retries"])
+
+    def test_a_grok_summary_rewrite_does_not_make_the_session_active(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), title="Build fix")
+        two_days = time.time() - 2 * 86400 - 60
+        os.utime(chat, (two_days, two_days))
+        os.utime(chat.parent / "summary.json")
+        self.assertEqual(self.rows(), ["Build fix  2d ago · tmp"])
 
     def test_a_grok_reply_written_after_the_summary_is_picked_up(self):
         chat = self.grok_session(uid(1), "/tmp", grok_user("rate the code in this repo"), grok_reply("It reads well."),
@@ -930,7 +950,24 @@ class HopBehavior(unittest.TestCase):
         for command in ("preview", "command"):
             result = self.run_hop(command, str(stray))
             self.assertEqual((result.returncode, result.stdout, result.stderr),
-                             (1, "", f"hop {command}: not a session hop reads: {stray}\n"))
+                             (1, "", f"hop {command}: {stray} is not inside a Claude, Codex, or Grok home\n"))
+
+    def test_a_symlinked_transcript_keeps_its_listed_path_in_hop_command(self):
+        real = self.home / "elsewhere" / "a1.jsonl"
+        real.parent.mkdir()
+        real.write_text("\n".join([user("fix the build"), tool("Bash"), claude("Fixed."),
+                                   line(type="ai-title", aiTitle="Build fix")]) + "\n")
+        link = self.home.resolve() / ".claude" / "projects" / "-work-billing" / "a1.jsonl"
+        link.symlink_to(real)
+        self.hop("index")
+        self.assertEqual([r.split("\t")[0] for r in self.hop("search").splitlines()], [str(link)])
+        self.assertEqual(self.hop("command", str(link)), "cd /tmp && claude --resume a1\n")
+
+    def test_a_lost_search_index_is_rebuilt_from_the_sessions(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.hop("index")
+        (self.home / ".cache" / "hop" / "search.db").unlink()
+        self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"])
 
     def test_an_older_cache_is_rebuilt_and_keeps_its_labels(self):
         waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),

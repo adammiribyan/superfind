@@ -218,10 +218,15 @@ func mustIndex(command string) []Row {
 }
 
 func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
-	path := resolve(arg)
+	path := filepath.Join(resolve(filepath.Dir(arg)), filepath.Base(arg))
 	p, ok := locate(path, places())
 	if !ok {
-		fail("hop " + command + ": not a session hop reads: " + arg)
+		labels := make([]string, len(agents))
+		for i, a := range agents {
+			labels[i] = a.label
+		}
+		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
+			", or " + labels[len(labels)-1] + " home")
 	}
 	rows = annotate(mustIndex(command))
 	for _, r := range rows {

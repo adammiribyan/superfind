@@ -33,7 +33,7 @@ func parse(f found) (*Session, string, error) {
 		ID: f.agent.idOf(f.path), Cwd: t.cwd,
 		Title:      firstNonEmpty(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
 		LastPrompt: firstNonEmpty(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.id.seconds(),
+		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.mtime,
 	}, body, nil
 }
 
@@ -145,9 +145,10 @@ func openSearch() (*sql.DB, error) {
 
 type found struct {
 	place
-	path string
-	id   fileID
-	name string
+	path  string
+	id    fileID
+	mtime float64
+	name  string
 }
 
 type parsed struct {
@@ -162,12 +163,15 @@ func index(announce func(stale int)) ([]Row, error) {
 	}
 	defer unlock()
 	old := loadCache()
+	if _, err := os.Stat(cachePath("search.db")); err != nil {
+		old = map[string]cacheEntry{}
+	}
 	var all []found
 	for _, p := range places() {
 		names := p.agent.threadNames(p.home)
 		for _, path := range p.agent.sessions(p.home) {
-			if id, err := p.agent.stat(path); err == nil {
-				all = append(all, found{p, path, id, names[p.agent.idOf(path)]})
+			if id, mtime, err := p.agent.stat(path); err == nil {
+				all = append(all, found{p, path, id, mtime, names[p.agent.idOf(path)]})
 			}
 		}
 	}
@@ -228,8 +232,7 @@ func index(announce func(stale int)) ([]Row, error) {
 		}
 	}
 	discarded := len(old) == 0
-	_, statErr := os.Stat(cachePath("search.db"))
-	if len(results) > 0 || len(gone) > 0 || discarded || statErr != nil {
+	if len(results) > 0 || len(gone) > 0 || discarded {
 		if err := updateSearch(results, gone, discarded); err != nil {
 			return rows, fmt.Errorf("updating the search index: %w", err)
 		}
