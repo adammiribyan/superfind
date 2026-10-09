@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -331,7 +332,7 @@ func main() {
 			printRows(session.RecentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask.Ask(db, query, eligible)
+		paths, err := ask.Ask(context.Background(), db, query, eligible)
 		var failure ask.Failure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
