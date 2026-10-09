@@ -802,6 +802,98 @@ class HopBehavior(unittest.TestCase):
         quoted = str(folder).replace("'", "'\"'\"'")
         self.assertEqual(self.hop("command", str(chat)), f"cd '{quoted}' && grok --resume {uid(1)}\n")
 
+    def test_claude_label_requests_are_byte_identical_to_before(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Should I run it on production now?"),
+                     title="Ledger migration")
+        requests = self.record_typesafe()
+        self.run_hop("label")
+        sent = requests[0]
+        self.assertEqual(sent["questions"]["status"]["instructions"],
+                         "This is the end of a coding session between a developer and Claude. In what state did the session end?")
+        self.assertEqual(sent["questions"]["status"]["criteria"], {
+            "waiting": "Claude cannot finish the developer's current request without them: it asked a question it needs "
+                       "answered, or needs their approval, credentials, or a choice before continuing.",
+            "unfinished": "Work on the developer's last request stopped before it was done: Claude was mid-step, was "
+                          "interrupted, hit an error or limit, or never answered.",
+            "finished": "The developer's last request was completed. An optional offer of more work, such as "
+                        "\"want me to also\u2026?\", does not mean Claude is waiting.",
+            "unclear": "The ending does not show which of the other states applies.",
+        })
+        self.assertEqual((sent["state"]["last_event"], [t["who"] for t in sent["state"]["recent_turns"]]),
+                         ("Claude's last action was writing a reply to the developer.", ["developer", "claude"]))
+
+    def test_rows_name_their_agent_only_when_sessions_come_from_more_than_one(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."), title="Ledger migration")
+        self.assertEqual(self.rows(), ["Ledger migration  1d ago · tmp"])
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.assertEqual(self.rows(), ["fix the build  1d ago · tmp · codex", "Ledger migration  1d ago · tmp · claude"])
+
+    def test_agent_filter_keeps_only_that_agents_sessions(self):
+        waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                               claude("Should I run it on production now?"), title="Ledger migration")
+        self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
+                           codex_reply("Migrated."))
+        self.grok_session(uid(2), "/tmp", grok_user("check the ledger totals"), grok_reply("Checked.", tools=1),
+                          title="Ledger totals")
+        self.judged(waiting, "waiting")
+        every = ["Ledger totals", "migrate the ledger index", "Ledger migration"]
+        self.assertEqual(self.titles("agent:codex", "ledger"), ["migrate the ledger index"])
+        self.assertEqual(self.titles("agent:claude", "is:waiting"), ["Ledger migration"])
+        self.assertEqual(self.titles("agent:grok"), ["Ledger totals"])
+        self.assertEqual(sorted(self.titles("agent:bogus", "ledger")), sorted(every))
+        self.assertEqual(sorted(self.titles("is:bogus", "ledger")), sorted(every))
+
+    def test_the_preview_names_the_agent_that_replied(self):
+        paths = {
+            "claude": self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."),
+                                   title="Ledger migration"),
+            "codex": self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                        codex_reply("Fixed.")),
+            "grok": self.grok_session(uid(2), "/tmp", grok_user("check the ledger totals"), grok_reply("Checked.", tools=1),
+                                      title="Ledger totals"),
+        }
+        self.hop("index")
+        speakers = {name: self.hop("preview", str(path)).splitlines()[-2] for name, path in paths.items()}
+        self.assertEqual(speakers, {"claude": "claude", "codex": "codex", "grok": "grok"})
+
+    def test_a_preview_of_a_path_outside_every_agent_home_says_so(self):
+        stray = self.home.resolve() / "notes" / "a1.jsonl"
+        stray.parent.mkdir()
+        stray.write_text(user("deploy the ledger migration") + "\n" + claude("Deployed.") + "\n")
+        for command in ("preview", "command"):
+            result = self.run_hop(command, str(stray))
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (1, "", f"hop {command}: not a session hop reads: {stray}\n"))
+
+    def test_an_older_cache_is_rebuilt_and_keeps_its_labels(self):
+        waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                               claude("Should I run it on production now?"), title="Ledger migration")
+        st = os.stat(waiting)
+        cache = self.home / ".cache" / "hop"
+        cache.mkdir(parents=True)
+        (cache / "index.json").write_text(json.dumps({"version": 11, "files": {str(waiting): {
+            "mtime_ns": st.st_mtime_ns, "size": st.st_size, "session": {
+                "session_id": "a1", "cwd": "/tmp", "title": "Title from an older hop", "last_prompt": "deploy",
+                "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
+        self.judged(waiting, "waiting")
+        self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 12)
+
+    def test_an_older_search_index_cannot_crowd_out_new_matches(self):
+        import sqlite3
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        cache = self.home / ".cache" / "hop"
+        cache.mkdir(parents=True)
+        db = sqlite3.connect(cache / "search.db")
+        db.execute("CREATE VIRTUAL TABLE docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')")
+        db.executemany("INSERT INTO docs VALUES (?, ?, ?)",
+                       [(f"/gone/{n}.jsonl", "kubernetes", "kubernetes " * 20) for n in range(200)])
+        db.commit()
+        db.close()
+        (cache / "index.json").write_text(json.dumps({"version": 11, "files": {}}))
+        self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"])
+
 
 if __name__ == "__main__":
     unittest.main()

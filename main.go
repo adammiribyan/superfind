@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,28 +121,27 @@ func printRows(rows []Row, shown tags) {
 }
 
 func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
-	var words, filters []string
+	var words, statuses []string
+	var from []*agent
 	for _, w := range strings.Fields(query) {
-		if strings.HasPrefix(w, "is:") {
-			filters = append(filters, statusLabelFor(w[3:]))
-		} else {
+		switch {
+		case strings.HasPrefix(w, "is:"):
+			if label := statusLabelFor(w[3:]); label != "" {
+				statuses = append(statuses, label)
+			}
+		case strings.HasPrefix(w, "agent:"):
+			if a := agentNamed(w[6:]); a != nil {
+				from = append(from, a)
+			}
+		default:
 			words = append(words, w)
 		}
 	}
-	var wanted []string
-	for _, f := range filters {
-		if f != "" {
-			wanted = append(wanted, f)
-		}
-	}
-	if len(wanted) > 0 {
+	if len(statuses) > 0 || len(from) > 0 {
 		var kept []Row
 		for _, r := range rows {
-			for _, w := range wanted {
-				if r.Status == w {
-					kept = append(kept, r)
-					break
-				}
+			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
+				kept = append(kept, r)
 			}
 		}
 		rows = kept

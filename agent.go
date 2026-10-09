@@ -98,6 +98,15 @@ func (a *agent) stat(path string) (fileID, error) {
 
 func (a *agent) phrase(s string) string { return strings.ReplaceAll(s, "{agent}", a.label) }
 
+func agentNamed(id string) *agent {
+	for _, a := range agents {
+		if a.id == id {
+			return a
+		}
+	}
+	return nil
+}
+
 type place struct {
 	agent *agent
 	home  string

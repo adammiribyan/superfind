@@ -14,7 +14,7 @@ import time
 import unittest
 from pathlib import Path
 
-from test_hop import HOP, claude, line, tool, user
+from test_hop import HOP, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, line, tool, uid, user
 
 
 def tmux(*args):
@@ -43,13 +43,21 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True):
+    def codex_session(self, session_id, *lines):
+        folder = self.home / ".codex" / "sessions" / "2026" / "10" / "09"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"rollout-2026-10-09T10-00-00-{session_id}.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        self.clock += 3600
+        os.utime(path, (self.clock, self.clock))
+
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions"):
         if index_first:
             subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {HOP} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
-        self.wait_for("Claude sessions")
+        self.wait_for(header)
 
     def screen(self):
         return tmux("capture-pane", "-p", "-t", self.session_name).stdout
@@ -271,6 +279,38 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Search ranking tweaks")
         self.keys("Enter")
         self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
+    def test_the_picker_says_sessions_when_more_than_one_agent_is_present(self):
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.open_picker(header="✻ Sessions")
+        self.assertEqual([r.split("│")[0].strip() for r in self.rows()[:2]],
+                         ["fix the build  2d ago · tmp · codex", "Checkout double charge  2d ago · tmp · claude"])
+        self.assertNotIn("Claude sessions", self.screen())
+
+    def test_choosing_a_codex_session_prints_its_resume_command(self):
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.open_picker(header="✻ Sessions")
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, f"fix the build\ncd /tmp && codex resume {uid(1)}\n"))
+
+    def test_a_cached_session_outside_every_home_is_not_listed(self):
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        index = self.home / ".cache" / "hop" / "index.json"
+        cache = json.loads(index.read_text())
+        entry = next(iter(cache["files"].values()))
+        cache["files"]["/nowhere/stray.jsonl"] = {**entry, "session": {**entry["session"], "title": "Stray session"}}
+        index.write_text(json.dumps(cache))
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False)
+        self.wait_for("3/3")
+        self.assertNotIn("Stray session", self.screen())
 
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
