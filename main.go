@@ -249,9 +249,16 @@ func mustIndex(command string) []session.Row {
 }
 
 func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session.Row) {
-	path := filepath.Join(agent.Resolve(filepath.Dir(arg)), filepath.Base(arg))
-	p, ok := agent.Locate(path, agent.Places())
-	if !ok {
+	given, _ := filepath.Abs(arg)
+	candidates := []string{given, filepath.Join(agent.Resolve(filepath.Dir(arg)), filepath.Base(arg))}
+	var located []session.Row
+	places := agent.Places()
+	for _, path := range candidates {
+		if p, ok := agent.Locate(path, places); ok {
+			located = append(located, session.Row{Agent: p.Agent, Home: p.Home, Path: path})
+		}
+	}
+	if len(located) == 0 {
 		labels := make([]string, len(agent.Agents))
 		for i, a := range agent.Agents {
 			labels[i] = a.Label
@@ -260,12 +267,14 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 			", or " + labels[len(labels)-1] + " home")
 	}
 	rows = session.Annotate(mustIndex(command))
-	for _, r := range rows {
-		if r.Path == path {
-			return r, true, rows
+	for _, want := range located {
+		for _, r := range rows {
+			if r.Path == want.Path {
+				return r, true, rows
+			}
 		}
 	}
-	return session.Row{Agent: p.Agent, Home: p.Home, Path: path}, false, rows
+	return located[len(located)-1], false, rows
 }
 
 func fail(message string) {
