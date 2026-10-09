@@ -41,8 +41,11 @@ homebrew_casks:
       owner: adammiribyan
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: "true"
 
 release:
   github:
     owner: adammiribyan
     name: superfind
+  draft: true
+  replace_existing_draft: true
