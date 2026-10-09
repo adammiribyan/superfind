@@ -1,24 +1,14 @@
-import importlib.machinery
-import importlib.util
 import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-HOP = Path(__file__).resolve().parent.parent / "hop"
+HOP = Path(os.environ.get("HOP_BIN", Path(__file__).resolve().parent.parent / "bin" / "hop"))
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def load_hop():
-    loader = importlib.machinery.SourceFileLoader("hop", str(HOP))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("hop", loader))
-    loader.exec_module(module)
-    return module
 
 
 def line(**entry):
@@ -57,12 +47,11 @@ class HopBehavior(unittest.TestCase):
         return path.resolve()
 
     def hop(self, *args):
-        result = subprocess.run([sys.executable, str(HOP), *args], env=self.env, capture_output=True, text=True,
-                                check=True)
+        result = subprocess.run([str(HOP), *args], env=self.env, capture_output=True, text=True, check=True)
         return ANSI.sub("", result.stdout)
 
     def run_hop(self, *args):
-        return subprocess.run([sys.executable, str(HOP), *args], env=self.env, capture_output=True, text=True)
+        return subprocess.run([str(HOP), *args], env=self.env, capture_output=True, text=True)
 
     def titles(self, *search):
         self.hop("index")
@@ -150,8 +139,7 @@ class HopBehavior(unittest.TestCase):
                                    "during the overnight batch window** and was renewed by hand."),
                             title="Incident summary")
         self.hop("index")
-        self.env["FZF_PREVIEW_COLUMNS"] = "40"
-        self.assertNotIn("**", self.hop("preview", str(path)))
+        self.assertNotIn("**", self.hop("preview", str(path), "--width", "40"))
 
     def test_a_label_expires_once_you_have_left_a_session_for_two_weeks(self):
         waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
@@ -188,12 +176,12 @@ class HopBehavior(unittest.TestCase):
         self.assertNotIn("\n  done\n", preview)
 
     def test_resuming_a_deleted_worktree_runs_from_its_nearest_surviving_parent(self):
-        parent = self.home / "repo"
+        parent = (self.home / "repo").resolve()
         parent.mkdir()
-        hop = load_hop()
-        config = hop.HOME / ".claude"
-        self.assertEqual(hop.resume_command(str(parent / ".claude" / "worktrees" / "gone"), "abc-123", config),
-                         f"cd {parent} && claude --resume abc-123")
+        path = self.session("abc-123", user("fix the flaky checkout test", cwd=str(parent / ".claude" / "worktrees" / "gone")),
+                            tool("Edit"), claude("Fixed."), title="Flaky checkout test")
+        self.hop("index")
+        self.assertEqual(self.hop("command", str(path)).strip(), f"cd {parent} && claude --resume abc-123")
 
 
 if __name__ == "__main__":

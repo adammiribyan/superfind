@@ -7,16 +7,18 @@ Find any past AI coding session on your Mac and hop back into it. hop opens the 
 ## Install
 
 ```sh
-brew install fzf
+brew install go
 git clone <this repo> ~/src/hop
 ~/src/hop/install.sh
 ```
 
-Then open a new terminal tab. The installer links `hop` into `~/.local/bin`, loads the zsh widget from `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. It needs python3, which the Xcode Command Line Tools provide, and a recent fzf; the installer checks for the features it needs. Running it again changes nothing.
+Then open a new terminal tab. hop is a single Go binary with no other dependencies. The installer builds it, links it into `~/.local/bin`, adds `eval "$(hop init zsh)"` to `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. Running it again changes nothing; it also upgrades an older Python install of hop in place.
+
+The shell setup is a small zsh function: a program can't change its parent shell's folder, so `hop init zsh` defines the function that runs the `cd` and `claude --resume` for you.
 
 ## Use
 
-Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`.
+Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`. The picker opens full screen and leaves your terminal exactly as it was when you choose or cancel.
 
 | Key | Does |
 |---|---|
@@ -24,6 +26,7 @@ Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`.
 | ⌥ Enter | Ask: rank sessions by meaning, so "where did we stop charging people twice" finds "Checkout button double-charges on slow networks". |
 | Enter | Resume the selected session: `cd` into its folder and run `claude --resume`. The command lands in your shell history. |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
+| ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
 | Ctrl-U | Clear the search. |
 | `is:waiting` | Show only sessions waiting on you. `is:unfinished` works the same way. |
@@ -50,21 +53,21 @@ Measured on 21 test searches, each phrased differently from the session it shoul
 |---|---|---|
 | Right session ranked first | 16–17 | 18–19 |
 | Right session in the top 3 | 19–20 | 19–20 |
-| Time to results, median | 1.3 s | 3.3–3.8 s |
-| Time to results, slowest | 2.3 s | 8.6 s |
+| Time to results, median | 1.4 s | 3.3–3.8 s |
+| Time to results, slowest | 1.7 s | 8.6 s |
 | Cost per question | $0.0036 | $0.0073 |
 
 Claude puts the right session first slightly more often. Jev is about three times faster and half the price.
 
 With Jev, the preview also shows the passage that best answers your question for the top five results. It appears about a second after the results.
 
-To use Jev, put the key in your environment or in a `.env` file next to the `hop` script (it is git-ignored):
+To use Jev, set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/hop/env` (or in a git-ignored `.env` at the root of this repo):
 
 ```sh
 TYPESAFE_API_KEY=your-key
 ```
 
-Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when `.env` has a key. If asking fails, the line under the search box says why, and typing goes back to keyword search.
+Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. If asking fails, the line under the search box says why, and typing goes back to keyword search.
 
 **What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; keyword search runs locally.
 
@@ -77,21 +80,25 @@ Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when `.env` has
 ## Commands
 
 ```sh
-hop                  # open the picker
-hop search <words>   # print matching sessions
-hop ask <question>   # print sessions ranked by meaning
-hop index            # build or refresh the index
-hop label            # mark sessions waiting on you (needs a TypeSafe key)
+hop                          # open the picker
+hop init zsh                 # print the shell setup
+hop search <words>           # print matching sessions
+hop ask <question>           # print sessions ranked by meaning
+hop preview <transcript>     # print where a session left off (--recent, --width N, --query Q)
+hop command <transcript>     # print the command that resumes a session
+hop index                    # build or refresh the index
+hop label                    # mark sessions waiting on you (needs a TypeSafe key)
 hop --version
 ```
 
-The index lives in `~/.cache/hop/`. Each run re-reads only the transcripts that changed, so opening the picker stays instant; the first run shows a short "Indexing…" line while it reads everything.
+The index lives in `~/.cache/hop/`. Each run re-reads only the transcripts that changed, so opening the picker stays instant. The first run reads every transcript in parallel: about a second for 360 sessions here, with a short "Indexing…" line while it works.
 
 hop takes its colors from your terminal. If your terminal doesn't report its colors, hop falls back to reverse video for the selected row. Set `HOP_PLAIN_COLORS=1` to always use that fallback, for example if the tinted row looks wrong.
 
 ## Develop
 
 ```sh
-python3 -m unittest discover -s tests   # behavior tests, using fake transcripts
-vhs demo/hop.tape                       # re-record demo/hop.gif from fake sessions
+go build -o bin/hop .                    # build
+python3 -m unittest discover -s tests    # behavior tests against bin/hop, using fake transcripts
+vhs demo/hop.tape                        # re-record demo/hop.gif from fake sessions
 ```

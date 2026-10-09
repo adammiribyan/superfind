@@ -4,35 +4,29 @@ set -eu
 repo=$(cd "$(dirname "$0")" && pwd)
 bin="$HOME/.local/bin"
 
-command -v python3 >/dev/null || { echo "python3 missing: run xcode-select --install" >&2; exit 1; }
-command -v fzf >/dev/null || { echo "fzf missing: run brew install fzf" >&2; exit 1; }
-fzf --filter=x --ghost=x --footer=x --gap-line= --input-label-pos=3 --highlight-line </dev/null >/dev/null 2>&1 && : || [ $? -ne 2 ] ||
-  { echo "fzf $(fzf --version | cut -d' ' -f1) is too old for the picker's layout: run brew upgrade fzf" >&2; exit 1; }
+command -v go >/dev/null || { echo "go missing: run brew install go" >&2; exit 1; }
+(cd "$repo" && go build -o bin/hop .)
+mkdir -p "$bin"
+ln -sf "$repo/bin/hop" "$bin/hop"
+echo "built and linked $bin/hop ($("$bin/hop" --version))"
 
-if grep -q 'claude-sessions\.zsh"' "$HOME/.zshrc" 2>/dev/null; then
-  sed -i '' '/claude-sessions\.zsh"/d' "$HOME/.zshrc"
-  echo "removed the old claude-sessions line from ~/.zshrc"
-fi
-if [ -L "$bin/claude-sessions" ]; then
-  rm "$bin/claude-sessions"
-  echo "removed the old claude-sessions link"
-fi
+for old in 'claude-sessions\.zsh"' 'hop\.zsh"'; do
+  if grep -q "$old" "$HOME/.zshrc" 2>/dev/null; then
+    sed -i '' "/$old/d" "$HOME/.zshrc"
+    echo "removed an old hop line from ~/.zshrc"
+  fi
+done
+[ -L "$bin/claude-sessions" ] && rm "$bin/claude-sessions"
 cache="${XDG_CACHE_HOME:-$HOME/.cache}"
 if [ -d "$cache/claude-sessions" ] && [ ! -e "$cache/hop" ]; then
   mv "$cache/claude-sessions" "$cache/hop"
-  echo "moved the search index to $cache/hop"
 fi
 
-mkdir -p "$bin"
-ln -sf "$repo/hop" "$bin/hop"
-echo "linked $bin/hop"
-
-source_line="source \"$repo/hop.zsh\""
-if ! grep -qF "$source_line" "$HOME/.zshrc" 2>/dev/null; then
-  printf '\n%s\n' "$source_line" >> "$HOME/.zshrc"
-  echo "added widget to ~/.zshrc"
+setup='eval "$("$HOME/.local/bin/hop" init zsh)"'
+if ! grep -qF "$setup" "$HOME/.zshrc" 2>/dev/null; then
+  printf '\n%s\n' "$setup" >> "$HOME/.zshrc"
+  echo "added hop to ~/.zshrc"
 fi
-case ":$PATH:" in *":$bin:"*) ;; *) echo "note: add $bin to PATH in ~/.zshrc" ;; esac
 
 ghostty_mac="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
 ghostty_xdg="${XDG_CONFIG_HOME:-$HOME/.config}/ghostty/config"
