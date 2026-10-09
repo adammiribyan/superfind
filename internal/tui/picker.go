@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"database/sql"
@@ -11,20 +11,18 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/adammiribyan/hop/internal/ask"
-	"github.com/adammiribyan/hop/internal/render"
-
-	"github.com/adammiribyan/hop/internal/session"
-
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/typesafe"
-
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/ask"
+	"github.com/adammiribyan/hop/internal/render"
+	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
 const (
@@ -132,6 +130,7 @@ type indexed struct {
 	rows []session.Row
 	err  error
 }
+
 type labelsTick struct{}
 
 type picker struct {
@@ -706,7 +705,7 @@ func pathsOf(rows []session.Row) []string {
 	return paths
 }
 
-func pick() (*session.Row, error) {
+func Pick() (*session.Row, error) {
 	problem := ""
 	db, err := session.OpenSearch()
 	if err != nil {

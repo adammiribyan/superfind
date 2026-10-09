@@ -15,9 +15,9 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/adammiribyan/hop/internal/agent"
-
 	_ "modernc.org/sqlite"
+
+	"github.com/adammiribyan/hop/internal/agent"
 )
 
 const cacheVersion = 12

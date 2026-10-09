@@ -17,7 +17,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/adammiribyan/hop/internal/render"
-
 	"github.com/adammiribyan/hop/internal/session"
 	"github.com/adammiribyan/hop/internal/typesafe"
 )

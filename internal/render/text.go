@@ -8,10 +8,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/adammiribyan/hop/internal/agent"
 	"github.com/adammiribyan/hop/internal/session"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
 const (

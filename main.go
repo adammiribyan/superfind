@@ -10,15 +10,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/adammiribyan/hop/internal/ask"
-	"github.com/adammiribyan/hop/internal/render"
-
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/charmbracelet/x/term"
 
 	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/ask"
+	"github.com/adammiribyan/hop/internal/render"
+	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/tui"
 	"github.com/adammiribyan/hop/internal/typesafe"
-
-	"github.com/charmbracelet/x/term"
 )
 
 const version = "0.9.0"
@@ -286,7 +285,7 @@ func main() {
 		}
 		fmt.Println(agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":
-		chosen, err := pick()
+		chosen, err := tui.Pick()
 		if err != nil {
 			fail(err.Error())
 		}
