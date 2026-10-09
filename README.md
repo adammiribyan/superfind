@@ -130,7 +130,7 @@ vhs demo/hop.tape                        # re-record demo/hop.gif from fake sess
 
 The picker and shell tests drive real terminals through tmux, so they need tmux, zsh, and bash. CI runs everything on macOS and Linux.
 
-To release, set `version` in `session.go`, commit, and push a tag like `v0.8.0`. The release workflow checks that the tag matches `hop --version`, then builds the binaries and updates the Homebrew tap.
+To release, set `version` in `main.go`, commit, and push a tag like `v0.8.0`. The release workflow checks that the tag matches `hop --version`, then builds the binaries and updates the Homebrew tap.
 
 ## License
 
