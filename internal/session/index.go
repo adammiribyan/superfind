@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,32 +16,32 @@ import (
 	"sync"
 	"syscall"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
 )
 
-const cacheVersion = 12
+const cacheVersion = 13
 
-func parse(f found) (*Session, string, error) {
+func parse(f found) (*Session, string, bool, error) {
 	t, err := agent.ReadTranscript(f.Agent, f.path)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	firstPrompt, latestPrompt := "", ""
 	if len(t.Prompts) > 0 {
 		firstPrompt, latestPrompt = t.Prompts[0], t.Prompts[len(t.Prompts)-1]
 	}
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
-		return nil, "", nil
+		return nil, "", t.Incomplete, nil
 	}
-	body := strings.Join(t.Messages, "\n")
+	body := agent.Printable(strings.Join(t.Messages, "\n"))
 	return &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
 		Title:      cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt),
 		LastPrompt: cmp.Or(t.LastPrompt, latestPrompt), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
 		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime,
-	}, body, nil
+	}, body, t.Incomplete, nil
 }
 
 type cacheEntry struct {
@@ -140,6 +141,45 @@ func OpenSearch() (*sql.DB, error) {
 	return db, nil
 }
 
+func searchHolds(cached map[string]cacheEntry) bool {
+	want := 0
+	for _, e := range cached {
+		if e.Session != nil {
+			want++
+		}
+	}
+	held, err := searchCount()
+	if err == nil {
+		return held == want
+	}
+	discardSearch()
+	return false
+}
+
+func discardSearch() {
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		os.Remove(CachePath("search.db" + suffix))
+	}
+}
+
+var ErrDamaged = errors.New("the search index was damaged, so it is being rebuilt")
+
+func damaged(err error) bool {
+	var e *sqlite.Error
+	return errors.As(err, &e) && (e.Code()&0xff == 11 || e.Code()&0xff == 26)
+}
+
+func searchCount() (int, error) {
+	db, err := OpenSearch()
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	var held int
+	err = db.QueryRow("SELECT count(*) FROM docs").Scan(&held)
+	return held, err
+}
+
 type found struct {
 	agent.Place
 	path  string
@@ -149,8 +189,9 @@ type found struct {
 }
 
 type parsed struct {
-	session *Session
-	body    string
+	session    *Session
+	body       string
+	incomplete bool
 }
 
 func Index(announce func(stale int)) ([]Row, error) {
@@ -160,7 +201,7 @@ func Index(announce func(stale int)) ([]Row, error) {
 	}
 	defer unlock()
 	old := loadCache()
-	if _, err := os.Stat(CachePath("search.db")); err != nil {
+	if !searchHolds(old) {
 		old = map[string]cacheEntry{}
 	}
 	var all []found
@@ -194,12 +235,12 @@ func Index(announce func(stale int)) ([]Row, error) {
 		go func() {
 			defer wg.Done()
 			for f := range work {
-				s, body, err := parse(f)
+				s, body, incomplete, err := parse(f)
 				if err != nil {
 					continue
 				}
 				mu.Lock()
-				results[f.path] = parsed{s, body}
+				results[f.path] = parsed{s, body, incomplete}
 				mu.Unlock()
 			}
 		}()
@@ -216,6 +257,9 @@ func Index(announce func(stale int)) ([]Row, error) {
 		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
 			entry, known = cacheEntry{f.id, f.name, p.session}, true
+			if p.incomplete {
+				entry.FileID = agent.FileID{}
+			}
 		}
 		if !known {
 			continue
@@ -268,7 +312,7 @@ func updateSearch(results map[string]parsed, gone []string, discarded bool) erro
 		if r.session != nil {
 			s := r.session
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
-				s.Title+" "+s.Project()+" "+s.Branch, r.body); err != nil {
+				agent.Printable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
 			}
 		}
@@ -399,6 +443,10 @@ func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		return RecentFirst(rows), nil
 	}
 	found, searched, err := matches(db, words)
+	if damaged(err) {
+		discardSearch()
+		return nil, ErrDamaged
+	}
 	if err != nil {
 		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
 	}

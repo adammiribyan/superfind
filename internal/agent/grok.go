@@ -49,8 +49,9 @@ func newGrokReader(path string) (reader, error) {
 		return nil, err
 	}
 	var s grokSummary
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return nil, err
+	if json.Unmarshal(raw, &s) != nil {
+		g.t.Incomplete = true
+		return g, nil
 	}
 	g.t.Cwd = cmp.Or(s.Info.Cwd, folder)
 	g.t.Branch = s.HeadBranch

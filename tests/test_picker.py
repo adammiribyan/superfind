@@ -115,6 +115,76 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
         self.assertIn("customers get charged twice", self.screen())
 
+    def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = self.home / ".cache" / "superfind" / "search.db"
+        db.write_bytes(b"this is not a database " * 200)
+        for leftover in db.parent.glob("search.db-*"):
+            leftover.unlink()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_the_picker_searches_the_rebuilt_index_not_the_damaged_one_it_opened(self):
+        import sqlite3
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("DROP TABLE docs_content")
+        db.commit()
+        db.close()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_damage_found_while_typing_rebuilds_the_index_and_finds_the_session(self):
+        import sqlite3
+        self.three_sessions()
+        for n in range(30):
+            self.session(f"pad{n}", f"Padding {n}", user(f"pad session {n} " + "filler " * 300), tool("Bash"), claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/33")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_a_machine_with_no_sessions_says_where_it_looked(self):
+        shutil.rmtree(self.home / ".claude")
+        self.open_picker(index_first=False, header="Sessions")
+        self.wait_for("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.")
+        self.keys("abc")
+        screen = self.settled_screen()
+        self.assertIn("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.", screen)
+        self.assertIn("esc quit", screen)
+        self.assertNotIn("deep search", screen)
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+    def test_shrinking_the_terminal_to_one_cell_and_back_redraws_the_picker(self):
+        self.three_sessions()
+        self.open_picker()
+        tmux("resize-window", "-t", self.session_name, "-x", "1", "-y", "1")
+        time.sleep(0.8)
+        self.assertEqual(tmux("display", "-p", "-t", self.session_name, "#{window_width}x#{window_height}").stdout, "1x1\n")
+        tmux("resize-window", "-t", self.session_name, "-x", "140", "-y", "32")
+        time.sleep(0.8)
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge", "Invoice layout", "Ledger migration"])
+
+    def test_the_title_handed_to_the_shell_carries_no_terminal_commands(self):
+        self.session("esc", "make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway",
+                     user("make the title red"), tool("Edit"), claude("Done."))
+        self.open_picker()
+        self.keys("Enter")
+        code, out = self.result()
+        self.assertEqual((code, out.splitlines()[0]), (0, "make the red title go away"))
+
     def test_a_search_with_no_matches_says_so_and_offers_a_way_back(self):
         self.three_sessions()
         self.open_picker()
@@ -500,6 +570,10 @@ class PickerColors(PtyPicker):
         first = self.read(until=b"Migrated.")
         self.assertIn(b"Ledger", first)
         self.assertIn(self.TINT, first)
+
+    def test_the_picker_leaves_the_cursor_color_to_the_terminal(self):
+        os.write(self.terminal, self.COLORS)
+        self.assertNotIn(b"\x1b]12;", self.read(until=b"Migrated."))
 
 
 class PickerWithoutColor(PtyPicker):

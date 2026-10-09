@@ -79,19 +79,27 @@ func PickerLabel(rows []session.Row, in []agent.Place) string {
 	return "Sessions"
 }
 
+func NoSessions() string {
+	homes := make([]string, len(agent.Agents))
+	for i, a := range agent.Agents {
+		homes[i] = tilde(a.DefaultHome())
+	}
+	return "No sessions yet in " + strings.Join(homes[:len(homes)-1], ", ") + ", or " + homes[len(homes)-1] + "."
+}
+
 type RowText struct {
 	Title, Waiting string
 	Context        []string
 }
 
 func RowTextOf(r session.Row, shown Tags) RowText {
-	t := RowText{Title: strings.Join(strings.Fields(r.Session.Title), " ")}
+	t := RowText{Title: Flat(r.Session.Title)}
 	if r.Status == session.WaitingLabel {
 		t.Waiting = r.Status
 	} else if r.Status != "" {
 		t.Context = append(t.Context, r.Status)
 	}
-	t.Context = append(t.Context, when(r.Session), r.Session.Project())
+	t.Context = append(t.Context, when(r.Session), Flat(r.Session.Project()))
 	if r.FolderGone {
 		t.Context = append(t.Context, "folder removed")
 	}
@@ -101,13 +109,13 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 
 func metaParts(r session.Row, shown Tags) []string {
 	s := r.Session
-	parts := []string{s.Project()}
+	parts := []string{Flat(s.Project())}
 	if r.Status != "" {
 		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(s))
 	if s.Branch != "" && s.Branch != "HEAD" {
-		parts = append(parts, s.Branch)
+		parts = append(parts, Flat(s.Branch))
 	}
 	noun := "prompts"
 	if s.Prompts == 1 {

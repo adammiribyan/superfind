@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,7 +36,7 @@ var Agents = []*Agent{
 
 func stem(path string) string { return strings.TrimSuffix(filepath.Base(path), ".jsonl") }
 
-func (a *Agent) defaultHome() string {
+func (a *Agent) DefaultHome() string {
 	if h := os.Getenv(a.homeVar); h != "" {
 		return h
 	}
@@ -131,8 +132,13 @@ func Locate(path string, in []Place) (Place, bool) {
 }
 
 func Home() string {
-	h, _ := os.UserHomeDir()
-	return h
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	if u, err := user.Current(); err == nil {
+		return u.HomeDir
+	}
+	return ""
 }
 
 func Resolve(path string) string {

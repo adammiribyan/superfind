@@ -865,6 +865,16 @@ class SuperfindBehavior(unittest.TestCase):
         self.superfind("index")
         self.assertEqual([row.split("\t")[1] for row in self.superfind("search").splitlines()], ["/work/billing"])
 
+    def test_a_grok_session_with_a_half_written_summary_is_still_listed(self):
+        chat = self.grok_session(uid(1), "/work/billing", grok_user("fix the build"), grok_reply("Fixed."))
+        summary = chat.parent / "summary.json"
+        whole = summary.read_text()
+        summary.write_text(whole[:len(whole) // 2])
+        self.superfind("index")
+        self.assertEqual([row.split("\t")[1::3] for row in self.superfind("search").splitlines()], [["/work/billing", "fix the build"]])
+        self.grok_summary(chat, "/work/billing", title="Build repair")
+        self.assertEqual(self.titles(), ["Build repair"])
+
     def test_a_grok_summary_folder_wins_over_the_directory_name(self):
         chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."))
         self.grok_summary(chat, "/work/billing")
@@ -882,7 +892,7 @@ class SuperfindBehavior(unittest.TestCase):
         summary.write_text("x" + good[1:])
         self.tick(summary)
         self.assertEqual(self.run_superfind("index").returncode, 0)
-        self.assertEqual(self.titles(), [])
+        self.assertEqual(self.titles(), ["fix the build"])
         stamp = os.stat(summary).st_mtime_ns
         summary.write_text(good)
         os.utime(summary, ns=(stamp, stamp))
@@ -1058,7 +1068,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 12)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 13)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3
@@ -1076,6 +1086,115 @@ class SuperfindBehavior(unittest.TestCase):
         db = sqlite3.connect(cache / "search.db")
         self.addCleanup(db.close)
         self.assertEqual(db.execute("SELECT path FROM docs").fetchall(), [(str(self.projects.resolve() / "a1.jsonl"),)])
+
+    def test_help_prints_the_commands_and_succeeds(self):
+        for flag in ("--help", "-h", "help"):
+            result = self.run_superfind(flag)
+            self.assertEqual((result.returncode, result.stderr), (0, ""), flag)
+            self.assertIn("superfind search WORDS", result.stdout, flag)
+            self.assertIn("superfind help COMMAND", result.stdout, flag)
+
+    def test_every_command_explains_itself(self):
+        for command in ("init", "pick", "search", "ask", "preview", "command", "index", "label", "version"):
+            for args in (("help", command), (command, "--help"), (command, "-h")):
+                result = self.run_superfind(*args)
+                self.assertEqual((result.returncode, result.stderr), (0, ""), args)
+                self.assertTrue(result.stdout.startswith(f"superfind {command}" if command != "version" else "superfind --version"), args)
+        self.assertIn("is:waiting", self.superfind("help", "search"))
+        self.assertIn("--recent", self.superfind("preview", "--help"))
+
+    def test_an_unknown_command_is_named_and_the_real_ones_listed(self):
+        for args in (("serach", "invoices"), ("help", "serach")):
+            result = self.run_superfind(*args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
+            self.assertIn('"serach"', result.stderr)
+            self.assertIn("init, pick, search, ask, preview, command, index, and label", result.stderr)
+
+    def test_preview_refuses_options_it_does_not_understand(self):
+        path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        for args, reason in ((("--width", "abc"), "--width needs a number"), (("--width", "0"), "--width needs a number"),
+                             (("--width", "-5"), "--width needs a number"), (("--width",), "--width needs a value"),
+                             (("--wdith", "60"), "there is no --wdith option")):
+            result = self.run_superfind("preview", str(path), *args)
+            self.assertEqual((result.returncode, result.stdout), (1, ""), args)
+            self.assertIn(reason, result.stderr, args)
+        self.assertIn("Upgraded.", self.superfind("preview", "--width", "60", str(path), "--recent"))
+        self.assertIn("Upgraded.", self.superfind("preview", str(path), "--query", "--help"))
+
+    def test_indexing_one_session_says_session(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.assertEqual(self.superfind("index"), "1 session indexed\n")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        self.assertEqual(self.superfind("index"), "2 sessions indexed\n")
+
+    def assert_only_our_styles(self, output):
+        self.assertEqual(output.count("\x1b"), len(re.findall(r"\x1b\[[0-9;]*m", output)), repr(output))
+        for unwanted in ("\x07", "\x08", "\u202e", "\u2066", "\x1b[2J", "\x1b]0;"):
+            self.assertNotIn(unwanted, output)
+
+    def test_session_text_cannot_send_commands_to_the_terminal(self):
+        path = self.session("a1", user("make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway \u202eesrever\u202c"),
+                            claude("a bold reply with a bell\x07 and back\x08space \u2066isolated\u2069"))
+        self.session("b2", user("write the release notes"), claude("Written."), title="\x1b[32mdeploy\x1b[0m checklist")
+        self.session("c3", user("upgrade the ku\u200fber\u200enetes clu\u061cster"), claude("Upgraded."))
+        self.assertEqual(self.titles("red"), ["make the red title go away esrever"])
+        self.assertEqual(self.titles("isolated"), ["make the red title go away esrever"])
+        self.assertEqual(self.titles("deploy"), ["deploy checklist"])
+        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the kubernetes cluster"])
+        search = self.run_superfind("search", "red").stdout
+        self.assert_only_our_styles(search)
+        self.assertEqual(search.split("\t")[4], "make the red title go away esrever")
+        for args in ((), ("--recent",), ("--query", "title")):
+            preview = self.run_superfind("preview", str(path), *args).stdout
+            self.assert_only_our_styles(preview)
+            self.assertIn("a bold reply with a bell and backspace isolated", ANSI.sub("", preview))
+
+    def test_a_folder_with_a_newline_keeps_its_session_on_one_line(self):
+        self.session("a1", user("rename the invoices", cwd="/tmp/a\nb\tc\u202ed"), claude("Renamed."), title="Invoice names")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        self.superfind("index")
+        rows = [row.split("\t") for row in self.superfind("search").splitlines()]
+        self.assertEqual([len(r) for r in rows], [6, 6])
+        self.assertEqual(rows[1][1], "/tmp/a?b?c?d")
+        self.assertIn("a b cd · folder removed", rows[1][5])
+
+    def test_a_huge_pasted_word_previews_in_moments(self):
+        path = self.session("a1", user("decode this: " + "QUJD" * 150_000), claude("It is the alphabet, repeated."))
+        self.superfind("index")
+        started = time.monotonic()
+        result = subprocess.run([str(SUPERFIND), "preview", str(path), "--width", "60"], env=self.env, capture_output=True,
+                                text=True, timeout=60)
+        self.assertLess(time.monotonic() - started, 10)
+        lines = ANSI.sub("", result.stdout).splitlines()
+        self.assertEqual(lines[-1], "  It is the alphabet, repeated.")
+        self.assertEqual(max(len(l) for l in lines[5:]), 58)
+
+    def test_a_search_index_damaged_inside_is_rebuilt_when_a_search_hits_the_damage(self):
+        import sqlite3
+        for n in range(40):
+            self.session(f"s{n}", user(f"task {n} about the kubernetes cluster " + "words " * 200), claude("Done."),
+                         title=f"Cluster task {n}")
+        self.superfind("index")
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        self.assertEqual(len(self.titles("kubernetes")), 40)
+
+    def test_a_damaged_search_index_is_rebuilt_from_the_sessions(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        db = self.home / ".cache" / "superfind" / "search.db"
+        for damage in ("not a database", "empty", "cut in half"):
+            self.superfind("index")
+            whole = db.read_bytes()
+            db.write_bytes({"not a database": b"this is not a database " * 200, "empty": b"",
+                            "cut in half": whole[:len(whole) // 2]}[damage])
+            for leftover in db.parent.glob("search.db-*"):
+                leftover.unlink()
+            self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"], damage)
+            self.assertEqual(self.titles("signing"), ["Key rotation"], damage)
+
 
 
 if __name__ == "__main__":
