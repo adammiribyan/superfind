@@ -134,8 +134,9 @@ type explainDone struct {
 type colorsSettled struct{}
 
 type indexed struct {
-	rows []session.Row
-	err  error
+	rows     []session.Row
+	problems []error
+	err      error
 }
 
 type labelsTick struct{}
@@ -208,8 +209,8 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 }
 
 func index() tea.Msg {
-	rows, err := session.Index(nil)
-	return indexed{rows, err}
+	rows, problems, err := session.Index(nil)
+	return indexed{rows, problems, err}
 }
 
 func (m picker) Init() tea.Cmd {
@@ -477,6 +478,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
+		} else if unreadable := session.Unreadable(msg.problems); unreadable != "" {
+			m.problem = unreadable
 		} else if len(m.all) == 0 && m.problem == "" {
 			m.problem = render.NoSessions()
 		}

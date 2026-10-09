@@ -157,6 +157,16 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("1/33")
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
 
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_folder_that_cannot_be_read_is_named_in_the_picker(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        self.projects.parent.chmod(0)
+        self.addCleanup(self.projects.parent.chmod, 0o755)
+        self.open_picker(index_first=False)
+        self.wait_for("1 session file or folder couldn't be read")
+        self.assertEqual(len(self.rows()), 3)
+
     def test_a_machine_with_no_sessions_says_where_it_looked(self):
         shutil.rmtree(self.home / ".claude")
         self.open_picker(index_first=False, header="Sessions")

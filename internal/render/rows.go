@@ -66,7 +66,7 @@ func PickerLabel(rows []session.Row, in []agent.Place) string {
 	}
 	if len(rows) == 0 {
 		for _, p := range in {
-			if len(p.Agent.Sessions(p.Home)) > 0 {
+			if paths, _ := p.Agent.Sessions(p.Home); len(paths) > 0 {
 				present[p.Agent] = true
 			}
 		}
