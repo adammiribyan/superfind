@@ -157,6 +157,66 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
                          (1, "", "Couldn't ask: Claude Code didn't answer."))
 
+    def test_a_hostile_transcript_name_cannot_inject_shell_commands(self):
+        path = self.session("a;echo PWNED", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.hop("index")
+        self.assertEqual(self.hop("command", str(path)).strip(), "cd /tmp && claude --resume 'a;echo PWNED'")
+
+    def test_an_empty_ask_lists_sessions_without_asking_anyone(self):
+        self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.hop("index")
+        self.env["PATH"] = "/usr/bin:/bin"
+        self.assertEqual([r.split("\t")[4] for r in self.hop("ask").splitlines()], ["Build fix"])
+
+    def test_tabs_expand_to_the_next_tab_stop(self):
+        path = self.session("a1", user("show the table"), tool("Read"), claude("aaa\tbbb"), title="Table")
+        self.hop("index")
+        self.assertIn("  aaa     bbb", self.hop("preview", str(path), "--width", "40"))
+
+    def test_wide_characters_wrap_by_their_width_and_none_are_lost(self):
+        text = "数据迁移已完成所有表都已更新并通过了检查"
+        path = self.session("a1", user("summarize in chinese"), tool("Read"), claude(text), title="Summary")
+        self.hop("index")
+        body = self.hop("preview", str(path), "--width", "24").split("claude\n", 1)[1]
+        lines = [l for l in body.splitlines() if l.strip()]
+        self.assertEqual("".join(l.strip() for l in lines), text)
+        self.assertTrue(all(sum(2 for _ in l.strip()) + 2 <= 22 for l in lines), lines)
+
+    def test_shell_setup_calls_hop_by_its_full_path(self):
+        self.assertIn(f"typeset -g _hop_bin={HOP}", self.hop("init", "zsh"))
+
+    def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
+        import http.server
+        import threading
+
+        class Malformed(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = b'{"answers": {"which": {"probabilities": {"": 1, "s999": 0.5}}, "status": {"choice": "bogus"}}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Malformed)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Should I run it on production?"),
+                     title="Ledger migration")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}",
+                        PATH="/usr/bin:/bin")
+        self.hop("index")
+        result = self.run_hop("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, result.stderr.strip()),
+                         (1, "Couldn't ask: TypeSafe and Claude didn't answer."))
+        os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
+        self.hop("label")
+        status = self.home / ".cache" / "hop" / "status.json"
+        self.assertEqual(json.loads(status.read_text()) if status.exists() else {}, {})
+
     def test_messages_from_other_agents_are_not_counted_as_your_prompts(self):
         path = self.session("a1", user("migrate the ledger tables to the new schema"),
                             user("Another Claude session sent a message:\n<agent-message>report</agent-message>"),

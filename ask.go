@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,10 +21,11 @@ import (
 )
 
 const (
-	jevURL       = "https://api.typesafe.ai/v1/systemone"
-	jevChunk     = 120
-	jevShortlist = 15
-	explainTop   = 5
+	claudeTimeout = 90 * time.Second
+	jevURL        = "https://api.typesafe.ai/v1/systemone"
+	jevChunk      = 120
+	jevShortlist  = 15
+	explainTop    = 5
 )
 
 const askPrompt = "You rank a developer's past coding sessions by how relevant they are to a search. Each session is one " +
@@ -83,7 +86,11 @@ func asciiJSON(v any) []byte {
 
 func jev(key string, state any, questions map[string]any) (map[string]jevAnswer, error) {
 	body := asciiJSON(map[string]any{"model": "jev-latest", "state": state, "questions": questions})
-	req, _ := http.NewRequest("POST", jevURL, bytes.NewReader(body))
+	url := jevURL
+	if override := os.Getenv("TYPESAFE_URL"); override != "" {
+		url = override
+	}
+	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "hop/"+version)
@@ -176,16 +183,31 @@ func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
 				return
 			}
 			probabilities := answers["which"].Probabilities
-			var keys []string
-			for k := range probabilities {
-				if k != "none" {
-					keys = append(keys, k)
-				}
+			if len(probabilities) == 0 {
+				failure = errors.New("TypeSafe returned no shortlist")
+				return
 			}
-			sort.Slice(keys, func(a, b int) bool { return probabilities[keys[a]] > probabilities[keys[b]] })
-			for _, k := range keys[:min(jevShortlist, len(keys))] {
-				i, _ := strconv.Atoi(k[1:])
-				first[i] = probabilities[k]
+			var picks []int
+			for k, p := range probabilities {
+				if k == "none" {
+					continue
+				}
+				i, err := strconv.Atoi(strings.TrimPrefix(k, "s"))
+				if !strings.HasPrefix(k, "s") || err != nil || i < start || i >= end || math.IsNaN(p) {
+					failure = fmt.Errorf("TypeSafe returned an unknown session %q", k)
+					return
+				}
+				picks = append(picks, i)
+			}
+			sort.Slice(picks, func(a, b int) bool {
+				pa, pb := probabilities["s"+strconv.Itoa(picks[a])], probabilities["s"+strconv.Itoa(picks[b])]
+				if pa != pb {
+					return pa > pb
+				}
+				return picks[a] < picks[b]
+			})
+			for _, i := range picks[:min(jevShortlist, len(picks))] {
+				first[i] = probabilities["s"+strconv.Itoa(i)]
 			}
 		}(start, end)
 	}
@@ -213,10 +235,18 @@ func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
 	}
 	order := make([]int, 0, len(first))
 	for i := range first {
+		if _, ok := second["s"+strconv.Itoa(i)]; !ok {
+			return nil, fmt.Errorf("TypeSafe skipped session s%d", i)
+		}
 		order = append(order, i)
 	}
 	score := func(i int) float64 { return first[i] + second["s"+strconv.Itoa(i)].Noul }
-	sort.Slice(order, func(a, b int) bool { return score(order[a]) > score(order[b]) })
+	sort.Slice(order, func(a, b int) bool {
+		if score(order[a]) != score(order[b]) {
+			return score(order[a]) > score(order[b])
+		}
+		return order[a] < order[b]
+	})
 	paths := make([]string, len(order))
 	for n, i := range order {
 		paths[n] = rows[i].Path
@@ -238,7 +268,9 @@ func claudeRank(db *sql.DB, query string, rows []Row) ([]string, error) {
 	base := []string{"-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
 		"--output-format", "json", "--system-prompt", askPrompt}
 	for _, args := range [][]string{append(append([]string{}, base...), "--bare"), base} {
-		cmd := exec.Command("claude", args...)
+		ctx, cancel := context.WithTimeout(context.Background(), claudeTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "claude", args...)
 		cmd.Stdin = strings.NewReader(request.String())
 		out, err := cmd.Output()
 		if err != nil {
@@ -367,7 +399,5 @@ func explain(db *sql.DB, key, query string, paths []string) map[string]string {
 		}(p, pieces)
 	}
 	wg.Wait()
-	data, _ := json.Marshal(explainedFile{query, found})
-	writeAtomically(cachePath("explained.json"), data)
 	return found
 }

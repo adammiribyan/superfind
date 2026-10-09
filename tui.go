@@ -20,10 +20,15 @@ import (
 )
 
 const (
-	wideColumns  = 100
-	headerLines  = 4
-	clay         = "#D77757"
-	colorTimeout = 300 * time.Millisecond
+	wideColumns    = 100
+	headerLines    = 4
+	clay           = "#D77757"
+	colorTimeout   = 300 * time.Millisecond
+	labelsInterval = 1500 * time.Millisecond
+	marginTop      = 1
+	marginSide     = 1
+	listChrome     = 6
+	stackedMinimum = headerLines + 4
 )
 
 type theme struct {
@@ -72,25 +77,44 @@ func (t *theme) settle() {
 	t.mutedSeq = ansiFor(t.muted)
 }
 
-type previewKey struct {
-	path   string
-	width  int
-	recent bool
-	query  string
+type layout struct {
+	listWidth     int
+	listHeight    int
+	previewWidth  int
+	previewHeight int
+	stacked       bool
 }
 
-type previewLoaded struct {
-	key  previewKey
-	text previewText
+func (l layout) hasPreview() bool { return l.previewWidth > 0 && l.previewHeight > 0 }
+
+func (l layout) bodyHeight() int { return max(l.previewHeight-headerLines-1, 0) }
+
+type bodyKey struct {
+	path       string
+	width      int
+	recent     bool
+	generation int
+	size       int64
+	mtime      float64
+}
+
+type bodyLoaded struct {
+	key  bodyKey
+	body []string
 }
 
 type askDone struct {
+	seq   int
 	query string
 	paths []string
 	err   error
 }
 
-type explainDone struct{ query string }
+type explainDone struct {
+	seq      int
+	passages map[string]string
+}
+
 type colorsSettled struct{}
 type labelsTick struct{}
 
@@ -98,17 +122,19 @@ type picker struct {
 	all        []Row
 	shown      []Row
 	db         *sql.DB
+	dbProblem  string
 	cache      map[string]cacheEntry
 	known      map[string]statusEntry
 	statusSeen time.Time
 	accounts   bool
 
-	input    textinput.Model
-	spin     spinner.Model
-	body     viewport.Model
-	header   []string
-	previews map[previewKey]previewText
-	showing  previewKey
+	input      textinput.Model
+	spin       spinner.Model
+	body       viewport.Model
+	header     []string
+	bodies     map[bodyKey][]string
+	showing    bodyKey
+	generation int
 
 	cursor, offset int
 	width, height  int
@@ -116,23 +142,29 @@ type picker struct {
 
 	recent      bool
 	hidePreview bool
+	askSeq      int
 	asking      bool
 	askedFor    string
+	explained   map[string]string
 	message     string
 
 	chosen   *Row
 	quitting bool
 }
 
-func newPicker(rows []Row, db *sql.DB) picker {
+func newPicker(rows []Row, db *sql.DB, dbErr error) picker {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "Search sessions and conversations"
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: recentFirst(rows), db: db, cache: loadCache(), known: statuses(), accounts: showsAccounts(rows),
-		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), previews: map[previewKey]previewText{},
+		all: recentFirst(annotate(rows)), db: db, cache: loadCache(), known: statuses(), accounts: showsAccounts(rows),
+		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{},
+	}
+	if dbErr != nil {
+		m.dbProblem = "Search is unavailable: " + dbErr.Error()
+		m.message = m.dbProblem
 	}
 	m.shown = m.all
 	if info, err := os.Stat(cachePath("status.json")); err == nil {
@@ -145,7 +177,7 @@ func newPicker(rows []Row, db *sql.DB) picker {
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
-		tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg { return labelsTick{} }),
+		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
 	if !m.colors.plain {
 		cmds = append(cmds, tea.RequestBackgroundColor, tea.RequestForegroundColor)
@@ -153,10 +185,27 @@ func (m picker) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-const (
-	marginTop  = 1
-	marginSide = 1
-)
+func (m picker) layout() layout {
+	l := layout{listWidth: m.width}
+	free := max(m.height-listChrome, 0)
+	switch {
+	case m.hidePreview:
+		l.listHeight = free
+	case m.width >= wideColumns:
+		l.listWidth = m.width * 45 / 100
+		l.previewWidth = m.width - l.listWidth - 3
+		l.previewHeight = m.height
+		l.listHeight = free
+	case free-1 >= stackedMinimum+3:
+		l.stacked = true
+		l.previewWidth = m.width
+		l.listHeight = max((free-1)/2, 3)
+		l.previewHeight = free - 1 - l.listHeight
+	default:
+		l.listHeight = free
+	}
+	return l
+}
 
 func (m *picker) styleInput() {
 	styles := textinput.DefaultStyles(m.colors.bg == nil || isDark(m.colors.bg))
@@ -166,35 +215,10 @@ func (m *picker) styleInput() {
 	m.input.SetStyles(styles)
 }
 
-func (m picker) wide() bool { return m.width >= wideColumns }
-
-func (m picker) leftWidth() int {
-	if m.wide() && !m.hidePreview {
-		return m.width * 45 / 100
-	}
-	return m.width
-}
-
-func (m picker) previewWidth() int {
-	if m.wide() {
-		return m.width - m.leftWidth() - 3
-	}
-	return m.width
-}
-
-func (m picker) listHeight() int {
-	free := m.height - 6
-	if !m.wide() && !m.hidePreview {
-		return max(free/2, 3)
-	}
-	return max(free, 1)
-}
-
-func (m picker) bodyHeight() int {
-	if m.wide() {
-		return max(m.height-headerLines-1, 1)
-	}
-	return max(m.height-6-m.listHeight()-headerLines-2, 1)
+func (m *picker) settleColors() {
+	m.colors.settle()
+	m.styleInput()
+	m.generation++
 }
 
 func (m picker) focused() *Row {
@@ -204,55 +228,71 @@ func (m picker) focused() *Row {
 	return nil
 }
 
+func (m *picker) forgetAsk() {
+	m.askSeq++
+	m.asking, m.askedFor, m.explained = false, "", nil
+}
+
 func (m *picker) search() {
-	m.shown = searchRows(m.db, m.input.Value())
-	if m.input.Value() == "" {
+	m.forgetAsk()
+	query := m.input.Value()
+	m.cursor, m.offset, m.message = 0, 0, m.dbProblem
+	switch {
+	case strings.TrimSpace(query) == "":
 		m.shown = m.all
-	}
-	m.cursor, m.offset = 0, 0
-	m.message = ""
-	if len(m.shown) == 0 && strings.TrimSpace(m.input.Value()) != "" {
-		m.message = "No sessions match “" + m.input.Value() + "”"
+	case m.db == nil:
+		m.shown = m.all
+	default:
+		m.shown = searchRows(m.db, query, m.all)
+		if len(m.shown) == 0 {
+			m.message = "No sessions match “" + query + "”"
+		}
 	}
 }
 
 func (m *picker) keepCursorVisible() {
+	m.cursor = min(max(m.cursor, 0), max(len(m.shown)-1, 0))
+	h := max(m.layout().listHeight, 1)
 	if m.cursor < m.offset {
 		m.offset = m.cursor
 	}
-	if h := m.listHeight(); m.cursor >= m.offset+h {
+	if m.cursor >= m.offset+h {
 		m.offset = m.cursor - h + 1
 	}
 }
 
 func (m picker) loadPreview() (picker, tea.Cmd) {
+	l := m.layout()
 	r := m.focused()
-	if r == nil || m.hidePreview {
-		m.header, m.showing = nil, previewKey{}
-		m.body.SetContent("")
+	if r == nil || !l.hasPreview() {
+		m.header, m.showing = nil, bodyKey{}
+		m.body.SetContentLines(nil)
 		return m, nil
 	}
-	key := previewKey{r.Path, m.previewWidth(), m.recent, m.askedFor}
-	if key.query == "" {
-		key.query = m.input.Value()
+	query := m.askedFor
+	if query == "" {
+		query = m.input.Value()
+	}
+	req := previewRequest{path: r.Path, width: l.previewWidth, recent: m.recent, query: query,
+		explained: m.explained[r.Path], secondary: m.colors.mutedSeq}
+	m.header = previewHeader(req, m.cache, m.known, m.db)
+	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent, generation: m.generation}
+	if info, err := os.Stat(r.Path); err == nil {
+		key.size, key.mtime = info.Size(), stamp(info)
 	}
 	m.showing = key
-	if text, ok := m.previews[key]; ok {
-		m.showPreview(text)
+	m.body.SetWidth(l.previewWidth)
+	m.body.SetHeight(l.bodyHeight())
+	if body, ok := m.bodies[key]; ok {
+		m.showBody(body)
 		return m, nil
 	}
-	cache, known, db, secondary := m.cache, m.known, m.db, m.colors.mutedSeq
-	return m, func() tea.Msg {
-		req := previewRequest{key.path, key.width, key.recent, key.query, secondary}
-		return previewLoaded{key, buildPreview(req, cache, known, db)}
-	}
+	m.body.SetContentLines(nil)
+	return m, func() tea.Msg { return bodyLoaded{key, previewBody(req)} }
 }
 
-func (m *picker) showPreview(text previewText) {
-	m.header = text.header
-	m.body.SetWidth(m.previewWidth())
-	m.body.SetHeight(m.bodyHeight())
-	m.body.SetContentLines(text.body)
+func (m *picker) showBody(body []string) {
+	m.body.SetContentLines(body)
 	m.body.GotoBottom()
 }
 
@@ -261,11 +301,16 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	if query == "" {
 		return m, nil
 	}
+	if m.db == nil {
+		m.message = m.dbProblem
+		return m, nil
+	}
+	m.askSeq++
 	m.asking, m.message = true, ""
-	db, rows := m.db, m.all
+	seq, db, rows := m.askSeq, m.db, m.all
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		paths, err := ask(db, query, rows)
-		return askDone{query, paths, err}
+		return askDone{seq, query, paths, err}
 	})
 }
 
@@ -282,51 +327,55 @@ func spawnLabeler() {
 	cmd.Start()
 }
 
+func (m picker) afterMove() (tea.Model, tea.Cmd) {
+	m.keepCursorVisible()
+	return m.loadPreview()
+}
+
 func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width-2*marginSide, msg.Height-marginTop
-		m.input.SetWidth(max(m.leftWidth()-12, 10))
-		m.keepCursorVisible()
-		return m.loadPreview()
+		m.width, m.height = max(msg.Width-2*marginSide, 1), max(msg.Height-marginTop, 1)
+		m.input.SetWidth(max(m.layout().listWidth-14, 4))
+		return m.afterMove()
 	case tea.BackgroundColorMsg:
 		m.colors.bg = msg.Color
-		if m.colors.fg != nil {
+		if m.colors.fg != nil && !m.colors.known {
 			m.colors.known = true
-			m.colors.settle()
-			m.styleInput()
-			m.previews = map[previewKey]previewText{}
+			m.settleColors()
 			return m.loadPreview()
 		}
 	case tea.ForegroundColorMsg:
 		m.colors.fg = msg.Color
-		if m.colors.bg != nil {
+		if m.colors.bg != nil && !m.colors.known {
 			m.colors.known = true
-			m.colors.settle()
-			m.styleInput()
-			m.previews = map[previewKey]previewText{}
+			m.settleColors()
 			return m.loadPreview()
 		}
 	case colorsSettled:
 		if !m.colors.known {
-			m.colors.settle()
-			m.styleInput()
-			m.previews = map[previewKey]previewText{}
+			m.colors.known = true
+			m.settleColors()
 			return m.loadPreview()
 		}
 	case labelsTick:
-		next := tea.Tick(1500*time.Millisecond, func(time.Time) tea.Msg { return labelsTick{} })
-		if info, err := os.Stat(cachePath("status.json")); err == nil && info.ModTime().After(m.statusSeen) {
-			m.statusSeen, m.known = info.ModTime(), statuses()
-			m.previews = map[previewKey]previewText{}
-			m, cmd := m.loadPreview()
-			return m, tea.Batch(next, cmd)
+		next := tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} })
+		info, err := os.Stat(cachePath("status.json"))
+		if err != nil || !info.ModTime().After(m.statusSeen) {
+			return m, next
 		}
-		return m, next
-	case previewLoaded:
-		m.previews[msg.key] = msg.text
+		m.statusSeen, m.known = info.ModTime(), statuses()
+		m.all = annotate(m.all)
+		m.shown = inOrder(m.all, pathsOf(m.shown))
+		m.generation++
+		updated, load := m.loadPreview()
+		return updated, tea.Batch(next, load)
+	case bodyLoaded:
+		if msg.key.generation == m.generation {
+			m.bodies[msg.key] = msg.body
+		}
 		if msg.key == m.showing {
-			m.showPreview(msg.text)
+			m.showBody(msg.body)
 		}
 	case spinner.TickMsg:
 		if m.asking {
@@ -335,10 +384,10 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case askDone:
-		m.asking = false
-		if msg.query != strings.TrimSpace(m.input.Value()) {
+		if msg.seq != m.askSeq {
 			return m, nil
 		}
+		m.asking = false
 		if msg.err != nil {
 			m.message = msg.err.Error()
 			return m, nil
@@ -347,19 +396,18 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.shown) == 0 {
 			m.message = "Nothing matches “" + msg.query + "” by meaning either"
 		}
-		next, cmd := m.loadPreview()
-		key, db, top := typesafeKey(), m.db, msg.paths[:min(explainTop, len(msg.paths))]
+		updated, load := m.loadPreview()
+		key, top := typesafeKey(), msg.paths[:min(explainTop, len(msg.paths))]
 		if key == "" || len(top) == 0 {
-			return next, cmd
+			return updated, load
 		}
-		query := msg.query
-		return next, tea.Batch(cmd, func() tea.Msg {
-			explain(db, key, query, top)
-			return explainDone{query}
+		seq, db, query := msg.seq, m.db, msg.query
+		return updated, tea.Batch(load, func() tea.Msg {
+			return explainDone{seq, explain(db, key, query, top)}
 		})
 	case explainDone:
-		if msg.query == m.askedFor {
-			m.previews = map[previewKey]previewText{}
+		if msg.seq == m.askSeq {
+			m.explained = msg.passages
 			return m.loadPreview()
 		}
 	case tea.KeyPressMsg:
@@ -372,19 +420,24 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "up", "ctrl+p":
-			m.cursor = max(m.cursor-1, 0)
+			m.cursor--
+			return m.afterMove()
 		case "down", "ctrl+n":
-			m.cursor = min(m.cursor+1, max(len(m.shown)-1, 0))
+			m.cursor++
+			return m.afterMove()
 		case "pgup":
-			m.cursor = max(m.cursor-m.listHeight(), 0)
+			m.cursor -= max(m.layout().listHeight, 1)
+			return m.afterMove()
 		case "pgdown":
-			m.cursor = min(m.cursor+m.listHeight(), max(len(m.shown)-1, 0))
+			m.cursor += max(m.layout().listHeight, 1)
+			return m.afterMove()
 		case "tab":
 			m.recent = !m.recent
+			return m.loadPreview()
 		case "ctrl+/", "ctrl+_":
 			m.hidePreview = !m.hidePreview
-			m.input.SetWidth(max(m.leftWidth()-12, 10))
-			m.previews = map[previewKey]previewText{}
+			m.input.SetWidth(max(m.layout().listWidth-14, 4))
+			return m.afterMove()
 		case "alt+up":
 			m.body.PageUp()
 			return m, nil
@@ -395,24 +448,23 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.startAsk()
 		case "ctrl+u":
 			m.input.SetValue("")
-			m.askedFor = ""
 			m.search()
-		default:
-			before := m.input.Value()
-			var cmd tea.Cmd
-			m.input, cmd = m.input.Update(msg)
-			if m.input.Value() != before {
-				m.askedFor = ""
-				m.search()
-			}
-			m.keepCursorVisible()
-			next, load := m.loadPreview()
-			return next, tea.Batch(cmd, load)
+			return m.afterMove()
 		}
-		m.keepCursorVisible()
-		return m.loadPreview()
 	}
-	return m, nil
+	return m.editInput(msg)
+}
+
+func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.input.Value()
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() == before {
+		return m, cmd
+	}
+	m.search()
+	updated, load := m.afterMove()
+	return updated, tea.Batch(cmd, load)
 }
 
 func (m picker) rowLine(r Row, selected bool, width int) string {
@@ -427,19 +479,15 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(lipgloss.NewStyle().Foreground(m.colors.muted))
-	status := statusLabel(r.Path, m.known)
-	if s.Active() {
-		status = ""
-	}
 	var parts []string
 	segment := ""
-	if status == waitingLabel {
-		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(status) + muted.Render(" · ")
-	} else if status != "" {
-		parts = append(parts, status)
+	if r.Status == waitingLabel {
+		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(r.Status) + muted.Render(" · ")
+	} else if r.Status != "" {
+		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(s), s.Project())
-	if !folderExists(s.Cwd) {
+	if r.FolderGone {
 		parts = append(parts, "folder removed")
 	}
 	if m.accounts {
@@ -447,7 +495,7 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 	}
 	title := strings.Join(strings.Fields(s.Title), " ")
 	line := plain.Render(" "+title+"  ") + segment + muted.Render(strings.Join(parts, " · "))
-	line = ansi.Truncate(line, width-1, muted.Render("…"))
+	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
 	if pad := width - lipgloss.Width(line); pad > 0 {
 		line += plain.Render(strings.Repeat(" ", pad))
 	}
@@ -457,20 +505,19 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 func (m picker) inputBox(width int) []string {
 	border := lipgloss.NewStyle().Foreground(m.colors.border)
 	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
-	mark := lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render("✻")
-	label := " " + mark + " " + lipgloss.NewStyle().Bold(true).Render("Claude sessions") + " "
+	label := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render("✻") + " " +
+		lipgloss.NewStyle().Bold(true).Render("Claude sessions") + " "
 	if m.asking {
 		label = " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render(m.spin.View()) + " " +
 			lipgloss.NewStyle().Bold(true).Render("Searching by meaning…") + " "
 	}
-	top := border.Render("╭─") + label
+	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")
 	count := muted.Render(fmt.Sprintf("%d/%d", len(m.shown), len(m.all)))
-	field := m.input.View()
-	inner := width - 4
-	gap := inner - lipgloss.Width(field) - lipgloss.Width(count)
-	middle := border.Render("│") + " " + ansi.Truncate(field, inner-lipgloss.Width(count)-1, "") +
-		strings.Repeat(" ", max(gap, 1)) + count + " " + border.Render("│")
+	inner := max(width-4, 0)
+	field := ansi.Truncate(m.input.View(), max(inner-lipgloss.Width(count)-1, 0), "")
+	gap := max(inner-lipgloss.Width(field)-lipgloss.Width(count), 1)
+	middle := border.Render("│") + " " + field + strings.Repeat(" ", gap) + count + " " + border.Render("│")
 	bottom := border.Render("╰" + strings.Repeat("─", max(width-2, 0)) + "╯")
 	return []string{top, middle, bottom}
 }
@@ -488,69 +535,74 @@ func (m picker) footer() string {
 	return " " + strings.Join(hints, muted.Render(" · "))
 }
 
-func (m picker) previewLines(width, height int) []string {
+func (m picker) previewLines(l layout) []string {
+	if !l.hasPreview() {
+		return nil
+	}
 	lines := append([]string{}, m.header...)
 	for len(lines) < headerLines {
 		lines = append(lines, "")
 	}
 	lines = append(lines, "")
-	lines = append(lines, strings.Split(m.body.View(), "\n")...)
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], width, "")
+	if l.bodyHeight() > 0 {
+		lines = append(lines, strings.Split(m.body.View(), "\n")...)
 	}
-	for len(lines) < height {
+	for len(lines) < l.previewHeight {
 		lines = append(lines, "")
 	}
-	return lines[:height]
+	lines = lines[:l.previewHeight]
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], l.previewWidth, "")
+	}
+	return lines
+}
+
+func pad(line string, width int) string {
+	return line + strings.Repeat(" ", max(width-lipgloss.Width(line), 0))
 }
 
 func (m picker) View() tea.View {
 	if m.width == 0 || m.quitting {
 		return tea.NewView("")
 	}
-	left := m.leftWidth()
+	l := m.layout()
 	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
-	column := m.inputBox(left)
-	column = append(column, muted.Render(" "+m.message))
-	for i := m.offset; i < m.offset+m.listHeight(); i++ {
+	column := m.inputBox(l.listWidth)
+	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
+	for i := m.offset; i < m.offset+l.listHeight; i++ {
 		if i < len(m.shown) {
-			column = append(column, m.rowLine(m.shown[i], i == m.cursor, left))
+			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth))
 		} else {
 			column = append(column, "")
 		}
 	}
-
+	preview := m.previewLines(l)
 	var screen []string
 	switch {
-	case m.hidePreview:
-		screen = append(column, "", m.footer())
-	case m.wide():
+	case l.hasPreview() && !l.stacked:
 		column = append(column, "", m.footer())
-		preview := m.previewLines(m.previewWidth(), m.height)
 		divider := lipgloss.NewStyle().Foreground(m.colors.border).Render("│")
-		for i := 0; i < m.height; i++ {
-			l := ""
+		for i := range preview {
+			left := ""
 			if i < len(column) {
-				l = column[i]
+				left = column[i]
 			}
-			l += strings.Repeat(" ", max(left-lipgloss.Width(l), 0))
-			screen = append(screen, l+" "+divider+" "+preview[i])
+			screen = append(screen, pad(left, l.listWidth)+" "+divider+" "+preview[i])
 		}
-	default:
+	case l.stacked:
 		screen = append(column, lipgloss.NewStyle().Foreground(m.colors.border).Render(strings.Repeat("─", m.width)))
-		screen = append(screen, m.previewLines(m.width, m.height-len(column)-3)...)
-		screen = append(screen, "", m.footer())
+		screen = append(append(screen, preview...), "", m.footer())
+	default:
+		screen = append(column, "", m.footer())
 	}
-	if len(screen) > m.height {
-		screen = screen[:m.height]
-	}
+	screen = screen[:min(len(screen), m.height)]
 	side := strings.Repeat(" ", marginSide)
 	for i := range screen {
 		screen[i] = side + screen[i]
 	}
 	view := tea.NewView(strings.Repeat("\n", marginTop) + strings.Join(screen, "\n"))
 	view.AltScreen = true
-	if c := m.input.Cursor(); c != nil && !m.asking {
+	if c := m.input.Cursor(); c != nil && !m.asking && m.height > 1 {
 		c.Position.X += 2 + marginSide
 		c.Position.Y += 1 + marginTop
 		view.Cursor = c
@@ -558,16 +610,30 @@ func (m picker) View() tea.View {
 	return view
 }
 
+func pathsOf(rows []Row) []string {
+	paths := make([]string, len(rows))
+	for i, r := range rows {
+		paths[i] = r.Path
+	}
+	return paths
+}
+
 func pick() (*Row, error) {
-	rows := index()
-	db, _ := openSearch()
+	rows, err := index()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "hop: "+err.Error())
+	}
+	db, dbErr := openSearch()
+	if dbErr != nil {
+		db = nil
+	}
 	spawnLabeler()
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("hop pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
-	final, err := tea.NewProgram(newPicker(rows, db), tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	final, err := tea.NewProgram(newPicker(rows, db, dbErr), tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return nil, err
 	}

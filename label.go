@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -26,11 +27,18 @@ var statusKinds = []statusKind{
 	{"unclear", "", "The ending does not show which of the other states applies."},
 }
 
-func statusLabelFor(name string) string {
-	for _, k := range statusKinds {
-		if k.name == name {
-			return k.label
+func statusKindOf(name string) *statusKind {
+	for i := range statusKinds {
+		if statusKinds[i].name == name {
+			return &statusKinds[i]
 		}
+	}
+	return nil
+}
+
+func statusLabelFor(name string) string {
+	if k := statusKindOf(name); k != nil {
+		return k.label
 	}
 	return ""
 }
@@ -102,8 +110,12 @@ func judgeStatus(key, path string) (string, float64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	a := answers["status"]
-	return a.Choice, a.Probabilities[a.Choice], nil
+	a, ok := answers["status"]
+	p, known := a.Probabilities[a.Choice]
+	if !ok || !known || statusKindOf(a.Choice) == nil {
+		return "", 0, fmt.Errorf("TypeSafe returned no usable status")
+	}
+	return a.Choice, p, nil
 }
 
 type statusEntry struct {
@@ -189,7 +201,9 @@ func labelSessions(key string, rows []Row) bool {
 	}
 	close(work)
 	wg.Wait()
-	data, _ := json.Marshal(known)
-	writeAtomically(cachePath("status.json"), data)
-	return true
+	data, err := json.Marshal(known)
+	if err != nil {
+		return false
+	}
+	return writeAtomically(cachePath("status.json"), data) == nil
 }

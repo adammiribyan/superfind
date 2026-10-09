@@ -3,12 +3,12 @@ package main
 import (
 	"bytes"
 	"database/sql"
-	"encoding/json"
-	"os"
 	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type turn struct {
@@ -54,14 +54,52 @@ var (
 	numberedItem = regexp.MustCompile(`^\d+\. `)
 )
 
-func runeLen(s string) int { return utf8.RuneCountInString(s) }
+func displayWidth(s string) int { return ansi.StringWidth(s) }
+
+func cutToWidth(s string, width int) (string, string) {
+	used := 0
+	for i, r := range s {
+		w := ansi.StringWidth(string(r))
+		if used+w > width {
+			if i == 0 {
+				return string(r), s[utf8.RuneLen(r):]
+			}
+			return s[:i], s[i:]
+		}
+		used += w
+	}
+	return s, ""
+}
 
 func clipText(line string, width int) string {
-	if runeLen(line) <= width {
+	if displayWidth(line) <= width {
 		return line
 	}
-	r := []rune(line)
-	return string(r[:max(width-1, 0)]) + ansiDim + "…" + ansiReset
+	head, _ := cutToWidth(line, max(width-1, 0))
+	return head + ansiDim + "…" + ansiReset
+}
+
+func expandTabs(text string) string {
+	if !strings.Contains(text, "\t") {
+		return text
+	}
+	var out strings.Builder
+	column := 0
+	for _, r := range text {
+		switch r {
+		case '\t':
+			spaces := 8 - column%8
+			out.WriteString(strings.Repeat(" ", spaces))
+			column += spaces
+		case '\n', '\r':
+			out.WriteRune(r)
+			column = 0
+		default:
+			out.WriteRune(r)
+			column += ansi.StringWidth(string(r))
+		}
+	}
+	return out.String()
 }
 
 func isWordLetter(r rune) bool { return r == '_' || unicode.IsLetter(r) }
@@ -112,7 +150,7 @@ func hyphenPieces(word string) []string {
 }
 
 func chunksOf(text string) []string {
-	text = strings.NewReplacer("\t", "        ", "\n", " ", "\r", " ", "\v", " ", "\f", " ").Replace(text)
+	text = strings.NewReplacer("\n", " ", "\r", " ", "\v", " ", "\f", " ").Replace(expandTabs(text))
 	var chunks []string
 	for len(text) > 0 {
 		spaceRun := text[0] == ' '
@@ -139,32 +177,32 @@ func wrap(text string, width int, first, rest string) []string {
 		if len(lines) == 0 {
 			indent = first
 		}
-		room := width - runeLen(indent)
+		room := width - displayWidth(indent)
 		if strings.TrimSpace(chunks[0]) == "" && len(lines) > 0 {
 			chunks = chunks[1:]
 			continue
 		}
 		var line []string
 		used := 0
-		for len(chunks) > 0 && used+runeLen(chunks[0]) <= room {
-			used += runeLen(chunks[0])
+		for len(chunks) > 0 && used+displayWidth(chunks[0]) <= room {
+			used += displayWidth(chunks[0])
 			line = append(line, chunks[0])
 			chunks = chunks[1:]
 		}
-		if len(chunks) > 0 && runeLen(chunks[0]) > room {
-			r := []rune(chunks[0])
-			cut := min(room-used, len(r))
+		if len(chunks) > 0 && displayWidth(chunks[0]) > room {
+			space := room - used
 			if room < 1 {
-				cut = 1
+				space = 1
 			}
-			for h := cut - 1; h > 0; h-- {
-				if r[h] == '-' && strings.Trim(string(r[:h]), "-") != "" {
-					cut = h + 1
-					break
-				}
+			head, tail := cutToWidth(chunks[0], space)
+			if space <= 0 {
+				head, tail = "", chunks[0]
 			}
-			line = append(line, string(r[:cut]))
-			chunks[0] = string(r[cut:])
+			if h := strings.LastIndex(head, "-"); h > 0 && strings.Trim(head[:h], "-") != "" {
+				head, tail = chunks[0][:h+1], chunks[0][h+1:]
+			}
+			line = append(line, head)
+			chunks[0] = tail
 		}
 		if len(line) > 0 && strings.TrimSpace(line[len(line)-1]) == "" {
 			line = line[:len(line)-1]
@@ -256,49 +294,49 @@ type previewRequest struct {
 	width     int
 	recent    bool
 	query     string
+	explained string
 	secondary string
 }
 
-type previewText struct {
-	header []string
-	body   []string
+func previewHeader(req previewRequest, cache map[string]cacheEntry, known map[string]statusEntry, db *sql.DB) []string {
+	width := req.width - 2
+	e, ok := cache[req.path]
+	if !ok || e.Session == nil {
+		return nil
+	}
+	s := *e.Session
+	dirs := configDirs()
+	where := tilde(s.Cwd)
+	if survivor := survivingDir(s.Cwd); survivor != s.Cwd {
+		where = "folder removed · resumes from " + tilde(survivor)
+	}
+	found := oneLine(plainPassage(req.explained), width)
+	if found == "" && db != nil {
+		found = snippet(db, req.path, req.query)
+	}
+	header := []string{
+		ansiBold + oneLine(s.Title, width) + ansiReset,
+		req.secondary + oneLine(strings.Join(metaParts(s, configDirOf(req.path, dirs), len(dirs) > 1, statusLabel(req.path, known)), " · "), width) + ansiReset,
+		req.secondary + oneLine(where, width) + ansiReset,
+		"",
+	}
+	if found != "" {
+		header[3] = req.secondary + found + ansiReset
+	}
+	return header
 }
 
-func buildPreview(req previewRequest, cache map[string]cacheEntry, known map[string]statusEntry, db *sql.DB) previewText {
+func previewBody(req previewRequest) []string {
 	width := req.width - 2
-	var out previewText
-	if e, ok := cache[req.path]; ok && e.Session != nil {
-		s := *e.Session
-		dirs := configDirs()
-		survivor := survivingDir(s.Cwd)
-		where := tilde(s.Cwd)
-		if survivor != s.Cwd {
-			where = "folder removed · resumes from " + tilde(survivor)
-		}
-		status := statusLabel(req.path, known)
-		found := oneLine(explained(req.path, req.query), width)
-		if found == "" {
-			found = snippet(db, req.path, req.query)
-		}
-		out.header = []string{
-			ansiBold + oneLine(s.Title, width) + ansiReset,
-			req.secondary + oneLine(strings.Join(metaParts(s, configDirOf(req.path, dirs), len(dirs) > 1, status), " · "), width) + ansiReset,
-			req.secondary + oneLine(where, width) + ansiReset,
-			"",
-		}
-		if found != "" {
-			out.header[3] = req.secondary + found + ansiReset
-		}
-	}
 	turns := conversation(req.path)
+	var body []string
 	if req.recent {
-		start := max(len(turns)-8, 0)
-		for _, t := range turns[start:] {
-			out.body = append(out.body, speaker(t.role))
-			out.body = append(out.body, render(t.text, width)...)
-			out.body = append(out.body, "")
+		for _, t := range turns[max(len(turns)-8, 0):] {
+			body = append(body, speaker(t.role))
+			body = append(body, render(t.text, width)...)
+			body = append(body, "")
 		}
-		return out
+		return body
 	}
 	lastAny, lastSubstantial := -1, -1
 	for i, t := range turns {
@@ -314,8 +352,8 @@ func buildPreview(req previewRequest, cache map[string]cacheEntry, known map[str
 		lastAsk = lastAny
 	}
 	if lastAsk >= 0 {
-		out.body = append(out.body, speaker("user"))
-		out.body = append(out.body, excerpt(render(turns[lastAsk].text, width), 10, false, "rest of your message", req.secondary)...)
+		body = append(body, speaker("user"))
+		body = append(body, excerpt(render(turns[lastAsk].text, width), 10, false, "rest of your message", req.secondary)...)
 	}
 	reply := ""
 	for i := len(turns) - 1; i >= 0; i-- {
@@ -326,29 +364,16 @@ func buildPreview(req previewRequest, cache map[string]cacheEntry, known map[str
 	}
 	switch {
 	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].role == "assistant"):
-		out.body = append(out.body, "", speaker("assistant"))
-		out.body = append(out.body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.secondary)...)
+		body = append(body, "", speaker("assistant"))
+		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.secondary)...)
 	case lastAsk >= 0:
-		out.body = append(out.body, "", req.secondary+"  No reply yet. Claude stopped before answering."+ansiReset)
+		body = append(body, "", req.secondary+"  No reply yet. Claude stopped before answering."+ansiReset)
 	}
-	return out
-}
-
-type explainedFile struct {
-	Query    string            `json:"query"`
-	Passages map[string]string `json:"passages"`
+	return body
 }
 
 var markdownMarks = regexp.MustCompile("[*`#]+")
 
-func explained(path, query string) string {
-	raw, err := os.ReadFile(cachePath("explained.json"))
-	if err != nil {
-		return ""
-	}
-	var saved explainedFile
-	if json.Unmarshal(raw, &saved) != nil || saved.Query != query {
-		return ""
-	}
-	return strings.Join(strings.Fields(markdownMarks.ReplaceAllString(saved.Passages[path], "")), " ")
+func plainPassage(passage string) string {
+	return strings.Join(strings.Fields(markdownMarks.ReplaceAllString(passage, "")), " ")
 }

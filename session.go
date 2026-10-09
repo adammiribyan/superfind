@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 )
 
 const (
@@ -56,9 +55,22 @@ func (s Session) Throwaway() bool {
 func (s Session) Active() bool { return now()-s.Mtime < activeSeconds }
 
 type Row struct {
-	Session   Session
-	ConfigDir string
-	Path      string
+	Session    Session
+	ConfigDir  string
+	Path       string
+	Status     string
+	FolderGone bool
+}
+
+func annotate(rows []Row) []Row {
+	known := statuses()
+	out := make([]Row, len(rows))
+	for i, r := range rows {
+		r.Status = statusLabel(r.Path, known)
+		r.FolderGone = !folderExists(r.Session.Cwd)
+		out[i] = r
+	}
+	return out
 }
 
 func now() float64 { return float64(time.Now().UnixNano()) / 1e9 }
@@ -137,11 +149,11 @@ func sameFile(mtime float64, size int64, info os.FileInfo) bool {
 
 func oneLine(text string, width int) string {
 	text = strings.Join(strings.Fields(text), " ")
-	if utf8.RuneCountInString(text) <= width {
+	if displayWidth(text) <= width {
 		return text
 	}
-	r := []rune(text)
-	return string(r[:max(width-1, 0)]) + "…"
+	head, _ := cutToWidth(text, max(width-1, 0))
+	return head + "…"
 }
 
 func tilde(path string) string {

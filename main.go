@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -28,13 +29,15 @@ const usage = `hop: find a past AI coding session and hop back into it. Today it
   hop --version
 `
 
-const zshSetup = `hop() {
+const zshSetup = `typeset -g _hop_bin=%s
+
+hop() {
   if (( $# )); then
-    command hop "$@"
+    "$_hop_bin" "$@"
     return
   fi
   local out
-  out=$(command hop pick) || return
+  out=$("$_hop_bin" pick) || return
   print -r -- $'\e[38;2;215;119;87m✻\e[0m Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
   print -s -- "${out#*$'\n'}"
   eval "${out#*$'\n'}"
@@ -42,7 +45,7 @@ const zshSetup = `hop() {
 
 _hop_widget() {
   local out
-  if out=$(command hop pick); then
+  if out=$("$_hop_bin" pick); then
     zle -I
     print -r -- $'\e[38;2;215;119;87m✻\e[0m Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -68,16 +71,16 @@ func secondaryFromEnv() string {
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
 }
 
-func rowContext(r Row, status string, showAccount bool, secondary string) string {
+func rowContext(r Row, showAccount bool, secondary string) string {
 	flag := ""
 	switch {
-	case status == waitingLabel:
-		flag = ansiAccent + status + ansiReset + secondary + " · "
-	case status != "":
-		flag = status + " · "
+	case r.Status == waitingLabel:
+		flag = ansiAccent + r.Status + ansiReset + secondary + " · "
+	case r.Status != "":
+		flag = r.Status + " · "
 	}
 	context := flag + when(r.Session) + " · " + r.Session.Project()
-	if !folderExists(r.Session.Cwd) {
+	if r.FolderGone {
 		context += " · folder removed"
 	}
 	if showAccount {
@@ -95,18 +98,16 @@ func showsAccounts(rows []Row) bool {
 }
 
 func printRows(rows []Row) {
-	known := statuses()
 	secondary := secondaryFromEnv()
 	accounts := showsAccounts(rows)
 	for _, r := range rows {
 		title := strings.Join(strings.Fields(r.Session.Title), " ")
-		display := " " + title + "  " + secondary + rowContext(r, statusLabel(r.Path, known), accounts, secondary) + ansiReset
+		display := " " + title + "  " + secondary + rowContext(r, accounts, secondary) + ansiReset
 		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.ConfigDir, title, display)
 	}
 }
 
-func searchRows(db *sql.DB, query string) []Row {
-	rows := cachedRows()
+func searchRows(db *sql.DB, query string, rows []Row) []Row {
 	var words, filters []string
 	for _, w := range strings.Fields(query) {
 		if strings.HasPrefix(w, "is:") {
@@ -122,12 +123,10 @@ func searchRows(db *sql.DB, query string) []Row {
 		}
 	}
 	if len(wanted) > 0 {
-		known := statuses()
 		var kept []Row
 		for _, r := range rows {
-			label := statusLabel(r.Path, known)
 			for _, w := range wanted {
-				if label == w {
+				if r.Status == w {
 					kept = append(kept, r)
 					break
 				}
@@ -154,7 +153,7 @@ func resumeCommand(cwd, sessionID, configDir string) string {
 	if resolve(configDir) != resolve(defaultConfig) {
 		env = "CLAUDE_CONFIG_DIR=" + shellQuote(configDir) + " "
 	}
-	return "cd " + shellQuote(survivingDir(cwd)) + " && " + env + "claude --resume " + sessionID
+	return "cd " + shellQuote(survivingDir(cwd)) + " && " + env + "claude --resume " + shellQuote(sessionID)
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
@@ -172,6 +171,29 @@ func handoffTitle(r Row) string {
 		title += ansiReset + ansiDim + " · may still be open in another window"
 	}
 	return title
+}
+
+func selfPath() string {
+	if strings.Contains(os.Args[0], "/") {
+		if abs, err := filepath.Abs(os.Args[0]); err == nil {
+			return abs
+		}
+	}
+	if found, err := exec.LookPath(os.Args[0]); err == nil {
+		if abs, err := filepath.Abs(found); err == nil {
+			return abs
+		}
+	}
+	exe, _ := os.Executable()
+	return exe
+}
+
+func mustOpenSearch() *sql.DB {
+	db, err := openSearch()
+	if err != nil {
+		fail("hop: can't open the search index in " + cacheDir() + ": " + err.Error())
+	}
+	return db
 }
 
 func fail(message string) {
@@ -192,27 +214,34 @@ func main() {
 		if len(args) < 2 || args[1] != "zsh" {
 			fail("hop init: only zsh is supported so far")
 		}
-		fmt.Print(zshSetup)
+		fmt.Printf(zshSetup, shellQuote(selfPath()))
 	case "index":
-		fmt.Printf("%d sessions indexed\n", len(index()))
-	case "search":
-		db, _ := openSearch()
-		printRows(searchRows(db, strings.Join(args[1:], " ")))
-	case "ask":
-		query := strings.Join(args[1:], " ")
-		db, err := openSearch()
+		rows, err := index()
 		if err != nil {
-			fail(err.Error())
+			fail("hop index: " + err.Error())
 		}
-		paths, err := ask(db, query, cachedRows())
+		fmt.Printf("%d sessions indexed\n", len(rows))
+	case "search":
+		db := mustOpenSearch()
+		printRows(searchRows(db, strings.Join(args[1:], " "), annotate(cachedRows())))
+	case "ask":
+		db := mustOpenSearch()
+		rows := annotate(cachedRows())
+		query := strings.Join(args[1:], " ")
+		if strings.TrimSpace(query) == "" {
+			printRows(recentFirst(rows))
+			return
+		}
+		paths, err := ask(db, query, rows)
 		var failure askFailure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		printRows(inOrder(cachedRows(), paths))
+		printRows(inOrder(rows, paths))
 	case "label":
 		if key := typesafeKey(); key != "" {
-			labelSessions(key, index())
+			rows, _ := index()
+			labelSessions(key, rows)
 		}
 	case "preview":
 		if len(args) < 2 {
@@ -235,9 +264,11 @@ func main() {
 				}
 			}
 		}
-		db, _ := openSearch()
-		p := buildPreview(req, loadCache(), statuses(), db)
-		for _, line := range append(append(p.header, ""), p.body...) {
+		header := previewHeader(req, loadCache(), statuses(), mustOpenSearch())
+		if header != nil {
+			header = append(header, "")
+		}
+		for _, line := range append(header, previewBody(req)...) {
 			fmt.Println(line)
 		}
 	case "command":

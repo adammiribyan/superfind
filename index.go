@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 )
@@ -198,16 +199,42 @@ func writeAtomically(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
 
-func saveCache(files map[string]cacheEntry) {
-	data, _ := json.Marshal(cacheFile{cacheVersion, files})
-	writeAtomically(cachePath("index.json"), data)
+func lockFile(name string) (func(), error) {
+	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(cachePath(name), os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
+
+func saveCache(files map[string]cacheEntry) error {
+	data, err := json.Marshal(cacheFile{cacheVersion, files})
+	if err != nil {
+		return err
+	}
+	return writeAtomically(cachePath("index.json"), data)
 }
 
 func openSearch() (*sql.DB, error) {
@@ -239,7 +266,12 @@ func isTerminal(f *os.File) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-func index() []Row {
+func index() ([]Row, error) {
+	unlock, err := lockFile("index.lock")
+	if err != nil {
+		return nil, fmt.Errorf("locking the index: %w", err)
+	}
+	defer unlock()
 	old := loadCache()
 	dirs := configDirs()
 	var all []found
@@ -298,7 +330,7 @@ func index() []Row {
 		}
 		fresh[f.path] = cacheEntry{stamp(f.info), f.info.Size(), s}
 		if s != nil {
-			rows = append(rows, Row{*s, f.configDir, f.path})
+			rows = append(rows, Row{Session: *s, ConfigDir: f.configDir, Path: f.path})
 		}
 	}
 	var gone []string
@@ -309,36 +341,47 @@ func index() []Row {
 	}
 	_, statErr := os.Stat(cachePath("search.db"))
 	if len(results) > 0 || len(gone) > 0 || statErr != nil {
-		updateSearch(results, gone)
+		if err := updateSearch(results, gone); err != nil {
+			return rows, fmt.Errorf("updating the search index: %w", err)
+		}
 	}
 	if len(results) > 0 || len(gone) > 0 || len(fresh) != len(old) {
-		saveCache(fresh)
+		if err := saveCache(fresh); err != nil {
+			return rows, fmt.Errorf("saving the session cache: %w", err)
+		}
 	}
-	return rows
+	return rows, nil
 }
 
-func updateSearch(results map[string]parsed, gone []string) {
+func updateSearch(results map[string]parsed, gone []string) error {
 	db, err := openSearch()
 	if err != nil {
-		return
+		return err
 	}
 	defer db.Close()
 	tx, err := db.Begin()
 	if err != nil {
-		return
+		return err
 	}
+	defer tx.Rollback()
 	for p, r := range results {
-		tx.Exec("DELETE FROM docs WHERE path = ?", p)
+		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
+			return err
+		}
 		if r.session != nil {
 			s := r.session
-			tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
-				s.Title+" "+s.Project()+" "+s.Branch, r.body)
+			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
+				s.Title+" "+s.Project()+" "+s.Branch, r.body); err != nil {
+				return err
+			}
 		}
 	}
 	for _, p := range gone {
-		tx.Exec("DELETE FROM docs WHERE path = ?", p)
+		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
+			return err
+		}
 	}
-	tx.Commit()
+	return tx.Commit()
 }
 
 func cachedRows() []Row {
@@ -346,7 +389,7 @@ func cachedRows() []Row {
 	var rows []Row
 	for path, e := range loadCache() {
 		if e.Session != nil {
-			rows = append(rows, Row{*e.Session, configDirOf(path, dirs), path})
+			rows = append(rows, Row{Session: *e.Session, ConfigDir: configDirOf(path, dirs), Path: path})
 		}
 	}
 	return rows
@@ -390,7 +433,7 @@ func matches(db *sql.DB, query string) ([]string, bool) {
 	seen := map[string]bool{}
 	var out []string
 	for _, scoped := range []string{"title : (" + match + ")", match} {
-		rows, err := db.Query("SELECT path FROM docs WHERE docs MATCH ? ORDER BY rank LIMIT 200", scoped)
+		rows, err := db.Query("SELECT path FROM docs WHERE docs MATCH ? ORDER BY rank, path LIMIT 200", scoped)
 		if err != nil {
 			continue
 		}
