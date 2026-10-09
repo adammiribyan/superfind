@@ -16,40 +16,24 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var slashCommand = regexp.MustCompile(`(?s)<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)`)
-
-var machinePrefixes = []string{"<", "Caveat:", "[Request interrupted", "Another Claude session sent a message", "[SYSTEM NOTIFICATION"}
-
-func promptText(text string) string {
-	if m := slashCommand.FindStringSubmatch(text); m != nil {
-		return strings.TrimSpace(m[1] + " " + m[2])
-	}
-	for _, p := range machinePrefixes {
-		if strings.HasPrefix(text, p) {
-			return ""
-		}
-	}
-	return text
-}
-
-func parse(path string, mtime float64) (*Session, string, error) {
-	t, err := readTranscript(path)
+func parse(f found) (*Session, string, error) {
+	t, err := readTranscript(f.agent, f.path)
 	if err != nil {
 		return nil, "", err
 	}
-	firstPrompt := ""
+	firstPrompt, latestPrompt := "", ""
 	if len(t.prompts) > 0 {
-		firstPrompt = t.prompts[0]
+		firstPrompt, latestPrompt = t.prompts[0], t.prompts[len(t.prompts)-1]
 	}
-	if t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
+	if t.hidden || t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
 		return nil, "", nil
 	}
 	body := strings.Join(t.messages, "\n")
 	return &Session{
-		ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Cwd: t.cwd,
-		Title:      firstNonEmpty(t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
-		LastPrompt: firstNonEmpty(t.lastPrompt, firstPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: mtime,
+		ID: f.agent.idOf(f.path), Cwd: t.cwd,
+		Title:      firstNonEmpty(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
+		LastPrompt: firstNonEmpty(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
+		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.mtime,
 	}, body, nil
 }
 
@@ -64,6 +48,7 @@ func firstNonEmpty(values ...string) string {
 
 type cacheEntry struct {
 	fileID
+	Name    string   `json:"name,omitempty"`
 	Session *Session `json:"session"`
 }
 
@@ -127,11 +112,11 @@ func saveCache(files map[string]cacheEntry) error {
 }
 
 func cachedRows() []Row {
-	dirs := configDirs()
+	in := places()
 	var rows []Row
 	for path, e := range loadCache() {
-		if e.Session != nil {
-			rows = append(rows, Row{Session: *e.Session, ConfigDir: configDirOf(path, dirs), Path: path})
+		if p, ok := locate(path, in); ok && e.Session != nil {
+			rows = append(rows, Row{Session: *e.Session, Agent: p.agent, Home: p.home, Path: path})
 		}
 	}
 	return rows
@@ -159,9 +144,11 @@ func openSearch() (*sql.DB, error) {
 }
 
 type found struct {
-	configDir string
-	path      string
-	info      os.FileInfo
+	place
+	path  string
+	id    fileID
+	mtime float64
+	name  string
 }
 
 type parsed struct {
@@ -176,20 +163,22 @@ func index(announce func(stale int)) ([]Row, error) {
 	}
 	defer unlock()
 	old := loadCache()
-	dirs := configDirs()
+	if _, err := os.Stat(cachePath("search.db")); err != nil {
+		old = map[string]cacheEntry{}
+	}
 	var all []found
-	for _, d := range dirs {
-		matches, _ := filepath.Glob(filepath.Join(d, "projects", "*", "*.jsonl"))
-		for _, p := range matches {
-			if info, err := os.Stat(p); err == nil {
-				all = append(all, found{d, p, info})
+	for _, p := range places() {
+		names := p.agent.threadNames(p.home)
+		for _, path := range p.agent.sessions(p.home) {
+			if id, mtime, err := p.agent.stat(path); err == nil {
+				all = append(all, found{p, path, id, mtime, names[p.agent.idOf(path)]})
 			}
 		}
 	}
 	var stale []found
 	for _, f := range all {
-		e, ok := old[f.path]
-		if !ok || e.fileID != identify(f.info) {
+		e, known := old[f.path]
+		if !known || e.fileID != f.id || e.Name != f.name {
 			stale = append(stale, f)
 		}
 	}
@@ -205,7 +194,7 @@ func index(announce func(stale int)) ([]Row, error) {
 		go func() {
 			defer wg.Done()
 			for f := range work {
-				s, body, err := parse(f.path, stamp(f.info))
+				s, body, err := parse(f)
 				if err != nil {
 					continue
 				}
@@ -226,14 +215,14 @@ func index(announce func(stale int)) ([]Row, error) {
 	for _, f := range all {
 		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
-			entry, known = cacheEntry{identify(f.info), p.session}, true
+			entry, known = cacheEntry{f.id, f.name, p.session}, true
 		}
 		if !known {
 			continue
 		}
 		fresh[f.path] = entry
 		if s := entry.Session; s != nil {
-			rows = append(rows, Row{Session: *s, ConfigDir: f.configDir, Path: f.path})
+			rows = append(rows, Row{Session: *s, Agent: f.agent, Home: f.home, Path: f.path})
 		}
 	}
 	var gone []string
@@ -242,9 +231,9 @@ func index(announce func(stale int)) ([]Row, error) {
 			gone = append(gone, p)
 		}
 	}
-	_, statErr := os.Stat(cachePath("search.db"))
-	if len(results) > 0 || len(gone) > 0 || statErr != nil {
-		if err := updateSearch(results, gone); err != nil {
+	discarded := len(old) == 0
+	if len(results) > 0 || len(gone) > 0 || discarded {
+		if err := updateSearch(results, gone, discarded); err != nil {
 			return rows, fmt.Errorf("updating the search index: %w", err)
 		}
 	}
@@ -256,7 +245,7 @@ func index(announce func(stale int)) ([]Row, error) {
 	return rows, nil
 }
 
-func updateSearch(results map[string]parsed, gone []string) error {
+func updateSearch(results map[string]parsed, gone []string, discarded bool) error {
 	db, err := openSearch()
 	if err != nil {
 		return err
@@ -267,6 +256,11 @@ func updateSearch(results map[string]parsed, gone []string) error {
 		return err
 	}
 	defer tx.Rollback()
+	if discarded {
+		if _, err := tx.Exec("DELETE FROM docs"); err != nil {
+			return err
+		}
+	}
 	for p, r := range results {
 		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
 			return err
@@ -342,7 +336,7 @@ func matches(db *sql.DB, query string) ([]string, bool, error) {
 	seen := map[string]bool{}
 	var out []string
 	for _, scoped := range []string{"title : (" + match + ")", match} {
-		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path LIMIT 200", scoped)
+		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
 		if err != nil {
 			return nil, true, err
 		}

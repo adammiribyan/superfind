@@ -8,13 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
 )
 
-const usage = `hop: find a past AI coding session and hop back into it. Today it reads Claude Code sessions.
+const usage = `hop: find a past AI coding session and hop back into it. It reads Claude Code, Codex, and Grok sessions.
 
   hop                     open the picker (after shell setup; see hop init)
   hop init zsh|bash       print the shell setup; add  eval "$(hop init zsh)"  to ~/.zshrc
@@ -22,12 +23,13 @@ const usage = `hop: find a past AI coding session and hop back into it. Today it
   hop pick                open the picker; prints the chosen session's title, then the command
                           that resumes it
   hop search WORDS        print sessions whose title or conversation contains every word;
-                          is:waiting and is:unfinished filter by how a session ended
+                          is:waiting and is:unfinished filter by how a session ended,
+                          agent:claude, agent:codex, and agent:grok by the agent
   hop search --deep WORDS
                           print the sessions that best fit what you describe, even in other words
-  hop preview TRANSCRIPT [--width N] [--recent] [--query Q]
+  hop preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
-  hop command TRANSCRIPT  print the shell command that resumes a session
+  hop command SESSION     print the shell command that resumes a session
   hop index               build or refresh the index
   hop label               mark sessions waiting on you (needs a TypeSafe key)
   hop --version
@@ -110,55 +112,50 @@ func rowContext(t rowText, secondary string) string {
 	return flag + strings.Join(t.context, " · ")
 }
 
-func showsAccounts(rows []Row) bool {
-	dirs := map[string]bool{}
-	for _, r := range rows {
-		dirs[r.ConfigDir] = true
-	}
-	return len(dirs) > 1
-}
-
-func printRows(rows []Row) {
+func printRows(rows []Row, shown tags) {
 	secondary := secondaryFromEnv()
-	accounts := showsAccounts(rows)
 	for _, r := range rows {
-		t := rowTextOf(r, accounts)
+		t := rowTextOf(r, shown)
 		display := " " + t.title + "  " + secondary + rowContext(t, secondary) + ansiReset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.ConfigDir, t.title, display)
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.title, display)
 	}
 }
 
-func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
-	var words, filters []string
+func narrow(query string, rows []Row) (string, []Row) {
+	var words, statuses []string
+	var from []*agent
 	for _, w := range strings.Fields(query) {
-		if strings.HasPrefix(w, "is:") {
-			filters = append(filters, statusLabelFor(w[3:]))
-		} else {
+		switch {
+		case strings.HasPrefix(w, "is:"):
+			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
+				statuses = append(statuses, label)
+			}
+		case strings.HasPrefix(w, "agent:"):
+			if a := agentNamed(strings.ToLower(w[6:])); a != nil {
+				from = append(from, a)
+			}
+		default:
 			words = append(words, w)
 		}
 	}
-	var wanted []string
-	for _, f := range filters {
-		if f != "" {
-			wanted = append(wanted, f)
-		}
-	}
-	if len(wanted) > 0 {
+	if len(statuses) > 0 || len(from) > 0 {
 		var kept []Row
 		for _, r := range rows {
-			for _, w := range wanted {
-				if r.Status == w {
-					kept = append(kept, r)
-					break
-				}
+			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
+				kept = append(kept, r)
 			}
 		}
 		rows = kept
 	}
+	return strings.Join(words, " "), rows
+}
+
+func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
+	words, rows := narrow(query, rows)
 	if db == nil {
 		return recentFirst(rows), nil
 	}
-	found, searched, err := matches(db, strings.Join(words, " "))
+	found, searched, err := matches(db, words)
 	if err != nil {
 		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
 	}
@@ -166,18 +163,6 @@ func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
 		return recentFirst(rows), nil
 	}
 	return inOrder(rows, found), nil
-}
-
-func resumeCommand(cwd, sessionID, configDir string) string {
-	defaultConfig := os.Getenv("CLAUDE_CONFIG_DIR")
-	if defaultConfig == "" {
-		defaultConfig = filepath.Join(home(), ".claude")
-	}
-	env := ""
-	if resolve(configDir) != resolve(defaultConfig) {
-		env = "CLAUDE_CONFIG_DIR=" + shellQuote(configDir) + " "
-	}
-	return "cd " + shellQuote(survivingDir(cwd)) + " && " + env + "claude --resume " + shellQuote(sessionID)
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
@@ -237,6 +222,26 @@ func mustIndex(command string) []Row {
 	return rows
 }
 
+func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
+	path := filepath.Join(resolve(filepath.Dir(arg)), filepath.Base(arg))
+	p, ok := locate(path, places())
+	if !ok {
+		labels := make([]string, len(agents))
+		for i, a := range agents {
+			labels[i] = a.label
+		}
+		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
+			", or " + labels[len(labels)-1] + " home")
+	}
+	rows = annotate(mustIndex(command))
+	for _, r := range rows {
+		if r.Path == path {
+			return r, true, rows
+		}
+	}
+	return Row{Agent: p.agent, Home: p.home, Path: path}, false, rows
+}
+
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(1)
@@ -264,6 +269,7 @@ func main() {
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
 		rows := annotate(mustIndex("search"))
+		shown := tagsFor(rows)
 		db := mustOpenSearch()
 		deep, words := false, []string{}
 		for _, arg := range args[1:] {
@@ -279,19 +285,20 @@ func main() {
 			if err != nil {
 				fail("hop search: " + err.Error())
 			}
-			printRows(found)
+			printRows(found, shown)
 			return
 		}
-		if strings.TrimSpace(query) == "" {
-			printRows(recentFirst(rows))
+		query, eligible := narrow(query, rows)
+		if query == "" {
+			printRows(recentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask(db, query, rows)
+		paths, err := ask(db, query, eligible)
 		var failure askFailure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		printRows(inOrder(rows, paths))
+		printRows(inOrder(rows, paths), shown)
 	case "label":
 		key := typesafeKey()
 		if key == "" {
@@ -302,9 +309,9 @@ func main() {
 		}
 	case "preview":
 		if len(args) < 2 {
-			fail("hop preview: which transcript?")
+			fail("hop preview: which session?")
 		}
-		req := previewRequest{path: args[1], width: 80, secondary: secondaryFromEnv()}
+		req := previewRequest{width: 80, secondary: secondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--recent":
@@ -321,10 +328,11 @@ func main() {
 				}
 			}
 		}
-		mustIndex("preview")
-		header := previewHeader(req, loadCache(), statuses(), mustOpenSearch())
-		if header != nil {
-			header = append(header, "")
+		r, indexed, rows := sessionAt("preview", args[1])
+		req.agent, req.path = r.Agent, r.Path
+		var header []string
+		if indexed {
+			header = append(previewHeader(req, r, tagsFor(rows), mustOpenSearch()), "")
 		}
 		body, err := previewBody(req)
 		for _, line := range append(header, body...) {
@@ -335,15 +343,13 @@ func main() {
 		}
 	case "command":
 		if len(args) < 2 {
-			fail("hop command: which transcript?")
+			fail("hop command: which session?")
 		}
-		path := resolve(args[1])
-		mustIndex("command")
-		e, ok := loadCache()[path]
-		if !ok || e.Session == nil {
+		r, indexed, _ := sessionAt("command", args[1])
+		if !indexed {
 			fail("hop command: not an indexed session: " + args[1])
 		}
-		fmt.Println(resumeCommand(e.Session.Cwd, e.Session.ID, configDirOf(path, configDirs())))
+		fmt.Println(resumeCommand(r))
 	case "pick":
 		chosen, err := pick()
 		if err != nil {
@@ -353,7 +359,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(handoffTitle(*chosen))
-		fmt.Println(resumeCommand(chosen.Session.Cwd, chosen.Session.ID, chosen.ConfigDir))
+		fmt.Println(resumeCommand(*chosen))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

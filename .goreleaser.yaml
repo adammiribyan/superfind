@@ -19,7 +19,7 @@ homebrew_casks:
   - name: hop
     binaries: [hop]
     homepage: https://github.com/adammiribyan/hop
-    description: Find any past Claude Code session and resume it in the terminal you're in
+    description: Find any past AI coding session and resume it in the terminal you're in
     repository:
       owner: adammiribyan
       name: homebrew-tap

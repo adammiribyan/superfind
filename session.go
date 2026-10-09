@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	version          = "0.8.1"
-	cacheVersion     = 11
+	version          = "0.9.0"
+	cacheVersion     = 12
 	activeSeconds    = 120
 	throwawayWords   = 150
 	statusShownAt    = 0.85
@@ -55,7 +55,8 @@ func (s Session) Active() bool { return now()-s.Mtime < activeSeconds }
 
 type Row struct {
 	Session    Session
-	ConfigDir  string
+	Agent      *agent
+	Home       string
 	Path       string
 	Status     string
 	FolderGone bool
@@ -65,7 +66,7 @@ func annotate(rows []Row) []Row {
 	known := statuses()
 	out := make([]Row, len(rows))
 	for i, r := range rows {
-		r.Status = statusLabel(r.Path, known)
+		r.Status = statusLabel(r, known)
 		r.FolderGone = !folderExists(r.Session.Cwd)
 		out[i] = r
 	}
@@ -102,51 +103,10 @@ func resolve(path string) string {
 	return abs
 }
 
-func configDirs() []string {
-	var candidates []string
-	if c := os.Getenv("CLAUDE_CONFIG_DIR"); c != "" {
-		candidates = append(candidates, c)
-	}
-	candidates = append(candidates, filepath.Join(home(), ".claude"))
-	extras, _ := filepath.Glob(filepath.Join(home(), ".claude-*"))
-	sort.Strings(extras)
-	candidates = append(candidates, extras...)
-	for _, p := range strings.Split(os.Getenv("HOP_CLAUDE_DIRS"), ":") {
-		if p != "" {
-			candidates = append(candidates, p)
-		}
-	}
-	seen := map[string]bool{}
-	var dirs []string
-	for _, c := range candidates {
-		d := resolve(c)
-		if info, err := os.Stat(filepath.Join(d, "projects")); err == nil && info.IsDir() && !seen[d] {
-			seen[d] = true
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
-}
-
-func configDirOf(path string, dirs []string) string {
-	for _, d := range dirs {
-		if strings.HasPrefix(path, d+"/") {
-			return d
-		}
-	}
-	return filepath.Dir(filepath.Dir(filepath.Dir(path)))
-}
-
-func stamp(info os.FileInfo) float64 {
-	return float64(info.ModTime().UnixNano()) / 1e9
-}
-
 type fileID struct {
 	ModNanos int64 `json:"mtime_ns"`
 	Size     int64 `json:"size"`
 }
-
-func identify(info os.FileInfo) fileID { return fileID{info.ModTime().UnixNano(), info.Size()} }
 
 func oneLine(text string, width int) string {
 	text = strings.Join(strings.Fields(text), " ")
@@ -248,7 +208,7 @@ type rowText struct {
 	context        []string
 }
 
-func rowTextOf(r Row, showAccount bool) rowText {
+func rowTextOf(r Row, shown tags) rowText {
 	t := rowText{title: strings.Join(strings.Fields(r.Session.Title), " ")}
 	if r.Status == waitingLabel {
 		t.waiting = r.Status
@@ -259,16 +219,15 @@ func rowTextOf(r Row, showAccount bool) rowText {
 	if r.FolderGone {
 		t.context = append(t.context, "folder removed")
 	}
-	if showAccount {
-		t.context = append(t.context, filepath.Base(r.ConfigDir))
-	}
+	t.context = append(t.context, shown.of(r)...)
 	return t
 }
 
-func metaParts(s Session, configDir string, showAccount bool, status string) []string {
+func metaParts(r Row, shown tags) []string {
+	s := r.Session
 	parts := []string{s.Project()}
-	if status != "" {
-		parts = append(parts, status)
+	if r.Status != "" {
+		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(s))
 	if s.Branch != "" && s.Branch != "HEAD" {
@@ -279,8 +238,5 @@ func metaParts(s Session, configDir string, showAccount bool, status string) []s
 		noun = "prompt"
 	}
 	parts = append(parts, fmt.Sprintf("%d %s", s.Prompts, noun))
-	if showAccount {
-		parts = append(parts, filepath.Base(configDir))
-	}
-	return parts
+	return append(parts, shown.of(r)...)
 }

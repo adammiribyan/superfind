@@ -14,7 +14,8 @@ import time
 import unittest
 from pathlib import Path
 
-from test_hop import HOP, claude, line, tool, user
+from test_hop import (HOP, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, grok_reply, grok_user, line,
+                      tool, uid, user)
 
 
 def tmux(*args):
@@ -43,13 +44,21 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True):
+    def codex_session(self, session_id, *lines):
+        folder = self.home / ".codex" / "sessions" / "2026" / "10" / "09"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"rollout-2026-10-09T10-00-00-{session_id}.jsonl"
+        path.write_text("\n".join(lines) + "\n")
+        self.clock += 3600
+        os.utime(path, (self.clock, self.clock))
+
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions"):
         if index_first:
             subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {HOP} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
-        self.wait_for("Claude sessions")
+        self.wait_for(header)
 
     def screen(self):
         return tmux("capture-pane", "-p", "-t", self.session_name).stdout
@@ -271,6 +280,104 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Search ranking tweaks")
         self.keys("Enter")
         self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
+    def test_the_picker_says_sessions_when_more_than_one_agent_is_present(self):
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.open_picker(header="✻ Sessions")
+        self.assertEqual([r.split("│")[0].strip() for r in self.rows()[:2]],
+                         ["fix the build  2d ago · tmp · codex", "Checkout double charge  2d ago · tmp · claude"])
+        self.assertNotIn("Claude sessions", self.screen())
+
+    def test_choosing_a_codex_session_prints_its_resume_command(self):
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.open_picker(header="✻ Sessions")
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, f"fix the build\ncd /tmp && codex resume {uid(1)}\n"))
+
+    def test_two_agents_sharing_one_home_keep_their_own_resume_commands(self):
+        shared = self.home / "shared"
+        rollout = shared / "sessions" / "2026" / "10" / "09" / f"rollout-2026-10-09T10-00-00-{uid(1)}.jsonl"
+        rollout.parent.mkdir(parents=True)
+        rollout.write_text("\n".join([codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                                      codex_reply("Fixed.")]) + "\n")
+        chat = shared / "sessions" / "%2Ftmp" / uid(2) / "chat_history.jsonl"
+        chat.parent.mkdir(parents=True)
+        chat.write_text("\n".join([grok_user("rate the code"), grok_reply("It reads well.", tools=1)]) + "\n")
+        (chat.parent / "summary.json").write_text(json.dumps({"info": {"cwd": "/tmp"}, "session_summary": "Code rating"}))
+        for path in (rollout, chat, chat.parent / "summary.json"):
+            self.clock += 3600
+            os.utime(path, (self.clock, self.clock))
+        self.env.update(CODEX_HOME=str(shared), GROK_HOME=str(shared))
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False, header="✻ Sessions")
+        self.wait_for("2/2")
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, f"Code rating\ncd /tmp && grok --resume {uid(2)}\n"))
+
+    def test_the_first_frame_says_claude_sessions_when_another_agents_home_is_empty(self):
+        self.three_sessions()
+        flat = self.home / ".codex" / "sessions" / "rollout-2025-04-01-0199.json"
+        flat.parent.mkdir(parents=True)
+        flat.write_text("{}")
+        (self.home / ".cache" / "hop").mkdir(parents=True)
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False)
+        self.assertNotIn("✻ Sessions", self.screen())
+
+    def test_deep_search_in_the_picker_keeps_the_agent_filter(self):
+        received = []
+
+        class Recorder(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if "which" in sent["questions"]:
+                    received.append(sent)
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.three_sessions()
+        self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
+                           codex_reply("Migrated."))
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.open_picker(header="✻ Sessions")
+        self.keys("agent:codex ledger", "C-r")
+        deadline = time.time() + 10
+        while not received and time.time() < deadline:
+            time.sleep(0.1)
+        cards = [c.split(" | ")[0] for k, c in received[0]["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertEqual((received[0]["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
+
+    def test_a_cached_session_outside_every_home_is_not_listed(self):
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        index = self.home / ".cache" / "hop" / "index.json"
+        cache = json.loads(index.read_text())
+        entry = next(iter(cache["files"].values()))
+        cache["files"]["/nowhere/stray.jsonl"] = {**entry, "session": {**entry["session"], "title": "Stray session"}}
+        index.write_text(json.dumps(cache))
+        lock = open(self.home / ".cache" / "hop" / "index.lock", "w")
+        self.addCleanup(lock.close)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.open_picker(index_first=False)
+        self.wait_for("3/3")
+        self.assertNotIn("Stray session", self.screen())
 
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()

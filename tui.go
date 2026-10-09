@@ -132,10 +132,9 @@ type picker struct {
 	db         *sql.DB
 	problem    string
 	dbProblem  string
-	cache      map[string]cacheEntry
-	known      map[string]statusEntry
 	statusSeen time.Time
-	accounts   bool
+	tags       tags
+	label      string
 
 	input     textinput.Model
 	spin      spinner.Model
@@ -171,7 +170,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: recentFirst(annotate(rows)), db: db, cache: loadCache(), known: statuses(), accounts: showsAccounts(rows),
+		all: recentFirst(annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 	}
 	m.problem, m.dbProblem = problem, problem
@@ -301,12 +300,12 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	if query == "" {
 		query = m.input.Value()
 	}
-	req := previewRequest{path: r.Path, width: l.previewWidth, recent: m.recent, query: query,
+	req := previewRequest{agent: r.Agent, path: r.Path, width: l.previewWidth, recent: m.recent, query: query,
 		explained: m.explained[r.Path], secondary: m.colors.mutedSeq}
-	m.header = previewHeader(req, m.cache, m.known, m.db)
+	m.header = previewHeader(req, *r, m.tags, m.db)
 	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent}
-	if info, err := os.Stat(r.Path); err == nil {
-		key.file = identify(info)
+	if id, _, err := r.Agent.stat(r.Path); err == nil {
+		key.file = id
 	}
 	m.showing = key
 	m.body.SetWidth(l.previewWidth)
@@ -351,7 +350,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 }
 
 func (m picker) startAsk() (picker, tea.Cmd) {
-	query := strings.TrimSpace(m.input.Value())
+	query, rows := narrow(m.input.Value(), m.all)
 	if query == "" {
 		return m, nil
 	}
@@ -361,7 +360,7 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	}
 	m.askSeq++
 	m.asking, m.message = true, ""
-	seq, db, rows := m.askSeq, m.db, m.all
+	seq, db := m.askSeq, m.db
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		paths, err := ask(db, query, rows)
 		return askDone{seq, query, paths, err}
@@ -424,7 +423,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all, m.cache, m.accounts = recentFirst(annotate(msg.rows)), loadCache(), showsAccounts(msg.rows)
+		m.all, m.tags, m.label = recentFirst(annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, places())
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
@@ -446,7 +445,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
 		}
-		m.statusSeen, m.known = info.ModTime(), statuses()
+		m.statusSeen = info.ModTime()
 		m.all = annotate(m.all)
 		m.shown = inOrder(m.all, pathsOf(m.shown))
 		updated, load := m.loadPreview()
@@ -562,7 +561,7 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(lipgloss.NewStyle().Foreground(m.colors.muted))
-	t := rowTextOf(r, m.accounts)
+	t := rowTextOf(r, m.tags)
 	segment := ""
 	if t.waiting != "" {
 		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(t.waiting) + muted.Render(" · ")
@@ -579,7 +578,7 @@ func (m picker) inputBox(width int) []string {
 	border := lipgloss.NewStyle().Foreground(m.colors.border)
 	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
 	label := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render("✻") + " " +
-		lipgloss.NewStyle().Bold(true).Render("Claude sessions") + " "
+		lipgloss.NewStyle().Bold(true).Render(m.label) + " "
 	if m.asking {
 		label = " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render(m.spin.View()) + " " +
 			lipgloss.NewStyle().Bold(true).Render("Searching deeper…") + " "
