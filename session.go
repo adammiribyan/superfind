@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	version          = "0.7.3"
+	version          = "0.8.0"
 	cacheVersion     = 11
 	activeSeconds    = 120
 	throwawayWords   = 150

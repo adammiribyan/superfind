@@ -1,4 +1,4 @@
-module hop
+module github.com/adammiribyan/hop
 
 go 1.26.0
 

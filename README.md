@@ -1,24 +1,43 @@
 # hop
 
-Find any past AI coding session on your Mac and hop back into it. hop opens the session's folder and resumes it, right in the terminal pane you're in. Today it reads Claude Code sessions; other agents come later.
+Find any past AI coding session and hop back into it. hop opens the session's folder and resumes it, right in the terminal pane you're in. Today it reads Claude Code sessions; other agents come later. It runs on macOS and Linux, in zsh or bash.
 
 ![hop finding a session from a description and resuming it](demo/hop.gif)
 
 ## Install
 
+With Homebrew:
+
 ```sh
-brew install go
-git clone <this repo> ~/src/hop
-~/src/hop/install.sh
+brew install --cask adammiribyan/tap/hop
 ```
 
-Then open a new terminal tab. hop is a single Go binary with no other dependencies. The installer builds it, links it into `~/.local/bin`, adds `eval "$(hop init zsh)"` to `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. Running it again changes nothing.
+With Go 1.26 or newer:
 
-The shell setup is a small zsh function: a program can't change its parent shell's folder, so `hop init zsh` defines the function that runs the `cd` and `claude --resume` for you.
+```sh
+go install github.com/adammiribyan/hop@latest
+```
+
+Then add one line to your shell's startup file, so choosing a session can change your shell's folder:
+
+```sh
+eval "$(hop init zsh)"     # in ~/.zshrc
+eval "$(hop init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
+```
+
+Open a new terminal tab and type `hop`. To open it with Cmd-Shift-O in Ghostty, add this line to your Ghostty config:
+
+```
+keybind = super+shift+o=text:\x18c
+```
+
+To build from source instead, clone this repo and run `./install.sh`. It builds hop with Go, copies it to `~/.local/bin`, adds the setup line for your shell, and adds the Ghostty keybind if Ghostty is installed. Running it again changes nothing.
+
+hop needs [Claude Code](https://code.claude.com/docs/en/overview) to resume sessions. It's a single binary with no other dependencies.
 
 ## Use
 
-Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`. The picker opens full screen and leaves your terminal exactly as it was when you choose or cancel.
+Type `hop`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen and leaves your terminal exactly as it was when you choose or cancel.
 
 | Key | Does |
 |---|---|
@@ -61,7 +80,7 @@ Claude puts the right session first slightly more often. Jev is about three time
 
 With Jev, the preview also shows the passage that best matches your search for the top five results. It appears about a second after the results.
 
-To use Jev, set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/hop/env` (or in a git-ignored `.env` at the root of this repo):
+Without a TypeSafe key, deep search asks Claude Haiku through your Claude Code login, so it counts toward your Claude plan. To use Jev instead, get a key from [TypeSafe](https://docs.typesafe.ai) and set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/hop/env` (in a source checkout, a git-ignored `.env` at the repo root also works):
 
 ```sh
 TYPESAFE_API_KEY=your-key
@@ -81,7 +100,7 @@ Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has
 
 ```sh
 hop                          # open the picker
-hop init zsh                 # print the shell setup
+hop init zsh|bash            # print the shell setup
 hop search <words>           # print matching sessions
 hop search --deep <words>    # print the sessions that best fit your description
 hop preview <transcript>     # print where a session left off (--recent, --width N, --query Q)
@@ -99,6 +118,14 @@ hop takes its colors from your terminal. Until your terminal reports them, hop s
 
 ```sh
 go build -o bin/hop .                    # build
-python3 -m unittest discover -s tests    # behavior tests against bin/hop, using fake transcripts
+python3 -m unittest discover -s tests    # behavior tests against bin/hop, using fake transcripts and homes
 vhs demo/hop.tape                        # re-record demo/hop.gif from fake sessions
 ```
+
+The picker and shell tests drive real terminals through tmux, so they need tmux, zsh, and bash. CI runs everything on macOS and Linux.
+
+To release, set `version` in `session.go`, commit, and push a tag like `v0.8.0`. The release workflow checks that the tag matches `hop --version`, then builds the binaries and updates the Homebrew tap.
+
+## License
+
+MIT. hop is an independent project, not made or endorsed by Anthropic.

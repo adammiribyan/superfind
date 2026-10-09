@@ -1,0 +1,37 @@
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w]
+
+archives:
+  - formats: [tar.gz]
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - name: hop
+    binaries: [hop]
+    homepage: https://github.com/adammiribyan/hop
+    description: Find any past Claude Code session and resume it in the terminal you're in
+    repository:
+      owner: adammiribyan
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/hop"]
+          end
+
+release:
+  github:
+    owner: adammiribyan
+    name: hop

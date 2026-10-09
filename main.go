@@ -15,7 +15,8 @@ import (
 const usage = `hop: find a past AI coding session and hop back into it. Today it reads Claude Code sessions.
 
   hop                     open the picker (after shell setup; see hop init)
-  hop init zsh            print the shell setup; add  eval "$(hop init zsh)"  to ~/.zshrc
+  hop init zsh|bash       print the shell setup; add  eval "$(hop init zsh)"  to ~/.zshrc
+                          or  eval "$(hop init bash)"  to ~/.bashrc
   hop pick                open the picker; prints the chosen session's title, then the command
                           that resumes it
   hop search WORDS        print sessions whose title or conversation contains every word;
@@ -58,6 +59,33 @@ _hop_widget() {
 zle -N _hop_widget
 bindkey '^Xc' _hop_widget
 `
+
+const bashSetup = `_hop_bin=%s
+
+_hop_resume() {
+  printf '\e[38;2;215;119;87m✻\e[0m Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
+  history -s "${1#*$'\n'}"
+  eval "${1#*$'\n'}"
+}
+
+hop() {
+  if (( $# )); then
+    "$_hop_bin" "$@"
+    return
+  fi
+  local out
+  out=$("$_hop_bin" pick) || return
+  _hop_resume "$out"
+}
+
+_hop_widget() {
+  local out
+  out=$("$_hop_bin" pick) && _hop_resume "$out"
+}
+[[ $- == *i* ]] && bind -x '"\C-xc": _hop_widget'
+`
+
+var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
 
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
@@ -213,10 +241,14 @@ func main() {
 	case "--version", "version":
 		fmt.Println("hop " + version)
 	case "init":
-		if len(args) < 2 || args[1] != "zsh" {
-			fail("hop init: only zsh is supported so far")
+		setup, ok := "", len(args) > 1
+		if ok {
+			setup, ok = shellSetups[args[1]]
 		}
-		fmt.Printf(zshSetup, shellQuote(selfPath()))
+		if !ok {
+			fail("hop init: which shell? hop init zsh or hop init bash")
+		}
+		fmt.Printf(setup, shellQuote(selfPath()))
 	case "index":
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":

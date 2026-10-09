@@ -220,6 +220,41 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Up")
         self.wait_for("Added a test that taps Pay twice")
 
+    def resume_through_shell(self, shell, open_keys):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        tmux("new-session", "-d", "-s", self.session_name, "-x", "140", "-y", "32", f"env -i {env} {start}")
+        time.sleep(0.5)
+        self.keys(f'eval "$({HOP} init {shell})"', "Enter")
+        self.keys(*open_keys)
+        self.wait_for("Claude sessions")
+        self.keys("Down", "Enter")
+        deadline = time.time() + 5
+        while not Path(f"{self.out}.resumed").exists() and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp --resume mid\n")
+        self.keys("pwd", "Enter")
+        self.wait_for("Resuming")
+        self.assertIn("\n/tmp", self.screen())
+
+    def test_typing_hop_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["hop", "Enter"])
+
+    def test_ctrl_x_c_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["C-x", "c"])
+
+    def test_typing_hop_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["hop", "Enter"])
+
+    def test_ctrl_x_c_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["C-x", "c"])
+
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
         self.open_picker()
