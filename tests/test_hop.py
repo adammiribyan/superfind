@@ -61,6 +61,9 @@ class HopBehavior(unittest.TestCase):
                                 check=True)
         return ANSI.sub("", result.stdout)
 
+    def run_hop(self, *args):
+        return subprocess.run([sys.executable, str(HOP), *args], env=self.env, capture_output=True, text=True)
+
     def titles(self, *search):
         self.hop("index")
         return [row.split("\t")[4] for row in self.hop("search", *search).splitlines() if row]
@@ -149,6 +152,22 @@ class HopBehavior(unittest.TestCase):
         self.hop("index")
         self.env["FZF_PREVIEW_COLUMNS"] = "40"
         self.assertNotIn("**", self.hop("preview", str(path)))
+
+    def test_a_label_expires_once_you_have_left_a_session_for_two_weeks(self):
+        waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                               claude("Should I run it on production now?"), title="Ledger migration")
+        old = time.time() - 15 * 86400
+        os.utime(waiting, (old, old))
+        self.judged(waiting, "waiting")
+        self.assertEqual(self.rows("is:waiting"), [])
+
+    def test_ask_says_why_it_failed_when_no_ranker_can_answer(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.hop("index")
+        self.env["PATH"] = "/usr/bin:/bin"
+        result = self.run_hop("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
+                         (1, "", "Couldn't ask: Claude Code didn't answer."))
 
     def test_messages_from_other_agents_are_not_counted_as_your_prompts(self):
         path = self.session("a1", user("migrate the ledger tables to the new schema"),

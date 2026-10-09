@@ -38,7 +38,7 @@ A session written in the last two minutes shows **active now**, because it's pro
 
 With a TypeSafe key, hop marks sessions that need you. **waiting on you** means Claude stopped on a question, an approval, or a choice it can't make alone. **unfinished** means work stopped partway: Claude was interrupted, hit an error, or never answered. Sessions that simply finished, including ones that end with an optional "want me to also…?", stay unmarked. Type `is:waiting` or `is:unfinished` to list only those.
 
-[Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether Claude was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure, and disappears as soon as the session changes. On a hand-checked sample of 14 labels, 11 were right; treat them as a hint. Labeling runs in the background when the picker opens and only reads sessions that changed, so opening never waits on it. The first run over about 350 sessions took 22 seconds.
+[Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether Claude was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure. It disappears as soon as the session changes, and after two weeks away, since a session you haven't returned to in that long isn't really waiting. On 21 hand-labeled sessions, 13 of the 15 labels shown were right, and 1 of the 14 sessions that needed a label got none; treat labels as a hint. Labeling runs in the background when the picker opens and only reads recent sessions that changed, so opening never waits on it.
 
 ## Ask
 
@@ -64,6 +64,8 @@ To use Jev, put the key in your environment or in a `.env` file next to the `hop
 TYPESAFE_API_KEY=your-key
 ```
 
+Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when `.env` has a key. If asking fails, the line under the search box says why, and typing goes back to keyword search.
+
 **What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; keyword search runs locally.
 
 ## Sessions it finds
@@ -83,7 +85,9 @@ hop label            # mark sessions waiting on you (needs a TypeSafe key)
 hop --version
 ```
 
-The index lives in `~/.cache/hop/`. Each run re-reads only the transcripts that changed, so opening the picker stays instant.
+The index lives in `~/.cache/hop/`. Each run re-reads only the transcripts that changed, so opening the picker stays instant; the first run shows a short "Indexing…" line while it reads everything.
+
+hop takes its colors from your terminal. If your terminal doesn't report its colors, hop falls back to reverse video for the selected row. Set `HOP_PLAIN_COLORS=1` to always use that fallback, for example if the tinted row looks wrong.
 
 ## Develop
 

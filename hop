@@ -38,11 +38,14 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "hop" / "index
 CACHE_VERSION = 10
 ACTIVE_SECONDS = 120
 THROWAWAY_WORDS = 150
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 SEARCH_DB = CACHE.with_name("search.db")
 EXPLAINED = CACHE.with_name("explained.json")
 STATUS = CACHE.with_name("status.json")
 STATUS_SHOWN_AT = 0.85
+LABEL_DAYS = 14
+ASK_ERROR = CACHE.with_name("ask-error.txt")
+INDEXING_NOTICE_AT = 20
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 JEV_CHUNK = 120
 JEV_SHORTLIST = 15
@@ -190,6 +193,11 @@ def save_cache(files):
     tmp.replace(CACHE)
 
 
+def same_file(entry, st):
+    """Whether a cached record still describes the transcript, judged by modification time and size."""
+    return bool(entry) and entry["mtime"] == st.st_mtime and entry["size"] == st.st_size
+
+
 def search_db():
     SEARCH_DB.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(SEARCH_DB)
@@ -201,23 +209,30 @@ def index():
     """Every session as (Session, config dir, path), re-parsing only transcripts that changed.
     The JSON cache and the full-text index are updated together, so they always describe the same files."""
     old, new = load_cache(), {}
+    found = [(config_dir, path, path.stat()) for config_dir in config_dirs()
+             for path in (config_dir / "projects").glob("*/*.jsonl")]
+    stale = [path for _, path, st in found if not same_file(old.get(str(path)), st)]
+    notice = len(stale) > INDEXING_NOTICE_AT and sys.stderr.isatty()
+    if notice:
+        sys.stderr.write(f"  Indexing {len(stale)} sessions…")
+        sys.stderr.flush()
+    stale = set(stale)
     rows, changed = [], []
-    for config_dir in config_dirs():
-        for path in (config_dir / "projects").glob("*/*.jsonl"):
-            st = path.stat()
-            key = str(path)
-            hit = old.get(key)
-            if hit and hit["mtime"] == st.st_mtime and hit["size"] == st.st_size:
-                session = Session(**hit["session"]) if hit["session"] else None
-            else:
-                try:
-                    session, body = parse(path, st.st_mtime)
-                except (OSError, ValueError):
-                    session, body = None, ""
-                changed.append((key, session, body))
-            new[key] = {"mtime": st.st_mtime, "size": st.st_size, "session": session and asdict(session)}
-            if session:
-                rows.append((session, config_dir, path))
+    for config_dir, path, st in found:
+        key = str(path)
+        if path in stale:
+            try:
+                session, body = parse(path, st.st_mtime)
+            except (OSError, ValueError):
+                session, body = None, ""
+            changed.append((key, session, body))
+        else:
+            session = Session(**old[key]["session"]) if old[key]["session"] else None
+        new[key] = {"mtime": st.st_mtime, "size": st.st_size, "session": session and asdict(session)}
+        if session:
+            rows.append((session, config_dir, path))
+    if notice:
+        sys.stderr.write("\r\033[K")
     gone = old.keys() - new.keys()
     if changed or gone or not SEARCH_DB.exists():
         with search_db() as db:
@@ -295,9 +310,10 @@ def ask_cards(query, rows):
 
 
 def typesafe_key():
-    """TYPESAFE_API_KEY from the environment, or from a .env file next to this script."""
-    if os.environ.get("TYPESAFE_API_KEY"):
-        return os.environ["TYPESAFE_API_KEY"]
+    """TYPESAFE_API_KEY from the environment, or from a .env file next to this script. Setting it to an
+    empty value turns Jev off."""
+    if "TYPESAFE_API_KEY" in os.environ:
+        return os.environ["TYPESAFE_API_KEY"] or None
     try:
         found = re.search(r'^\s*(?:export\s+)?TYPESAFE_API_KEY\s*=\s*["\']?([^"\'\s]+)',
                           (Path(__file__).resolve().parent / ".env").read_text(), re.M)
@@ -399,9 +415,13 @@ def explained(path, query):
     return " ".join(re.sub(r"[*`#]+", "", passage).split())
 
 
+class AskFailed(Exception):
+    pass
+
+
 def ask(query, rows):
     """Paths of the sessions ranked most relevant to the query, best first: by Jev when a TypeSafe key
-    is configured, by Claude otherwise or if Jev fails."""
+    is configured, by Claude otherwise or if Jev fails. Raises AskFailed, naming what failed, when neither answers."""
     key = typesafe_key()
     if key:
         rows, cards = ask_cards(query, rows)
@@ -414,7 +434,10 @@ def ask(query, rows):
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
             return ranked
-    return claude_rank(query, rows)
+    try:
+        return claude_rank(query, rows)
+    except AskFailed:
+        raise AskFailed("TypeSafe and Claude didn't answer" if key else "Claude Code didn't answer") from None
 
 
 def claude_rank(query, rows):
@@ -425,14 +448,14 @@ def claude_rank(query, rows):
             "--output-format", "json", "--system-prompt", ASK_PROMPT]
     ranked = None
     for command in (base + ["--bare"], base):
-        reply = subprocess.run(command, input=request, capture_output=True, text=True, timeout=90)
         try:
+            reply = subprocess.run(command, input=request, capture_output=True, text=True, timeout=90)
             ranked = json.loads(re.search(r"\[[\d,\s]*\]", json.loads(reply.stdout)["result"]).group())
             break
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, AttributeError):
             continue
     if ranked is None:
-        return []
+        raise AskFailed("Claude Code didn't answer")
     return [str(rows[i][2]) for i in ranked if isinstance(i, int) and 0 <= i < len(rows)]
 
 
@@ -633,7 +656,8 @@ def statuses():
 
 def status_label(path, known):
     """The label for a session's ending, if Jev judged its current transcript confidently enough to show it.
-    A session still being written shows "active now" instead: it hasn't ended."""
+    A session still being written shows "active now" instead, since it hasn't ended, and after LABEL_DAYS a
+    session you haven't returned to is no longer waiting on you."""
     entry = known.get(str(path))
     if not entry or entry["p"] < STATUS_SHOWN_AT:
         return None
@@ -641,7 +665,8 @@ def status_label(path, known):
         st = os.stat(path)
     except OSError:
         return None
-    fresh = entry["mtime"] == st.st_mtime and entry["size"] == st.st_size and time.time() - st.st_mtime >= ACTIVE_SECONDS
+    age = time.time() - st.st_mtime
+    fresh = same_file(entry, st) and ACTIVE_SECONDS <= age < LABEL_DAYS * 86400
     return STATUSES[entry["status"]][0] if fresh else None
 
 
@@ -658,7 +683,8 @@ def label_sessions(key):
         for session, _, path in index():
             st = path.stat()
             entry = known.get(str(path))
-            if not session.throwaway and not session.active and not (entry and entry["mtime"] == st.st_mtime and entry["size"] == st.st_size):
+            recent = time.time() - st.st_mtime < LABEL_DAYS * 86400
+            if recent and not session.throwaway and not session.active and not same_file(entry, st):
                 todo.append((path, st))
 
         def judge(item):
@@ -768,7 +794,7 @@ def luminance(rgb):
 
 def theme():
     """(fzf --color spec for the selected row and matches, secondary text hex, background hex), hexes "" if unknown."""
-    palette = query_palette()
+    palette = None if os.environ.get("HOP_PLAIN_COLORS") else query_palette()
     if not palette:
         return "fg+:-1:reverse,bg+:-1,hl:blue,hl+:-1:reverse:bold", "", ""
     bg, fg, blue = palette["11"], palette["10"], palette["4;4"]
@@ -795,7 +821,11 @@ def pick():
     recover = footer(("⌥ enter", "ask"), ("ctrl-u", "clear search"))
     q = shlex.quote
     footer_cmd = f'[ "$FZF_MATCH_COUNT" -eq 0 ] && printf %s {q(recover)} || printf %s {q(hints)}'
-    header_cmd = '[ "$FZF_MATCH_COUNT" -eq 0 ] && printf "No sessions match “%s”" "$FZF_QUERY" || printf " "'
+    error_file = q(str(ASK_ERROR))
+    header_cmd = (f'if [ -s {error_file} ]; then cat {error_file}; '
+                  'elif [ "$FZF_MATCH_COUNT" -eq 0 ]; then printf "No sessions match “%s”" "$FZF_QUERY"; '
+                  'else printf " "; fi')
+    ASK_ERROR.unlink(missing_ok=True)
     flip_label = 'case "$FZF_PREVIEW_LABEL" in *Recent*) echo " Where you left off ";; *) echo " Recent conversation ";; esac'
     self_path = q(os.path.abspath(sys.argv[0]))
     secondary_color = secondary or "-1"
@@ -857,6 +887,7 @@ if __name__ == "__main__":
     elif command == ["pick"]:
         pick()
     elif command == ["search"]:
+        ASK_ERROR.unlink(missing_ok=True)
         words = (sys.argv[2] if len(sys.argv) > 2 else "").split()
         wanted = {STATUSES[w[3:]][0] for w in words if w.startswith("is:") and STATUSES.get(w[3:], (None,))[0]}
         rows = cached_rows()
@@ -880,6 +911,14 @@ if __name__ == "__main__":
     elif command == ["ask"]:
         rows = cached_rows()
         query = sys.argv[2] if len(sys.argv) > 2 else ""
-        emit(items(in_order(rows, ask(query, rows)) if query.strip() else recent_first(rows)))
+        try:
+            emit(items(in_order(rows, ask(query, rows)) if query.strip() else recent_first(rows)))
+            ASK_ERROR.unlink(missing_ok=True)
+        except AskFailed as failure:
+            message = f"Couldn't ask: {failure}."
+            ASK_ERROR.parent.mkdir(parents=True, exist_ok=True)
+            ASK_ERROR.write_text(message)
+            if not os.environ.get("FZF_PORT"):
+                sys.exit(message)
     else:
         sys.exit(__doc__)
