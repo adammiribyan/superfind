@@ -42,7 +42,7 @@ keybind = super+shift+o=text:\x18c
 
 ### From source
 
-You need Go 1.21 or newer. The first build downloads superfind's modules, and Go 1.26 as well if your Go is older than that.
+This replaces the steps above. You need Go 1.21 or newer. The first build downloads superfind's modules, and Go 1.26 as well if your Go is older than that.
 
 ```sh
 git clone https://github.com/adammiribyan/superfind.git
@@ -50,7 +50,7 @@ cd superfind
 ./install.sh
 ```
 
-`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you. It adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the Cmd-Shift-O keybind to your Ghostty config, creating the file if needed; reload Ghostty's config with Cmd-Shift-, (comma) to use it. Running it again rebuilds superfind but never adds a line twice.
+`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you. It adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the Cmd-Shift-O keybind to your Ghostty config (`~/.config/ghostty/config`, or `~/Library/Application Support/com.mitchellh.ghostty/config` on macOS when only that one exists), creating the file if needed; reload Ghostty's config with Cmd-Shift-, (comma) to use it. Running it again rebuilds superfind but never adds a line twice.
 
 `~/.local/bin` doesn't need to be on your PATH. The setup line defines `superfind` and `sfd` as shell functions that run the binary by its full path, so every command below works in your shell. Add `~/.local/bin` to your PATH only to run superfind from scripts or other shells.
 
@@ -66,7 +66,7 @@ Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shi
 |---|---|
 | type | Search titles, projects, branches, and the conversations themselves for the words you type. Every word must match. Titles that match come first. |
 | Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
-| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). superfind prints `Resuming` and the session's title, then the agent takes over the terminal. When you leave the agent, your shell stays in the session's folder. The command lands in your shell history. |
+| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). superfind prints `Resuming` and the session's title, then the agent takes over the terminal. When you leave the agent, your shell stays in the session's folder. The command lands in your shell history, as in `cd ~/code/storefront && claude --resume <id>`. |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
