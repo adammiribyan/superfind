@@ -16,7 +16,7 @@ unable to decode p12 file: pkcs12: trailing data found
 
 All five signing secrets are set. `MACOS_SIGN_P12` decodes from base64, but the bytes are not a clean `.p12` file: something follows the end of the certificate data. goreleaser reads it with Go's `software.sslmate.com/src/go-pkcs12`, which refuses that. Nothing can ship until this is fixed, because every release signs.
 
-Find the `.p12` you exported from Keychain Access (`Certificates.p12` below). Use Homebrew's OpenSSL, not `/usr/bin/openssl` (that one is LibreSSL):
+Download the `.p12` from the 1Password item "superfind Developer ID .p12 export" (vault Private) and save it as `Certificates.p12`; the item also holds its password. Use Homebrew's OpenSSL, not `/usr/bin/openssl` (that one is LibreSSL):
 
 ```sh
 ossl=$(brew --prefix openssl)/bin/openssl
@@ -25,15 +25,15 @@ ossl=$(brew --prefix openssl)/bin/openssl
 1. Check that OpenSSL opens it. It asks for the `.p12` password.
 
    ```sh
-   $ossl pkcs12 -in Certificates.p12 -noout && echo opens
+   $ossl pkcs12 -legacy -in Certificates.p12 -noout && echo opens
    ```
 
-   If it says `unsupported` or names `RC2-40-CBC`, add `-legacy` after `pkcs12` here and in the first command of step 2.
+   This `.p12` uses the old encryption Keychain Access writes, which is why `-legacy` is there.
 
 2. Write a clean copy. You get three prompts: the old password, then the new file's password twice. Use the same password as before, or update `MACOS_SIGN_PASSWORD` to the new one. The private key only passes through the pipe; it is never written to disk unencrypted.
 
    ```sh
-   $ossl pkcs12 -in Certificates.p12 -nodes | $ossl pkcs12 -export -out superfind-signing.p12
+   $ossl pkcs12 -legacy -in Certificates.p12 -nodes | $ossl pkcs12 -export -out superfind-signing.p12
    ```
 
 3. Sign with it locally, through the same goreleaser code CI uses. This signs only. It does not notarize and does not publish anything.
@@ -61,7 +61,7 @@ ossl=$(brew --prefix openssl)/bin/openssl
 
    The `signing` workflow signs and notarizes a snapshot. Then, on an Apple Silicon and an Intel Mac, it checks for the Developer ID authority, the hardened runtime, and the timestamp; checks that Gatekeeper reports `source=Notarized Developer ID`; and runs the binary with a quarantine attribute set. Green means the release will sign the same way.
 
-5. Store `superfind-signing.p12` as described in [Keep the keys](#keep-the-keys), then delete the loose copies.
+5. Attach `superfind-signing.p12` to the same 1Password item (keep the old file there too, labelled as the original), then delete both loose copies from your disk.
 
 ## 1. Merge the pull requests, in this order
 
@@ -246,15 +246,14 @@ Three secrets sign, notarize, and publish every release. None of them belongs in
 | `AuthKey_<key id>.p8` | App Store Connect API key; notarizes | Apple lets you download it only once. Make a new key at https://appstoreconnect.apple.com/access/integrations/api, update `MACOS_NOTARY_KEY` and `MACOS_NOTARY_KEY_ID`, and revoke the old key. Revoking it affects nothing already shipped. | Same as lost. |
 | The fine-grained token | Pushes the cask to `homebrew-tap` | Make a new one as in step 4. | Delete it at https://github.com/settings/personal-access-tokens, then make a new one. |
 
-Keep the `.p12`, its password, and the `.p8` in your password manager as attached files. For example, one 1Password item named "superfind release signing" can hold both files, the password, the key ID, and the issuer ID.
+They live in the 1Password item "superfind Developer ID .p12 export" (my.1password.com, vault Private): the `.p12`, its password, the `.p8`, the key ID, and the issuer ID. Keep them there and nowhere else.
 
-A Developer ID Application certificate is valid for 5 years from the day Apple issued it. To see the exact date:
+A Developer ID Application certificate is valid for 5 years from the day Apple issued it. This one expires on **2031-09-17**. Add a calendar reminder for 2031-08-17. To check the date from the file:
 
 ```sh
 $ossl pkcs12 -in superfind-signing.p12 -nokeys | $ossl x509 -noout -subject -enddate
 ```
-
-Add a calendar reminder a month before that date. To renew, make a new Developer ID Application certificate, export it from Keychain Access as a `.p12`, then do steps 0.2 to 0.4 with the new file. Binaries signed before the old certificate expires keep running afterwards, because each signature carries a secure timestamp.
+ To renew, make a new Developer ID Application certificate, export it from Keychain Access as a `.p12`, then do steps 0.2 to 0.4 with the new file. Binaries signed before the old certificate expires keep running afterwards, because each signature carries a secure timestamp.
 
 ## The pieces, for later
 
