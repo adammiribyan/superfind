@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -172,6 +174,7 @@ type picker struct {
 	explained   map[string]string
 	message     string
 
+	asks     *asks
 	chosen   *session.Row
 	quitting bool
 	reindex  bool
@@ -186,6 +189,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		all: session.RecentFirst(session.Annotate(rows)), db: db, tags: render.TagsFor(rows), label: render.PickerLabel(rows, agent.Places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
+		asks: &asks{},
 	}
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
@@ -263,7 +267,20 @@ func (m picker) focused() *session.Row {
 	return nil
 }
 
+type asks struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running sync.WaitGroup
+}
+
+func (a *asks) stop() {
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
 func (m *picker) forgetAsk() {
+	m.asks.stop()
 	m.askSeq++
 	m.asking, m.askedFor, m.explained = false, "", nil
 }
@@ -378,11 +395,15 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 		m.message = m.problem
 		return m, nil
 	}
+	m.asks.stop()
+	m.asks.ctx, m.asks.cancel = context.WithCancel(context.Background())
 	m.askSeq++
 	m.asking, m.message = true, ""
-	seq, db := m.askSeq, m.db
+	seq, db, ctx, running := m.askSeq, m.db, m.asks.ctx, &m.asks.running
+	running.Add(1)
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		paths, err := ask.Ask(db, query, rows)
+		defer running.Done()
+		paths, err := ask.Ask(ctx, db, query, rows)
 		return askDone{seq, query, paths, err}
 	})
 }
@@ -513,9 +534,9 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "" || len(top) == 0 {
 			return updated, load
 		}
-		seq, db, query := msg.seq, m.db, msg.query
+		seq, db, query, ctx := msg.seq, m.db, msg.query, m.asks.ctx
 		return updated, tea.Batch(load, func() tea.Msg {
-			return explainDone{seq, ask.Explain(db, key, query, top)}
+			return explainDone{seq, ask.Explain(ctx, db, key, query, top)}
 		})
 	case explainDone:
 		if msg.seq == m.askSeq {
@@ -752,5 +773,8 @@ func Pick() (*session.Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	return final.(picker).chosen, nil
+	m := final.(picker)
+	m.asks.stop()
+	m.asks.running.Wait()
+	return m.chosen, nil
 }

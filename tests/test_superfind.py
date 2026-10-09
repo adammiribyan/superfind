@@ -160,27 +160,42 @@ class SuperfindBehavior(unittest.TestCase):
             fields["session_kind"] = kind
         (chat.parent / "summary.json").write_text(json.dumps(fields, indent=2))
 
-    def record_typesafe(self):
+    def record_typesafe(self, answer=None, delay=0):
         import http.server
         import threading
         requests = []
 
         class Recorder(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
-                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-                self.send_response(500)
-                self.send_header("Content-Length", "0")
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                requests.append(sent)
+                time.sleep(delay)
+                body = b"" if answer is None else json.dumps({"answers": answer(sent["questions"])}).encode()
+                self.send_response(500 if answer is None else 200)
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                self.wfile.write(body)
 
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
         return requests
+
+    def logging_claude(self, reply="[0]"):
+        stub = self.home / "stub"
+        stub.mkdir(exist_ok=True)
+        log = self.home / "claude.log"
+        answer = json.dumps({"result": reply})
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\nprintf '%s\\t%s\\t%s\\n' \"$(pwd)\" \"$(ls -A | wc -l | tr -d ' ')\" \"$*\" >> {log}\n"
+                                     f"echo '{answer}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        return log
 
     def session(self, session_id, *lines, title=None):
         path = self.projects / f"{session_id}.jsonl"
@@ -612,7 +627,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.superfind("index")
         result = self.run_superfind("ask", "where did we migrate the ledger")
         self.assertEqual((result.returncode, result.stderr.strip()),
-                         (1, "Ask failed: TypeSafe and Claude didn't answer."))
+                         (1, 'Ask failed: TypeSafe returned an unknown session "".'))
         os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
         labeled = self.run_superfind("label")
         self.assertEqual((labeled.returncode, labeled.stderr.strip()),
@@ -1195,6 +1210,50 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"], damage)
             self.assertEqual(self.titles("signing"), ["Key rotation"], damage)
 
+
+    def test_with_a_key_a_typesafe_failure_is_reported_and_nothing_goes_to_anthropic(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        requests = self.record_typesafe()
+        log = self.logging_claude()
+        result = self.run_superfind("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
+                         (1, "", "Ask failed: TypeSafe answered 500."))
+        self.assertEqual((len(requests), log.exists()), (1, False))
+
+    def test_claude_ranks_from_an_empty_folder_without_loading_settings_or_memory(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        log = self.logging_claude()
+        work = self.home / "work"
+        work.mkdir()
+        (work / "CLAUDE.md").write_text("Project memory that must not leave the machine.")
+        result = subprocess.run([str(SUPERFIND), "ask", "where did we migrate the ledger"], env=self.env, cwd=work,
+                                capture_output=True, text=True)
+        self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()]), (0, ["Ledger migration"]))
+        [(folder, entries, args)] = [l.split("\t") for l in log.read_text().splitlines()]
+        self.assertNotEqual(Path(folder).resolve(), work.resolve())
+        self.assertEqual(entries, "0")
+        self.assertIn("--setting-sources= --strict-mcp-config", args)
+        self.assertNotIn("--bare", args)
+
+    def test_ask_with_no_eligible_sessions_asks_no_one(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        log = self.logging_claude()
+        result = self.run_superfind("ask", "is:waiting", "rockets")
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertFalse(log.exists())
+
+    def test_when_jev_says_none_of_the_sessions_fit_ask_finds_nothing(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job")
+        self.superfind("index")
+        for probabilities in (lambda keys: {k: float(k == "none") for k in keys}, lambda keys: {"none": 0.97}):
+            requests = self.record_typesafe(lambda questions: {
+                q: {"choice": "none", "probabilities": probabilities(list(spec["criteria"]))} for q, spec in questions.items()})
+            result = self.run_superfind("ask", "quantum knitting patterns")
+            self.assertEqual((result.returncode, result.stdout, result.stderr, len(requests)), (0, "", "", 1))
 
 
 if __name__ == "__main__":

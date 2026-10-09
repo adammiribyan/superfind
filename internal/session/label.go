@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,7 +92,7 @@ func judgeStatus(key string, r Row) (string, float64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	answers, err := typesafe.Jev(key, end, map[string]any{"status": map[string]any{
+	answers, err := typesafe.Jev(context.Background(), key, end, map[string]any{"status": map[string]any{
 		"type": "choice",
 		"instructions": r.Agent.Phrase("This is the end of a coding session between a developer and {agent}. " +
 			"In what state did the session end?"),

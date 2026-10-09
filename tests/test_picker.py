@@ -52,11 +52,13 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions"):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        if linger:
+            command += "; sleep 60"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
         self.wait_for(header)
 
@@ -439,6 +441,71 @@ class PickerBehavior(unittest.TestCase):
             time.sleep(0.1)
         cards = [c.split(" | ")[0] for k, c in received[0]["questions"]["which"]["criteria"].items() if k != "none"]
         self.assertEqual((received[0]["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
+
+    def test_clearing_an_ask_stops_it_before_more_session_cards_are_sent(self):
+        received = []
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append(sent)
+                time.sleep(2)
+                answers = {q: {"choice": list(spec["criteria"])[0],
+                               "probabilities": {k: 0.5 for k in spec["criteria"]}, "noul": 0.5}
+                           for q, spec in sent["questions"].items()}
+                body = json.dumps({"answers": answers}).encode()
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.three_sessions()
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text("{}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.open_picker()
+        self.keys("ledger", "C-r")
+        self.keys("C-u")
+        time.sleep(5)
+        self.assertEqual([list(r["questions"]) for r in received if "status" not in r["questions"]], [["which"]])
+
+    def test_quitting_during_an_ask_stops_claude_and_what_it_started(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        self.open_picker(linger=True)
+        self.keys("ledger", "C-r")
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        self.keys("Escape")
+        self.assertEqual(self.result()[0], 1)
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
 
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()
