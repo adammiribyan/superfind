@@ -9,8 +9,8 @@ Set Theme "GitHub Dark"
 Set TypingSpeed 70ms
 
 Hide
-Type `go build -o bin/hop . && export HOME=/tmp/hop-demo-home XDG_CACHE_HOME=/tmp/hop-demo-home/.cache PATH=$PWD/bin:$PATH` Enter
-Type `python3 demo/make-home.py $HOME && eval "$(hop init zsh)" && cd ~/code/storefront && hop index >/dev/null && hop label && clear` Enter
+Type `go build -o bin/hop . && export HOME=/tmp/hop-demo-home XDG_CACHE_HOME=/tmp/hop-demo-home/.cache PATH=$PWD/bin:/tmp/hop-demo-home/bin:$PATH` Enter
+Type `python3 demo/make-home.py $HOME && rehash && eval "$(hop init zsh)" && cd ~/code/storefront && hop index >/dev/null && hop label && clear` Enter
 Sleep 6s
 Show
 
@@ -26,7 +26,7 @@ Ctrl+U
 Sleep 500ms
 Type "where did we stop charging people twice"
 Sleep 800ms
-Alt+Enter
+Ctrl+R
 Sleep 4.5s
 Tab
 Sleep 2.5s

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -62,6 +63,31 @@ type jevAnswer struct {
 	Choice        string             `json:"choice"`
 	Probabilities map[string]float64 `json:"probabilities"`
 	Noul          float64            `json:"noul"`
+}
+
+type option struct {
+	key, meaning string
+}
+
+type options []option
+
+func (o options) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, opt := range o {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		encoder := json.NewEncoder(&buf)
+		encoder.SetEscapeHTML(false)
+		encoder.Encode(opt.key)
+		buf.Truncate(buf.Len() - 1)
+		buf.WriteByte(':')
+		encoder.Encode(opt.meaning)
+		buf.Truncate(buf.Len() - 1)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 func asciiJSON(v any) []byte {
@@ -166,10 +192,11 @@ func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
 		wg.Add(1)
 		go func(start, end int) {
 			defer wg.Done()
-			criteria := map[string]any{"none": "None of these sessions is where the developer did this work."}
+			var criteria options
 			for i := start; i < end; i++ {
-				criteria["s"+strconv.Itoa(i)] = cards[i]
+				criteria = append(criteria, option{"s" + strconv.Itoa(i), cards[i]})
 			}
+			criteria = append(criteria, option{"none", "None of these sessions is where the developer did this work."})
 			answers, err := jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type": "choice",
 				"instructions": "A developer is searching their past AI coding sessions with `search`. " +
@@ -299,7 +326,7 @@ func claudeRank(db *sql.DB, query string, rows []Row) ([]string, error) {
 
 type askFailure struct{ reason string }
 
-func (a askFailure) Error() string { return "Couldn't ask: " + a.reason + "." }
+func (a askFailure) Error() string { return "Deep search failed: " + a.reason + "." }
 
 func ask(db *sql.DB, query string, rows []Row) ([]string, error) {
 	key := typesafeKey()
@@ -326,7 +353,7 @@ func passagesOf(body, query string) []string {
 	current := ""
 	for _, paragraph := range paragraphBreak.Split(body, -1) {
 		paragraph = strings.Join(strings.Fields(paragraph), " ")
-		if current != "" && len(current)+len(paragraph) > 400 {
+		if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(paragraph) > 400 {
 			pieces = append(pieces, current)
 			current = ""
 		}
@@ -337,7 +364,7 @@ func passagesOf(body, query string) []string {
 	}
 	var words []string
 	for _, w := range meaningfulWords(query) {
-		if len(w) > 2 {
+		if utf8.RuneCountInString(w) > 2 {
 			words = append(words, w)
 		}
 	}
@@ -379,10 +406,11 @@ func explain(db *sql.DB, key, query string, paths []string) map[string]string {
 		wg.Add(1)
 		go func(path string, pieces []string) {
 			defer wg.Done()
-			criteria := map[string]any{"none": "No passage shows this work."}
+			var criteria options
 			for i, piece := range pieces {
-				criteria["p"+strconv.Itoa(i)] = piece
+				criteria = append(criteria, option{"p" + strconv.Itoa(i), piece})
 			}
+			criteria = append(criteria, option{"none", "No passage shows this work."})
 			answers, err := jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type":         "choice",
 				"instructions": "Which passage from this coding session best shows the work described by `search`?",
@@ -391,10 +419,12 @@ func explain(db *sql.DB, key, query string, paths []string) map[string]string {
 			if err != nil || answers["which"].Choice == "none" {
 				return
 			}
-			if passage, ok := criteria[answers["which"].Choice].(string); ok {
-				mu.Lock()
-				found[path] = passage
-				mu.Unlock()
+			for _, opt := range criteria {
+				if opt.key == answers["which"].Choice {
+					mu.Lock()
+					found[path] = opt.meaning
+					mu.Unlock()
+				}
 			}
 		}(p, pieces)
 	}

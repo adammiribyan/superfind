@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,8 @@ import (
 	"syscall"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/charmbracelet/x/term"
 )
 
 var slashCommand = regexp.MustCompile(`(?s)<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)`)
@@ -241,7 +244,12 @@ func openSearch() (*sql.DB, error) {
 	if err := os.MkdirAll(cacheDir(), 0o755); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", cachePath("search.db"))
+	path, err := filepath.Abs(cachePath("search.db"))
+	if err != nil {
+		return nil, err
+	}
+	location := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"}
+	db, err := sql.Open("sqlite", location.String())
 	if err != nil {
 		return nil, err
 	}
@@ -259,11 +267,6 @@ type found struct {
 type parsed struct {
 	session *Session
 	body    string
-}
-
-func isTerminal(f *os.File) bool {
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func index() ([]Row, error) {
@@ -290,7 +293,7 @@ func index() ([]Row, error) {
 			stale = append(stale, f)
 		}
 	}
-	notice := len(stale) > indexingNoticeAt && isTerminal(os.Stderr)
+	notice := len(stale) > indexingNoticeAt && term.IsTerminal(os.Stderr.Fd())
 	if notice {
 		fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", len(stale))
 	}

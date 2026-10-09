@@ -73,6 +73,10 @@ def line(**entry):
 def main(home):
     home = Path(home)
     shutil.rmtree(home, ignore_errors=True)
+    stand_in = home / "bin" / "claude"
+    stand_in.parent.mkdir(parents=True, exist_ok=True)
+    stand_in.write_text("#!/bin/sh\nexit 0\n")
+    stand_in.chmod(0o755)
     now = time.time()
     for age, (project, title, branch, turns) in enumerate(SESSIONS):
         cwd = home / "code" / project

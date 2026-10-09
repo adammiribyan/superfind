@@ -20,7 +20,8 @@ const usage = `hop: find a past AI coding session and hop back into it. Today it
                           that resumes it
   hop search WORDS        print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended
-  hop ask QUESTION        print sessions ranked by meaning (Jev with a TypeSafe key, else Claude)
+  hop search --deep WORDS
+                          print the sessions that best fit what you describe, even in other words
   hop preview TRANSCRIPT [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
   hop command TRANSCRIPT  print the shell command that resumes a session
@@ -223,11 +224,20 @@ func main() {
 		fmt.Printf("%d sessions indexed\n", len(rows))
 	case "search":
 		db := mustOpenSearch()
-		printRows(searchRows(db, strings.Join(args[1:], " "), annotate(cachedRows())))
-	case "ask":
-		db := mustOpenSearch()
 		rows := annotate(cachedRows())
-		query := strings.Join(args[1:], " ")
+		deep, words := false, []string{}
+		for _, arg := range args[1:] {
+			if arg == "--deep" {
+				deep = true
+			} else {
+				words = append(words, arg)
+			}
+		}
+		query := strings.Join(words, " ")
+		if !deep {
+			printRows(searchRows(db, query, rows))
+			return
+		}
 		if strings.TrimSpace(query) == "" {
 			printRows(recentFirst(rows))
 			return

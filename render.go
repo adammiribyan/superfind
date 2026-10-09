@@ -234,10 +234,20 @@ func boldAcrossLines(wrapped []string) []string {
 	return out
 }
 
+var lineBreak = regexp.MustCompile(`\r\n|[\n\r\v\f\x1c\x1d\x1e\x{85}\x{2028}\x{2029}]`)
+
+func splitLines(text string) []string {
+	lines := lineBreak.Split(text, -1)
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
 func render(text string, width int) []string {
 	var lines []string
 	fenced := false
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range splitLines(text) {
 		stripped := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(stripped, "```"):
@@ -250,7 +260,7 @@ func render(text string, width int) []string {
 		case strings.HasPrefix(stripped, "#"):
 			lines = append(lines, "  "+ansiBold+clipText(strings.TrimSpace(strings.TrimLeft(stripped, "#")), width-2)+ansiReset)
 		default:
-			indent := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " \t")))
+			indent := strings.Repeat(" ", utf8.RuneCountInString(line)-utf8.RuneCountInString(strings.TrimLeftFunc(line, unicode.IsSpace)))
 			hang := indent
 			if strings.HasPrefix(stripped, "- ") || strings.HasPrefix(stripped, "* ") || numberedItem.MatchString(stripped) {
 				hang += "  "

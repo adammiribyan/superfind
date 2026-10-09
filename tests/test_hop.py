@@ -149,24 +149,24 @@ class HopBehavior(unittest.TestCase):
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), [])
 
-    def test_ask_says_why_it_failed_when_no_ranker_can_answer(self):
+    def test_deep_search_says_why_it_failed_when_no_ranker_can_answer(self):
         self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
         self.hop("index")
         self.env["PATH"] = "/usr/bin:/bin"
-        result = self.run_hop("ask", "where did we migrate the ledger")
+        result = self.run_hop("search", "--deep", "where did we migrate the ledger")
         self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
-                         (1, "", "Couldn't ask: Claude Code didn't answer."))
+                         (1, "", "Deep search failed: Claude Code didn't answer."))
 
     def test_a_hostile_transcript_name_cannot_inject_shell_commands(self):
         path = self.session("a;echo PWNED", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.hop("index")
         self.assertEqual(self.hop("command", str(path)).strip(), "cd /tmp && claude --resume 'a;echo PWNED'")
 
-    def test_an_empty_ask_lists_sessions_without_asking_anyone(self):
+    def test_an_empty_deep_search_lists_sessions_without_asking_anyone(self):
         self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.hop("index")
         self.env["PATH"] = "/usr/bin:/bin"
-        self.assertEqual([r.split("\t")[4] for r in self.hop("ask").splitlines()], ["Build fix"])
+        self.assertEqual([r.split("\t")[4] for r in self.hop("search", "--deep").splitlines()], ["Build fix"])
 
     def test_tabs_expand_to_the_next_tab_stop(self):
         path = self.session("a1", user("show the table"), tool("Read"), claude("aaa\tbbb"), title="Table")
@@ -182,10 +182,59 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual("".join(l.strip() for l in lines), text)
         self.assertTrue(all(sum(2 for _ in l.strip()) + 2 <= 22 for l in lines), lines)
 
+    def test_carriage_returns_and_non_breaking_indents_render_like_ordinary_lines(self):
+        path = self.session("a1", user("list the steps"), tool("Read"),
+                           claude("First step\r\nSecond step\rThird step\r\n\u00a0\u00a0  nested step"), title="Steps")
+        self.hop("index")
+        body = self.hop("preview", str(path), "--width", "40").split("claude\n", 1)[1]
+        self.assertEqual(body.split("\n")[:4], ["  First step", "  Second step", "  Third step", "      nested step"])
+        self.assertNotIn("\r", body)
+
+    def test_an_indent_wider_than_the_preview_still_renders(self):
+        path = self.session("a1", user("show the tree"), tool("Read"), claude("intro\n" + "\u00a0" * 30 + "x"),
+                            title="Tree")
+        self.hop("index")
+        result = subprocess.run([str(HOP), "preview", str(path), "--width", "20"], env=self.env,
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(ANSI.sub("", result.stdout).split("claude\n", 1)[1], "  intro\n" + " " * 32 + "x\n")
+
+    def test_a_cache_folder_with_url_characters_in_its_name_still_works(self):
+        self.env["XDG_CACHE_HOME"] = str(self.home / "cache ?#%20 dir")
+        self.session("a1", user("make payment retries safe to repeat"), claude("Added idempotency keys."),
+                     title="Payment retries")
+        self.assertEqual(self.titles("idempotency"), ["Payment retries"])
+        self.assertTrue((self.home / "cache ?#%20 dir" / "hop" / "search.db").exists())
+
+    def test_a_relative_cache_folder_works(self):
+        self.env["XDG_CACHE_HOME"] = "relative-cache"
+        self.session("a1", user("make payment retries safe to repeat"), claude("Added idempotency keys."),
+                     title="Payment retries")
+        for command in (["index"], ["search", "idempotency"]):
+            result = subprocess.run([str(HOP), *command], env=self.env, cwd=self.home, capture_output=True, text=True)
+            self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn("Payment retries", result.stdout)
+        self.assertTrue((self.home / "relative-cache" / "hop" / "search.db").exists())
+
+    def test_indexing_waits_for_another_writer_instead_of_failing(self):
+        import sqlite3
+        import threading
+
+        self.session("a1", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        self.hop("index")
+        self.session("b2", user("make payment retries safe to repeat"), claude("Added idempotency keys."),
+                     title="Payment retries")
+        writer = sqlite3.connect(self.home / ".cache" / "hop" / "search.db", isolation_level=None, check_same_thread=False)
+        writer.execute("BEGIN IMMEDIATE")
+        threading.Timer(1.0, lambda: writer.execute("COMMIT")).start()
+        result = self.run_hop("index")
+        writer.close()
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(self.titles("idempotency"), ["Payment retries"])
+
     def test_shell_setup_calls_hop_by_its_full_path(self):
         self.assertIn(f"typeset -g _hop_bin={HOP}", self.hop("init", "zsh"))
 
-    def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
+    def test_malformed_typesafe_answers_never_crash_deep_search_or_get_cached_as_labels(self):
         import http.server
         import threading
 
@@ -203,15 +252,16 @@ class HopBehavior(unittest.TestCase):
 
         server = http.server.HTTPServer(("127.0.0.1", 0), Malformed)
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Should I run it on production?"),
                      title="Ledger migration")
         self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}",
                         PATH="/usr/bin:/bin")
         self.hop("index")
-        result = self.run_hop("ask", "where did we migrate the ledger")
+        result = self.run_hop("search", "--deep", "where did we migrate the ledger")
         self.assertEqual((result.returncode, result.stderr.strip()),
-                         (1, "Couldn't ask: TypeSafe and Claude didn't answer."))
+                         (1, "Deep search failed: TypeSafe and Claude didn't answer."))
         os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
         self.hop("label")
         status = self.home / ".cache" / "hop" / "status.json"
