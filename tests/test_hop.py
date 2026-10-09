@@ -687,12 +687,19 @@ class HopBehavior(unittest.TestCase):
     def test_a_codex_home_other_than_the_default_is_passed_to_codex(self):
         work = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
                                   codex_reply("Fixed."), home=".codex-work")
-        self.codex_session(uid(2), codex_meta(), codex_user("rename the export job"), codex_call(), codex_output(),
-                           codex_reply("Renamed."))
+        default = self.codex_session(uid(2), codex_meta(), codex_user("rename the export job"), codex_call(),
+                                     codex_output(), codex_reply("Renamed."))
         self.assertEqual(self.rows(), ["rename the export job  1d ago · tmp · .codex",
                                        "fix the build  1d ago · tmp · .codex-work"])
         home = self.home.resolve()
         self.assertEqual(self.hop("command", str(work)), f"cd /tmp && CODEX_HOME={home}/.codex-work codex resume {uid(1)}\n")
+        elsewhere = self.codex_session(uid(3), codex_meta(), codex_user("pin the release version"), codex_call(),
+                                       codex_output(), codex_reply("Pinned."), home="work/codex")
+        self.env["CODEX_HOME"] = str(home / "work" / "codex")
+        self.assertIn("pin the release version", self.titles())
+        self.assertEqual(self.hop("command", str(elsewhere)), f"cd /tmp && codex resume {uid(3)}\n")
+        self.assertEqual(self.hop("command", str(default)), f"cd /tmp && CODEX_HOME={home}/.codex codex resume {uid(2)}\n")
+        shutil.rmtree(self.home / "work")
         shutil.rmtree(self.home / ".codex")
         self.env["CODEX_HOME"] = str(home / ".codex-work")
         self.assertEqual(self.hop("command", str(work)), f"cd /tmp && codex resume {uid(1)}\n")
@@ -775,6 +782,7 @@ class HopBehavior(unittest.TestCase):
                                        "fix the build  1d ago · tmp · work-grok"])
         self.assertEqual(self.hop("command", str(work)), f"cd /tmp && GROK_HOME={home}/work-grok grok --resume {uid(1)}\n")
         shutil.rmtree(self.home / ".grok")
+        del self.env["HOP_GROK_DIRS"]
         self.env["GROK_HOME"] = str(home / "work-grok")
         self.assertEqual(self.hop("command", str(work)), f"cd /tmp && grok --resume {uid(1)}\n")
 
