@@ -1,0 +1,77 @@
+name: signing
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .goreleaser.yaml
+      - .github/workflows/release.yml
+      - .github/workflows/signing.yml
+      - .github/workflows/verify-darwin.sh
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Every signing secret is set
+        run: |
+          missing=""
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            eval "value=\${$name}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::missing repository secrets:$missing"; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: version
+        run: echo "version=$(go run . --version)" >> "$GITHUB_OUTPUT"
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: v2.18.3
+          args: release --snapshot --clean
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-archives
+          path: dist/*_darwin_*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-archives
+          path: archives
+      - name: The ${{ matrix.arch }} binary is signed, notarized, and runs under quarantine
+        run: |
+          test "$(uname -m | sed s/x86_64/amd64/)" = "${{ matrix.arch }}"
+          mkdir unpacked
+          tar -xzf archives/*_darwin_${{ matrix.arch }}.tar.gz -C unpacked
+          sh .github/workflows/verify-darwin.sh unpacked/superfind "${{ needs.build.outputs.version }}"

@@ -1,12 +1,29 @@
 version: 2
 
+project_name: superfind
+
 builds:
-  - env:
+  - id: superfind
+    env:
       - CGO_ENABLED=0
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: [-s -w]
+
+notarize:
+  macos:
+    - enabled: '{{ or (not .IsSnapshot) (isEnvSet "MACOS_SIGN_P12") }}'
+      ids: [superfind]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
 
 archives:
   - formats: [tar.gz]
@@ -24,12 +41,6 @@ homebrew_casks:
       owner: adammiribyan
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/superfind"]
-          end
 
 release:
   github:

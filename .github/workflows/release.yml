@@ -10,7 +10,22 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
+      - name: Every release secret is set
+        run: |
+          missing=""
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID HOMEBREW_TAP_TOKEN; do
+            eval "value=\${$name}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::missing repository secrets:$missing"; exit 1; }
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -18,11 +33,36 @@ jobs:
         with:
           go-version-file: go.mod
       - name: The tag matches superfind --version
-        run: test "$(go run . --version)" = "superfind ${GITHUB_REF_NAME#v}"
+        run: |
+          got=$(go run . --version)
+          want="superfind ${GITHUB_REF_NAME#v}"
+          [ "$got" = "$want" ] || { echo "::error::tag $GITHUB_REF_NAME needs $want, but the code says $got"; exit 1; }
       - uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  verify:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The released ${{ matrix.arch }} binary is signed, notarized, and runs under quarantine
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(uname -m | sed s/x86_64/amd64/)" = "${{ matrix.arch }}"
+          gh release download "$GITHUB_REF_NAME" --pattern "*_darwin_${{ matrix.arch }}.tar.gz" --dir archives
+          mkdir unpacked
+          tar -xzf archives/*.tar.gz -C unpacked
+          sh .github/workflows/verify-darwin.sh unpacked/superfind "superfind ${GITHUB_REF_NAME#v}"
