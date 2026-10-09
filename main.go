@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/adammiribyan/hop/internal/ask"
+	"github.com/adammiribyan/hop/internal/render"
 
 	"github.com/adammiribyan/hop/internal/session"
 
@@ -97,40 +99,19 @@ _hop_widget() {
 
 var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
 
-var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
-
-func secondaryFromEnv() string {
-	hx := os.Getenv("HOP_SECONDARY")
-	if !hexColor.MatchString(hx) {
-		return ansiDim
-	}
-	r, _ := strconv.ParseUint(hx[1:3], 16, 8)
-	g, _ := strconv.ParseUint(hx[3:5], 16, 8)
-	b, _ := strconv.ParseUint(hx[5:7], 16, 8)
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
-}
-
-func rowContext(t rowText, secondary string) string {
-	flag := ""
-	if t.waiting != "" {
-		flag = ansiAccent + t.waiting + ansiReset + secondary + " · "
-	}
-	return flag + strings.Join(t.context, " · ")
-}
-
-func printRows(rows []session.Row, shown tags) {
-	secondary := secondaryFromEnv()
+func printRows(rows []session.Row, shown render.Tags) {
+	secondary := render.SecondaryFromEnv()
 	for _, r := range rows {
-		t := rowTextOf(r, shown)
-		display := " " + t.title + "  " + secondary + rowContext(t, secondary) + ansiReset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.title, display)
+		t := render.RowTextOf(r, shown)
+		display := " " + t.Title + "  " + secondary + render.RowContext(t, secondary) + render.Reset
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.Title, display)
 	}
 }
 
 func handoffTitle(r session.Row) string {
 	title := strings.Join(strings.Fields(r.Session.Title), " ")
 	if r.Session.Active() {
-		title += ansiReset + ansiDim + " · may still be open in another window"
+		title += render.Reset + render.Dim + " · may still be open in another window"
 	}
 	return title
 }
@@ -223,7 +204,7 @@ func main() {
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
 		rows := session.Annotate(mustIndex("search"))
-		shown := tagsFor(rows)
+		shown := render.TagsFor(rows)
 		db := mustOpenSearch()
 		deep, words := false, []string{}
 		for _, arg := range args[1:] {
@@ -247,8 +228,8 @@ func main() {
 			printRows(session.RecentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask(db, query, eligible)
-		var failure askFailure
+		paths, err := ask.Ask(db, query, eligible)
+		var failure ask.Failure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
@@ -265,30 +246,30 @@ func main() {
 		if len(args) < 2 {
 			fail("hop preview: which session?")
 		}
-		req := previewRequest{width: 80, secondary: secondaryFromEnv()}
+		req := render.PreviewRequest{Width: 80, Secondary: render.SecondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--recent":
-				req.recent = true
+				req.Recent = true
 			case "--width":
 				if i+1 < len(args) {
-					req.width, _ = strconv.Atoi(args[i+1])
+					req.Width, _ = strconv.Atoi(args[i+1])
 					i++
 				}
 			case "--query":
 				if i+1 < len(args) {
-					req.query = args[i+1]
+					req.Query = args[i+1]
 					i++
 				}
 			}
 		}
 		r, indexed, rows := sessionAt("preview", args[1])
-		req.agent, req.path = r.Agent, r.Path
+		req.Agent, req.Path = r.Agent, r.Path
 		var header []string
 		if indexed {
-			header = append(previewHeader(req, r, tagsFor(rows), mustOpenSearch()), "")
+			header = append(render.PreviewHeader(req, r, render.TagsFor(rows), mustOpenSearch()), "")
 		}
-		body, err := previewBody(req)
+		body, err := render.PreviewBody(req)
 		for _, line := range append(header, body...) {
 			fmt.Println(line)
 		}

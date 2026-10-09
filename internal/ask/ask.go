@@ -1,4 +1,4 @@
-package main
+package ask
 
 import (
 	"context"
@@ -16,8 +16,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/render"
 
+	"github.com/adammiribyan/hop/internal/session"
 	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
@@ -25,7 +26,7 @@ const (
 	claudeTimeout = 90 * time.Second
 	jevChunk      = 120
 	jevShortlist  = 15
-	explainTop    = 5
+	ExplainTop    = 5
 )
 
 const askPrompt = "You rank a developer's past coding sessions by how relevant they are to a search. Each session is one " +
@@ -63,8 +64,8 @@ func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []st
 	cards := make([]string, len(kept))
 	for i, r := range kept {
 		s := r.Session
-		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), ago(s.Mtime),
-			oneLine(s.LastPrompt, 160), oneLine(passages[r.Path], 300))
+		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), render.Ago(s.Mtime),
+			render.OneLine(s.LastPrompt, 160), render.OneLine(passages[r.Path], 300))
 	}
 	return kept, cards, nil
 }
@@ -217,14 +218,14 @@ func runClaude(args []string, input string) ([]byte, error) {
 	return cmd.Output()
 }
 
-type askFailure struct{ reason string }
+type Failure struct{ reason string }
 
-func (a askFailure) Error() string { return "Deep search failed: " + a.reason + "." }
+func (a Failure) Error() string { return "Deep search failed: " + a.reason + "." }
 
-func ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
+func Ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
 	kept, cards, err := askCards(db, query, rows)
 	if err != nil {
-		return nil, askFailure{"the search index couldn't be read (" + err.Error() + ")"}
+		return nil, Failure{"the search index couldn't be read (" + err.Error() + ")"}
 	}
 	key := typesafe.Key()
 	if key != "" {
@@ -237,9 +238,9 @@ func ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
 		return paths, nil
 	}
 	if key != "" {
-		return nil, askFailure{"TypeSafe and Claude didn't answer"}
+		return nil, Failure{"TypeSafe and Claude didn't answer"}
 	}
-	return nil, askFailure{"Claude Code didn't answer"}
+	return nil, Failure{"Claude Code didn't answer"}
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)
@@ -283,7 +284,7 @@ func passagesOf(body, query string) []string {
 	return pieces
 }
 
-func explain(db *sql.DB, key, query string, paths []string) map[string]string {
+func Explain(db *sql.DB, key, query string, paths []string) map[string]string {
 	bodies := map[string]string{}
 	for _, p := range paths {
 		var body string
