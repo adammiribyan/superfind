@@ -195,6 +195,18 @@ class PickerBehavior(unittest.TestCase):
         time.sleep(0.6)
         self.assertIn("Finished rollout step 40.", self.settled_screen())
 
+    def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
+        import sqlite3
+        self.three_sessions()
+        subprocess.run([str(HOP), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "hop" / "search.db")
+        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.close()
+        self.open_picker()
+        self.keys("charged")
+        self.wait_for("Search failed: the search index couldn't be read")
+        self.assertNotIn("No sessions match", self.screen())
+
     def test_ctrl_r_searches_deeper_and_says_why_it_failed_when_no_ranker_can_answer(self):
         self.three_sessions()
         self.open_picker()

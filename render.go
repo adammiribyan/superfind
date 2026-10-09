@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"regexp"
 	"strings"
@@ -11,36 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-type turn struct {
-	role string
-	text string
-}
-
 func conversation(path string) []turn {
-	var turns []turn
-	eachLine(path, func(raw []byte) {
-		if !bytes.Contains(raw, markUser) && !bytes.Contains(raw, markAssistant) {
-			return
-		}
-		e := decode(raw)
-		role := e.str("type")
-		if role != "user" && role != "assistant" {
-			return
-		}
-		text := strings.TrimSpace(messageText(e))
-		if role == "user" {
-			text = promptText(text)
-		}
-		if meta, _ := e["isMeta"].(bool); meta || text == "" {
-			return
-		}
-		if n := len(turns); n > 0 && turns[n-1].role == role {
-			turns[n-1].text += "\n\n" + text
-		} else {
-			turns = append(turns, turn{role, text})
-		}
-	})
-	return turns
+	t, _ := readTranscript(path)
+	return t.turns
 }
 
 const (

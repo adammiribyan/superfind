@@ -116,7 +116,10 @@ func jev(key string, state any, questions map[string]any) (map[string]jevAnswer,
 	if override := os.Getenv("TYPESAFE_URL"); override != "" {
 		url = override
 	}
-	req, _ := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "hop/"+version)
@@ -137,7 +140,7 @@ func jev(key string, state any, questions map[string]any) (map[string]jevAnswer,
 	return out.Answers, nil
 }
 
-func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string) {
+func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string, error) {
 	var kept []Row
 	for _, r := range recentFirst(rows) {
 		if !r.Session.Throwaway() {
@@ -145,30 +148,24 @@ func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string) {
 		}
 	}
 	passages := map[string]string{}
-	if result, err := db.Query("SELECT path, substr(body, 1, 240) FROM docs"); err == nil {
-		for result.Next() {
-			var p, text string
-			if result.Scan(&p, &text) == nil {
-				passages[p] = text
-			}
-		}
-		result.Close()
+	openings, err := queryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
+	if err != nil {
+		return nil, nil, err
 	}
 	var anyWord []string
 	for _, w := range meaningfulWords(query) {
 		anyWord = append(anyWord, `"`+w+`"*`)
 	}
+	var matched [][2]string
 	if len(anyWord) > 0 {
-		if result, err := db.Query("SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
-			strings.Join(anyWord, " OR ")); err == nil {
-			for result.Next() {
-				var p, text string
-				if result.Scan(&p, &text) == nil {
-					passages[p] = text
-				}
-			}
-			result.Close()
+		matched, err = queryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
+			strings.Join(anyWord, " OR "))
+		if err != nil {
+			return nil, nil, err
 		}
+	}
+	for _, pair := range append(openings, matched...) {
+		passages[pair[0]] = pair[1]
 	}
 	cards := make([]string, len(kept))
 	for i, r := range kept {
@@ -176,7 +173,7 @@ func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string) {
 		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), ago(s.Mtime),
 			oneLine(s.LastPrompt, 160), oneLine(passages[r.Path], 300))
 	}
-	return kept, cards
+	return kept, cards, nil
 }
 
 func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
@@ -285,8 +282,7 @@ var errNoAnswer = errors.New("no answer")
 
 var rankList = regexp.MustCompile(`\[[\d,\s]*\]`)
 
-func claudeRank(db *sql.DB, query string, rows []Row) ([]string, error) {
-	kept, cards := askCards(db, query, rows)
+func claudeRank(query string, kept []Row, cards []string) ([]string, error) {
 	var request strings.Builder
 	request.WriteString("Search: " + query + "\n\nSessions:\n")
 	for i, c := range cards {
@@ -295,11 +291,7 @@ func claudeRank(db *sql.DB, query string, rows []Row) ([]string, error) {
 	base := []string{"-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
 		"--output-format", "json", "--system-prompt", askPrompt}
 	for _, args := range [][]string{append(append([]string{}, base...), "--bare"), base} {
-		ctx, cancel := context.WithTimeout(context.Background(), claudeTimeout)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "claude", args...)
-		cmd.Stdin = strings.NewReader(request.String())
-		out, err := cmd.Output()
+		out, err := runClaude(args, request.String())
 		if err != nil {
 			continue
 		}
@@ -324,19 +316,30 @@ func claudeRank(db *sql.DB, query string, rows []Row) ([]string, error) {
 	return nil, errNoAnswer
 }
 
+func runClaude(args []string, input string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), claudeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Stdin = strings.NewReader(input)
+	return cmd.Output()
+}
+
 type askFailure struct{ reason string }
 
 func (a askFailure) Error() string { return "Deep search failed: " + a.reason + "." }
 
 func ask(db *sql.DB, query string, rows []Row) ([]string, error) {
+	kept, cards, err := askCards(db, query, rows)
+	if err != nil {
+		return nil, askFailure{"the search index couldn't be read (" + err.Error() + ")"}
+	}
 	key := typesafeKey()
 	if key != "" {
-		kept, cards := askCards(db, query, rows)
 		if ranked, err := jevRank(key, query, kept, cards); err == nil && len(ranked) > 0 {
 			return ranked, nil
 		}
 	}
-	paths, err := claudeRank(db, query, rows)
+	paths, err := claudeRank(query, kept, cards)
 	if err == nil {
 		return paths, nil
 	}

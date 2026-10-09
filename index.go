@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -36,134 +34,25 @@ func promptText(text string) string {
 	return text
 }
 
-type entry map[string]any
-
-func (e entry) str(key string) string {
-	s, _ := e[key].(string)
-	return s
-}
-
-func messageText(e entry) string {
-	message, _ := e["message"].(map[string]any)
-	switch content := message["content"].(type) {
-	case string:
-		return content
-	case []any:
-		var parts []string
-		for _, block := range content {
-			if b, ok := block.(map[string]any); ok && b["type"] == "text" {
-				t, _ := b["text"].(string)
-				parts = append(parts, t)
-			}
-		}
-		return strings.Join(parts, " ")
-	}
-	return ""
-}
-
-func decode(raw []byte) entry {
-	var e entry
-	if json.Unmarshal(raw, &e) != nil {
-		return entry{}
-	}
-	return e
-}
-
-func eachLine(path string, fn func(raw []byte)) error {
-	f, err := os.Open(path)
+func parse(path string, mtime float64) (*Session, string, error) {
+	t, err := readTranscript(path)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	defer f.Close()
-	reader := bufio.NewReaderSize(f, 1<<20)
-	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			fn(line)
-		}
-		if err != nil {
-			return nil
-		}
+	firstPrompt := ""
+	if len(t.prompts) > 0 {
+		firstPrompt = t.prompts[0]
 	}
-}
-
-var (
-	markUser       = []byte(`"type":"user"`)
-	markAssistant  = []byte(`"type":"assistant"`)
-	markToolResult = []byte(`"tool_use_id"`)
-	markToolUse    = []byte(`"type":"tool_use"`)
-	markText       = []byte(`"type":"text"`)
-	markCwd        = []byte(`"cwd":"`)
-	markCustom     = []byte(`"type":"custom-title"`)
-	markAITitle    = []byte(`"type":"ai-title"`)
-	markLastPrompt = []byte(`"type":"last-prompt"`)
-	markRelocated  = []byte(`"type":"relocated"`)
-	markInterrupt  = []byte("[Request interrupted")
-)
-
-func parse(path string, mtime float64) (*Session, string) {
-	var cwd, relocated, custom, ai, lastPrompt, firstPrompt, branch string
-	prompts, toolCalls := 0, 0
-	var body []string
-	err := eachLine(path, func(raw []byte) {
-		switch {
-		case bytes.Contains(raw, markUser) && !bytes.Contains(raw, markToolResult):
-			e := decode(raw)
-			if cwd == "" {
-				cwd = e.str("cwd")
-			}
-			if b := e.str("gitBranch"); b != "" {
-				branch = b
-			}
-			text := promptText(strings.TrimSpace(messageText(e)))
-			if meta, _ := e["isMeta"].(bool); !meta && text != "" {
-				prompts++
-				if firstPrompt == "" {
-					firstPrompt = text
-				}
-				body = append(body, text)
-			}
-		case bytes.Contains(raw, markAssistant):
-			toolCalls += bytes.Count(raw, markToolUse)
-			if bytes.Contains(raw, markText) {
-				body = append(body, messageText(decode(raw)))
-			}
-		case cwd == "" && bytes.Contains(raw, markCwd):
-			cwd = decode(raw).str("cwd")
-		case bytes.Contains(raw, markCustom):
-			if t := decode(raw).str("customTitle"); t != "" {
-				custom = t
-			}
-		case bytes.Contains(raw, markAITitle):
-			if t := decode(raw).str("aiTitle"); t != "" {
-				ai = t
-			}
-		case bytes.Contains(raw, markLastPrompt):
-			if t := decode(raw).str("lastPrompt"); t != "" {
-				lastPrompt = t
-			}
-		case bytes.Contains(raw, markRelocated):
-			if t := decode(raw).str("relocatedCwd"); t != "" {
-				relocated = t
-			}
-		}
-	})
-	if err != nil {
-		return nil, ""
+	if t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
+		return nil, "", nil
 	}
-	if relocated != "" {
-		cwd = relocated
-	}
-	if cwd == "" || (firstPrompt == "" && lastPrompt == "") {
-		return nil, ""
-	}
-	title := firstNonEmpty(custom, ai, firstPrompt, lastPrompt)
-	text := strings.Join(body, "\n")
+	body := strings.Join(t.messages, "\n")
 	return &Session{
-		ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Cwd: cwd, Title: title,
-		LastPrompt: firstNonEmpty(lastPrompt, firstPrompt), Branch: branch, Prompts: max(prompts, 1),
-		Words: len(strings.Fields(text)), ToolCalls: toolCalls, Mtime: mtime,
-	}, text
+		ID: strings.TrimSuffix(filepath.Base(path), ".jsonl"), Cwd: t.cwd,
+		Title:      firstNonEmpty(t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
+		LastPrompt: firstNonEmpty(t.lastPrompt, firstPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
+		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: mtime,
+	}, body, nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -176,8 +65,7 @@ func firstNonEmpty(values ...string) string {
 }
 
 type cacheEntry struct {
-	Mtime   float64  `json:"mtime"`
-	Size    int64    `json:"size"`
+	fileID
 	Session *Session `json:"session"`
 }
 
@@ -254,8 +142,11 @@ func openSearch() (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')`)
-	return db, err
+	if _, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')`); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 type found struct {
@@ -289,7 +180,7 @@ func index() ([]Row, error) {
 	var stale []found
 	for _, f := range all {
 		e, ok := old[f.path]
-		if !ok || !sameFile(e.Mtime, e.Size, f.info) {
+		if !ok || e.fileID != identify(f.info) {
 			stale = append(stale, f)
 		}
 	}
@@ -306,7 +197,10 @@ func index() ([]Row, error) {
 		go func() {
 			defer wg.Done()
 			for f := range work {
-				s, body := parse(f.path, stamp(f.info))
+				s, body, err := parse(f.path, stamp(f.info))
+				if err != nil {
+					continue
+				}
 				mu.Lock()
 				results[f.path] = parsed{s, body}
 				mu.Unlock()
@@ -325,14 +219,15 @@ func index() ([]Row, error) {
 	fresh := make(map[string]cacheEntry, len(all))
 	var rows []Row
 	for _, f := range all {
-		var s *Session
+		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
-			s = p.session
-		} else {
-			s = old[f.path].Session
+			entry, known = cacheEntry{identify(f.info), p.session}, true
 		}
-		fresh[f.path] = cacheEntry{stamp(f.info), f.info.Size(), s}
-		if s != nil {
+		if !known {
+			continue
+		}
+		fresh[f.path] = entry
+		if s := entry.Session; s != nil {
 			rows = append(rows, Row{Session: *s, ConfigDir: f.configDir, Path: f.path})
 		}
 	}
@@ -387,17 +282,6 @@ func updateSearch(results map[string]parsed, gone []string) error {
 	return tx.Commit()
 }
 
-func cachedRows() []Row {
-	dirs := configDirs()
-	var rows []Row
-	for path, e := range loadCache() {
-		if e.Session != nil {
-			rows = append(rows, Row{Session: *e.Session, ConfigDir: configDirOf(path, dirs), Path: path})
-		}
-	}
-	return rows
-}
-
 var stopwords = func() map[string]bool {
 	m := map[string]bool{}
 	for _, w := range strings.Fields(`a about all an and any are as at be been but by can could did do does for from had has have
@@ -428,28 +312,43 @@ func ftsQuery(query string) string {
 	return strings.Join(parts, " ")
 }
 
-func matches(db *sql.DB, query string) ([]string, bool) {
+func queryPairs(db *sql.DB, query string, args ...any) ([][2]string, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var pair [2]string
+		if err := rows.Scan(&pair[0], &pair[1]); err != nil {
+			return nil, err
+		}
+		out = append(out, pair)
+	}
+	return out, rows.Err()
+}
+
+func matches(db *sql.DB, query string) ([]string, bool, error) {
 	match := ftsQuery(query)
 	if match == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	seen := map[string]bool{}
 	var out []string
 	for _, scoped := range []string{"title : (" + match + ")", match} {
-		rows, err := db.Query("SELECT path FROM docs WHERE docs MATCH ? ORDER BY rank, path LIMIT 200", scoped)
+		pairs, err := queryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path LIMIT 200", scoped)
 		if err != nil {
-			continue
+			return nil, true, err
 		}
-		for rows.Next() {
-			var p string
-			if rows.Scan(&p) == nil && !seen[p] {
-				seen[p] = true
-				out = append(out, p)
+		for _, pair := range pairs {
+			if !seen[pair[0]] {
+				seen[pair[0]] = true
+				out = append(out, pair[0])
 			}
 		}
-		rows.Close()
 	}
-	return out, true
+	return out, true, nil
 }
 
 func snippet(db *sql.DB, path, query string) string {

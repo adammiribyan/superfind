@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
-	"strings"
 	"sync"
 	"syscall"
 )
@@ -45,11 +45,11 @@ func statusLabelFor(name string) string {
 
 const waitingLabel = "waiting on you"
 
-var lastEvents = map[string]string{
-	"assistant_text": "Claude's last action was writing a reply to the developer.",
-	"tool_call":      "Claude's last action was starting a tool (a command, edit, or search) whose result never arrived.",
-	"user_prompt":    "The developer's last action was sending a request that Claude never answered.",
-	"interrupted":    "The developer interrupted Claude while it was working.",
+var lastEvents = map[event]string{
+	replied:     "Claude's last action was writing a reply to the developer.",
+	calledTool:  "Claude's last action was starting a tool (a command, edit, or search) whose result never arrived.",
+	prompted:    "The developer's last action was sending a request that Claude never answered.",
+	interrupted: "The developer interrupted Claude while it was working.",
 }
 
 type endingTurn struct {
@@ -63,37 +63,17 @@ type sessionEnding struct {
 }
 
 func ending(path string) sessionEnding {
-	last := "assistant_text"
-	eachLine(path, func(raw []byte) {
-		switch {
-		case bytes.Contains(raw, markAssistant):
-			if bytes.Contains(raw, markToolUse) {
-				last = "tool_call"
-			} else {
-				last = "assistant_text"
-			}
-		case bytes.Contains(raw, markUser):
-			switch {
-			case bytes.Contains(raw, markInterrupt):
-				last = "interrupted"
-			case bytes.Contains(raw, markToolResult):
-				last = "tool_call"
-			case promptText(strings.TrimSpace(messageText(decode(raw)))) != "":
-				last = "user_prompt"
-			}
-		}
-	})
-	turns := conversation(path)
+	t, _ := readTranscript(path)
 	var recent []endingTurn
-	for _, t := range turns[max(len(turns)-6, 0):] {
+	for _, said := range t.turns[max(len(t.turns)-6, 0):] {
 		who := "claude"
-		if t.role == "user" {
+		if said.role == "user" {
 			who = "developer"
 		}
-		r := []rune(t.text)
+		r := []rune(said.text)
 		recent = append(recent, endingTurn{who, string(r[max(len(r)-700, 0):])})
 	}
-	return sessionEnding{lastEvents[last], recent}
+	return sessionEnding{lastEvents[t.last], recent}
 }
 
 func judgeStatus(key, path string) (string, float64, error) {
@@ -119,8 +99,7 @@ func judgeStatus(key, path string) (string, float64, error) {
 }
 
 type statusEntry struct {
-	Mtime  float64 `json:"mtime"`
-	Size   int64   `json:"size"`
+	fileID
 	Status string  `json:"status"`
 	P      float64 `json:"p"`
 }
@@ -143,22 +122,29 @@ func statusLabel(path string, known map[string]statusEntry) string {
 		return ""
 	}
 	age := now() - stamp(info)
-	if !sameFile(e.Mtime, e.Size, info) || age < activeSeconds || age >= labelDays*86400 {
+	if e.fileID != identify(info) || age < activeSeconds || age >= labelDays*86400 {
 		return ""
 	}
 	return statusLabelFor(e.Status)
 }
 
-func labelSessions(key string, rows []Row) bool {
+func labelSessions(key string, rows []Row) error {
 	lock, err := os.OpenFile(cachePath("status.lock"), os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return false
+		return err
 	}
 	defer lock.Close()
 	if syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
-		return false
+		return nil
 	}
 	known := statuses()
+	pruned := false
+	for path := range known {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			delete(known, path)
+			pruned = true
+		}
+	}
 	type job struct {
 		path string
 		info os.FileInfo
@@ -171,15 +157,16 @@ func labelSessions(key string, rows []Row) bool {
 		}
 		e, ok := known[r.Path]
 		recent := now()-stamp(info) < labelDays*86400
-		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && sameFile(e.Mtime, e.Size, info)) {
+		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.fileID == identify(info)) {
 			todo = append(todo, job{r.Path, info})
 		}
 	}
-	if len(todo) == 0 {
-		return false
+	if len(todo) == 0 && !pruned {
+		return nil
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var failures []error
 	work := make(chan job)
 	for range 8 {
 		wg.Add(1)
@@ -187,11 +174,12 @@ func labelSessions(key string, rows []Row) bool {
 			defer wg.Done()
 			for j := range work {
 				status, p, err := judgeStatus(key, j.path)
-				if err != nil {
-					continue
-				}
 				mu.Lock()
-				known[j.path] = statusEntry{stamp(j.info), j.info.Size(), status, math.Round(p*1000) / 1000}
+				if err != nil {
+					failures = append(failures, err)
+				} else {
+					known[j.path] = statusEntry{identify(j.info), status, math.Round(p*1000) / 1000}
+				}
 				mu.Unlock()
 			}
 		}()
@@ -203,7 +191,13 @@ func labelSessions(key string, rows []Row) bool {
 	wg.Wait()
 	data, err := json.Marshal(known)
 	if err != nil {
-		return false
+		return err
 	}
-	return writeAtomically(cachePath("status.json"), data) == nil
+	if err := writeAtomically(cachePath("status.json"), data); err != nil {
+		return fmt.Errorf("saving labels: %w", err)
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%d of %d sessions couldn't be labeled: %w", len(failures), len(todo), failures[0])
+	}
+	return nil
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,8 +10,8 @@ import (
 )
 
 const (
-	version          = "0.7.1"
-	cacheVersion     = 10
+	version          = "0.7.2"
+	cacheVersion     = 11
 	activeSeconds    = 120
 	throwawayWords   = 150
 	statusShownAt    = 0.85
@@ -142,10 +141,12 @@ func stamp(info os.FileInfo) float64 {
 	return float64(info.ModTime().UnixNano()) / 1e9
 }
 
-func sameFile(mtime float64, size int64, info os.FileInfo) bool {
-	const pythonFloatRounding = 1e-6
-	return info != nil && size == info.Size() && math.Abs(mtime-stamp(info)) < pythonFloatRounding
+type fileID struct {
+	ModNanos int64 `json:"mtime_ns"`
+	Size     int64 `json:"size"`
 }
+
+func identify(info os.FileInfo) fileID { return fileID{info.ModTime().UnixNano(), info.Size()} }
 
 func oneLine(text string, width int) string {
 	text = strings.Join(strings.Fields(text), " ")
@@ -240,6 +241,28 @@ func survivingDir(dir string) string {
 func folderExists(dir string) bool {
 	info, err := os.Stat(dir)
 	return err == nil && info.IsDir()
+}
+
+type rowText struct {
+	title, waiting string
+	context        []string
+}
+
+func rowTextOf(r Row, showAccount bool) rowText {
+	t := rowText{title: strings.Join(strings.Fields(r.Session.Title), " ")}
+	if r.Status == waitingLabel {
+		t.waiting = r.Status
+	} else if r.Status != "" {
+		t.context = append(t.context, r.Status)
+	}
+	t.context = append(t.context, when(r.Session), r.Session.Project())
+	if r.FolderGone {
+		t.context = append(t.context, "folder removed")
+	}
+	if showAccount {
+		t.context = append(t.context, filepath.Base(r.ConfigDir))
+	}
+	return t
 }
 
 func metaParts(s Session, configDir string, showAccount bool, status string) []string {

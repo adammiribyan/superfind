@@ -10,18 +10,6 @@ mkdir -p "$bin"
 ln -sf "$repo/bin/hop" "$bin/hop"
 echo "built and linked $bin/hop ($("$bin/hop" --version))"
 
-for old in 'claude-sessions\.zsh"' 'hop\.zsh"'; do
-  if grep -q "$old" "$HOME/.zshrc" 2>/dev/null; then
-    sed -i '' "/$old/d" "$HOME/.zshrc"
-    echo "removed an old hop line from ~/.zshrc"
-  fi
-done
-[ -L "$bin/claude-sessions" ] && rm "$bin/claude-sessions"
-cache="${XDG_CACHE_HOME:-$HOME/.cache}"
-if [ -d "$cache/claude-sessions" ] && [ ! -e "$cache/hop" ]; then
-  mv "$cache/claude-sessions" "$cache/hop"
-fi
-
 setup='eval "$("$HOME/.local/bin/hop" init zsh)"'
 if ! grep -qF "$setup" "$HOME/.zshrc" 2>/dev/null; then
   printf '\n%s\n' "$setup" >> "$HOME/.zshrc"

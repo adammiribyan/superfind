@@ -12,7 +12,7 @@ git clone <this repo> ~/src/hop
 ~/src/hop/install.sh
 ```
 
-Then open a new terminal tab. hop is a single Go binary with no other dependencies. The installer builds it, links it into `~/.local/bin`, adds `eval "$(hop init zsh)"` to `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. Running it again changes nothing; it also upgrades an older Python install of hop in place.
+Then open a new terminal tab. hop is a single Go binary with no other dependencies. The installer builds it, links it into `~/.local/bin`, adds `eval "$(hop init zsh)"` to `~/.zshrc`, and adds a Cmd-Shift-O keybind to Ghostty. Running it again changes nothing.
 
 The shell setup is a small zsh function: a program can't change its parent shell's folder, so `hop init zsh` defines the function that runs the `cd` and `claude --resume` for you.
 

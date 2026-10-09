@@ -6,7 +6,6 @@ import (
 	"image/color"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -96,8 +95,7 @@ type bodyKey struct {
 	width      int
 	recent     bool
 	generation int
-	size       int64
-	mtime      float64
+	file       fileID
 }
 
 type bodyLoaded struct {
@@ -124,7 +122,7 @@ type picker struct {
 	all        []Row
 	shown      []Row
 	db         *sql.DB
-	dbProblem  string
+	problem    string
 	cache      map[string]cacheEntry
 	known      map[string]statusEntry
 	statusSeen time.Time
@@ -156,7 +154,7 @@ type picker struct {
 	quitting bool
 }
 
-func newPicker(rows []Row, db *sql.DB, dbErr error) picker {
+func newPicker(rows []Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "Search sessions and conversations"
@@ -166,10 +164,7 @@ func newPicker(rows []Row, db *sql.DB, dbErr error) picker {
 		all: recentFirst(annotate(rows)), db: db, cache: loadCache(), known: statuses(), accounts: showsAccounts(rows),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{},
 	}
-	if dbErr != nil {
-		m.dbProblem = "Search is unavailable: " + dbErr.Error()
-		m.message = m.dbProblem
-	}
+	m.problem, m.message = problem, problem
 	m.shown = m.all
 	if info, err := os.Stat(cachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
@@ -240,15 +235,19 @@ func (m *picker) forgetAsk() {
 func (m *picker) search() {
 	m.forgetAsk()
 	query := m.input.Value()
-	m.cursor, m.offset, m.message = 0, 0, m.dbProblem
+	m.cursor, m.offset, m.message = 0, 0, m.problem
 	switch {
 	case strings.TrimSpace(query) == "":
 		m.shown = m.all
 	case m.db == nil:
 		m.shown = m.all
 	default:
-		m.shown = searchRows(m.db, query, m.all)
-		if len(m.shown) == 0 {
+		shown, err := searchRows(m.db, query, m.all)
+		m.shown = shown
+		switch {
+		case err != nil:
+			m.message = "Search failed: " + err.Error()
+		case len(m.shown) == 0:
 			m.message = "No sessions match “" + query + "”"
 		}
 	}
@@ -282,7 +281,7 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	m.header = previewHeader(req, m.cache, m.known, m.db)
 	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent, generation: m.generation}
 	if info, err := os.Stat(r.Path); err == nil {
-		key.size, key.mtime = info.Size(), stamp(info)
+		key.file = identify(info)
 	}
 	m.showing = key
 	m.body.SetWidth(l.previewWidth)
@@ -320,7 +319,7 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 		return m, nil
 	}
 	if m.db == nil {
-		m.message = m.dbProblem
+		m.message = m.problem
 		return m, nil
 	}
 	m.askSeq++
@@ -485,7 +484,6 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m picker) rowLine(r Row, selected bool, width int) string {
-	s := r.Session
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -496,22 +494,12 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(lipgloss.NewStyle().Foreground(m.colors.muted))
-	var parts []string
+	t := rowTextOf(r, m.accounts)
 	segment := ""
-	if r.Status == waitingLabel {
-		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(r.Status) + muted.Render(" · ")
-	} else if r.Status != "" {
-		parts = append(parts, r.Status)
+	if t.waiting != "" {
+		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(t.waiting) + muted.Render(" · ")
 	}
-	parts = append(parts, when(s), s.Project())
-	if r.FolderGone {
-		parts = append(parts, "folder removed")
-	}
-	if m.accounts {
-		parts = append(parts, filepath.Base(r.ConfigDir))
-	}
-	title := strings.Join(strings.Fields(s.Title), " ")
-	line := plain.Render(" "+title+"  ") + segment + muted.Render(strings.Join(parts, " · "))
+	line := plain.Render(" "+t.title+"  ") + segment + muted.Render(strings.Join(t.context, " · "))
 	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
 	if pad := width - lipgloss.Width(line); pad > 0 {
 		line += plain.Render(strings.Repeat(" ", pad))
@@ -644,13 +632,14 @@ func pathsOf(rows []Row) []string {
 }
 
 func pick() (*Row, error) {
+	problem := ""
 	rows, err := index()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "hop: "+err.Error())
+		problem = "Sessions may be out of date: " + err.Error()
 	}
-	db, dbErr := openSearch()
-	if dbErr != nil {
-		db = nil
+	db, err := openSearch()
+	if err != nil {
+		problem = "Search is unavailable: " + err.Error()
 	}
 	spawnLabeler()
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -658,7 +647,7 @@ func pick() (*Row, error) {
 		return nil, fmt.Errorf("hop pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
-	final, err := tea.NewProgram(newPicker(rows, db, dbErr), tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	final, err := tea.NewProgram(newPicker(rows, db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return nil, err
 	}

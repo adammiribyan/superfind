@@ -72,22 +72,12 @@ func secondaryFromEnv() string {
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
 }
 
-func rowContext(r Row, showAccount bool, secondary string) string {
+func rowContext(t rowText, secondary string) string {
 	flag := ""
-	switch {
-	case r.Status == waitingLabel:
-		flag = ansiAccent + r.Status + ansiReset + secondary + " · "
-	case r.Status != "":
-		flag = r.Status + " · "
+	if t.waiting != "" {
+		flag = ansiAccent + t.waiting + ansiReset + secondary + " · "
 	}
-	context := flag + when(r.Session) + " · " + r.Session.Project()
-	if r.FolderGone {
-		context += " · folder removed"
-	}
-	if showAccount {
-		context += " · " + filepath.Base(r.ConfigDir)
-	}
-	return context
+	return flag + strings.Join(t.context, " · ")
 }
 
 func showsAccounts(rows []Row) bool {
@@ -102,13 +92,13 @@ func printRows(rows []Row) {
 	secondary := secondaryFromEnv()
 	accounts := showsAccounts(rows)
 	for _, r := range rows {
-		title := strings.Join(strings.Fields(r.Session.Title), " ")
-		display := " " + title + "  " + secondary + rowContext(r, accounts, secondary) + ansiReset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.ConfigDir, title, display)
+		t := rowTextOf(r, accounts)
+		display := " " + t.title + "  " + secondary + rowContext(t, secondary) + ansiReset
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.ConfigDir, t.title, display)
 	}
 }
 
-func searchRows(db *sql.DB, query string, rows []Row) []Row {
+func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
 	var words, filters []string
 	for _, w := range strings.Fields(query) {
 		if strings.HasPrefix(w, "is:") {
@@ -136,13 +126,16 @@ func searchRows(db *sql.DB, query string, rows []Row) []Row {
 		rows = kept
 	}
 	if db == nil {
-		return recentFirst(rows)
+		return recentFirst(rows), nil
 	}
-	found, searched := matches(db, strings.Join(words, " "))
+	found, searched, err := matches(db, strings.Join(words, " "))
+	if err != nil {
+		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
+	}
 	if !searched {
-		return recentFirst(rows)
+		return recentFirst(rows), nil
 	}
-	return inOrder(rows, found)
+	return inOrder(rows, found), nil
 }
 
 func resumeCommand(cwd, sessionID, configDir string) string {
@@ -197,6 +190,14 @@ func mustOpenSearch() *sql.DB {
 	return db
 }
 
+func mustIndex(command string) []Row {
+	rows, err := index()
+	if err != nil {
+		fail("hop " + command + ": " + err.Error())
+	}
+	return rows
+}
+
 func fail(message string) {
 	fmt.Fprintln(os.Stderr, message)
 	os.Exit(1)
@@ -217,14 +218,10 @@ func main() {
 		}
 		fmt.Printf(zshSetup, shellQuote(selfPath()))
 	case "index":
-		rows, err := index()
-		if err != nil {
-			fail("hop index: " + err.Error())
-		}
-		fmt.Printf("%d sessions indexed\n", len(rows))
+		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
+		rows := annotate(mustIndex("search"))
 		db := mustOpenSearch()
-		rows := annotate(cachedRows())
 		deep, words := false, []string{}
 		for _, arg := range args[1:] {
 			if arg == "--deep" {
@@ -235,7 +232,11 @@ func main() {
 		}
 		query := strings.Join(words, " ")
 		if !deep {
-			printRows(searchRows(db, query, rows))
+			found, err := searchRows(db, query, rows)
+			if err != nil {
+				fail("hop search: " + err.Error())
+			}
+			printRows(found)
 			return
 		}
 		if strings.TrimSpace(query) == "" {
@@ -249,9 +250,12 @@ func main() {
 		}
 		printRows(inOrder(rows, paths))
 	case "label":
-		if key := typesafeKey(); key != "" {
-			rows, _ := index()
-			labelSessions(key, rows)
+		key := typesafeKey()
+		if key == "" {
+			fail("hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env")
+		}
+		if err := labelSessions(key, mustIndex("label")); err != nil {
+			fail("hop label: " + err.Error())
 		}
 	case "preview":
 		if len(args) < 2 {
@@ -274,6 +278,7 @@ func main() {
 				}
 			}
 		}
+		mustIndex("preview")
 		header := previewHeader(req, loadCache(), statuses(), mustOpenSearch())
 		if header != nil {
 			header = append(header, "")
@@ -286,6 +291,7 @@ func main() {
 			fail("hop command: which transcript?")
 		}
 		path := resolve(args[1])
+		mustIndex("command")
 		e, ok := loadCache()[path]
 		if !ok || e.Session == nil {
 			fail("hop command: not an indexed session: " + args[1])

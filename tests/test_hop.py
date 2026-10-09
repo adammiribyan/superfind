@@ -98,7 +98,7 @@ class HopBehavior(unittest.TestCase):
         cache = self.home / ".cache" / "hop"
         cache.mkdir(parents=True, exist_ok=True)
         (cache / "status.json").write_text(json.dumps(
-            {str(path): {"mtime": st.st_mtime, "size": st.st_size, "status": status, "p": p}}))
+            {str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": status, "p": p}}))
 
     def rows(self, *search):
         self.hop("index")
@@ -231,6 +231,144 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(self.titles("idempotency"), ["Payment retries"])
 
+    def test_a_transcript_written_with_spaced_json_is_still_read(self):
+        spaced = [json.dumps(json.loads(l)) for l in (
+            user("make payment retries safe to repeat"), tool("Edit"), claude("Added idempotency keys."))]
+        self.session("a1", *spaced, title="Payment retries")
+        self.assertEqual(self.titles("idempotency"), ["Payment retries"])
+
+    def test_a_tool_call_whose_input_looks_like_a_transcript_line_still_counts_as_work(self):
+        self.session("old", user("rename the invoice PDF files"), tool("Edit"), claude("Renamed them."),
+                     title="Invoice file names")
+        self.session("new", user("replay the fixture"), line(type="assistant", message={"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t1", "name": "Replay", "input": {"type": "user", "text": "hi"}}]}),
+                     claude("Replayed."), title="Fixture replay")
+        self.assertEqual(self.titles(), ["Fixture replay", "Invoice file names"])
+
+    def test_a_transcript_that_could_not_be_read_is_read_again_next_time(self):
+        path = self.session("a1", user("make payment retries safe to repeat"), claude("Added idempotency keys."),
+                            title="Payment retries")
+        path.chmod(0)
+        self.addCleanup(path.chmod, 0o644)
+        self.hop("index")
+        path.chmod(0o644)
+        self.assertEqual(self.titles("idempotency"), ["Payment retries"])
+
+    def test_an_edit_that_keeps_the_size_and_lands_within_a_microsecond_is_still_noticed(self):
+        path = self.session("a1", user("tune the alpha retries"), claude("Done."), title="Retries")
+        self.hop("index")
+        before = os.stat(path).st_mtime_ns
+        path.write_text(path.read_text().replace("alpha", "omega"))
+        os.utime(path, ns=(before + 500, before + 500))
+        self.assertEqual(self.titles("omega"), ["Retries"])
+
+    def test_a_session_written_after_the_last_index_is_found_without_reindexing(self):
+        self.session("a1", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        self.hop("index")
+        path = self.session("b2", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.assertEqual([r.split("\t")[4] for r in self.hop("search", "kubernetes").splitlines()], ["Cluster upgrade"])
+        self.assertEqual(self.hop("command", str(path)), "cd /tmp && claude --resume b2\n")
+
+    def break_search_index(self):
+        import sqlite3
+        db = sqlite3.connect(self.home / ".cache" / "hop" / "search.db")
+        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.close()
+
+    def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.hop("index")
+        self.break_search_index()
+        result = self.run_hop("search", "kubernetes")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertTrue(result.stderr.startswith("hop search: the search index couldn't be read: "), result.stderr)
+        deep = self.run_hop("search", "--deep", "where did we upgrade the cluster")
+        self.assertEqual((deep.returncode, deep.stdout), (1, ""))
+        self.assertTrue(deep.stderr.startswith("Deep search failed: the search index couldn't be read ("), deep.stderr)
+
+    def test_labeling_without_a_key_says_what_it_needs(self):
+        result = self.run_hop("label")
+        self.assertEqual((result.returncode, result.stderr),
+                         (1, "hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env\n"))
+
+    def test_labels_for_deleted_sessions_are_forgotten(self):
+        import http.server
+        import threading
+
+        class Finished(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = b'{"answers": {"status": {"choice": "finished", "probabilities": {"finished": 0.9}}}}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Finished)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        gone = self.session("gone", user("try a spike"), tool("Bash"), claude("Spiked."), title="Spike")
+        self.judged(gone, "waiting")
+        gone.unlink()
+        kept = self.session("kept", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."),
+                            title="Ledger migration")
+        os.utime(kept, (time.time() - 600, time.time() - 600))
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.hop("label")
+        status = json.loads((self.home / ".cache" / "hop" / "status.json").read_text())
+        self.assertEqual({p: e["status"] for p, e in status.items()}, {str(kept): "finished"})
+
+    def test_typesafe_requests_are_ascii_json_with_sessions_in_list_order(self):
+        import http.server
+        import threading
+        bodies = []
+
+        class Recorder(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                bodies.append(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(500)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.session("a1", user("rename the invoice PDF files"), tool("Edit"), claude("Renamed them."),
+                     title="Invoice file names")
+        self.session("b2", user("fix the café layout"), tool("Edit"), claude("Fixed."),
+                     title="Fix <b> & “quotes” 🚀 in café")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}",
+                        PATH="/usr/bin:/bin")
+        self.run_hop("search", "--deep", "where did we fix the cafe")
+        raw = bodies[0].decode("ascii")
+        self.assertIn('"s0":"Fix <b> & \\u201cquotes\\u201d \\ud83d\\ude80 in caf\\u00e9 | ', raw)
+        self.assertLess(raw.index('"s0":'), raw.index('"s1":'))
+        self.assertLess(raw.index('"s1":'), raw.index('"none":'))
+
+    def test_prose_wraps_like_python_textwrap_at_tokens_hyphens_and_dash_runs(self):
+        cases = [
+            ("see https://example.com/a/very/long/path/that/cannot/fit/on/one/line ok", 24,
+             ["see https://example.", "com/a/very/long/path", "/that/cannot/fit/on/", "one/line ok"]),
+            ("we shipped the well-known state-of-the-art double-charge-prevention fix", 24,
+             ["we shipped the well-", "known state-of-the-", "art double-charge-", "prevention fix"]),
+            ("first part--second part--third part of the sentence here", 30,
+             ["first part--second part--", "third part of the sentence", "here"]),
+        ]
+        for n, (text, width, expected) in enumerate(cases):
+            with self.subTest(text=text):
+                path = self.session(f"w{n}", user("go"), tool("Read"), claude(text), title=f"Wrap {n}")
+                self.hop("index")
+                body = self.hop("preview", str(path), "--width", str(width)).split("claude\n", 1)[1]
+                self.assertEqual(body.splitlines(), ["  " + l for l in expected])
+
     def test_shell_setup_calls_hop_by_its_full_path(self):
         self.assertIn(f"typeset -g _hop_bin={HOP}", self.hop("init", "zsh"))
 
@@ -263,7 +401,9 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr.strip()),
                          (1, "Deep search failed: TypeSafe and Claude didn't answer."))
         os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
-        self.hop("label")
+        labeled = self.run_hop("label")
+        self.assertEqual((labeled.returncode, labeled.stderr.strip()),
+                         (1, "hop label: 1 of 1 sessions couldn't be labeled: TypeSafe returned no usable status"))
         status = self.home / ".cache" / "hop" / "status.json"
         self.assertEqual(json.loads(status.read_text()) if status.exists() else {}, {})
 
