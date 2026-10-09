@@ -433,8 +433,12 @@ func MeaningfulWords(query string) []string {
 
 func ftsQuery(query string) string {
 	var parts []string
-	for _, w := range MeaningfulWords(query) {
-		parts = append(parts, `"`+w+`"*`)
+	for _, w := range wordPattern.FindAllString(strings.ToLower(query), -1) {
+		if len([]rune(w)) == 1 {
+			parts = append(parts, `"`+w+`"`)
+		} else {
+			parts = append(parts, `"`+w+`"*`)
+		}
 	}
 	return strings.Join(parts, " ")
 }
