@@ -536,7 +536,7 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
 
 
-    def test_explanation_passages_are_packed_by_characters_and_never_cut_short(self):
+    def explaining_typesafe(self):
         received = []
 
         class TypeSafe(http.server.BaseHTTPRequestHandler):
@@ -567,10 +567,30 @@ class PickerBehavior(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        return received
+
+    def test_explanation_passages_cover_every_message_and_all_of_a_long_one(self):
+        received = self.explaining_typesafe()
+        long_reply = " ".join(f"word{n:03d}" for n in range(125))
+        self.session("ledger", "Ledger migration", user("migrate the ledger"), tool("Bash"),
+                     claude("I changed ledger.go to batch the writes."), user("now add a test for the ledger"),
+                     claude(long_reply))
+        self.open_picker()
+        self.keys("where did we migrate the ledger", "C-r")
+        deadline = time.time() + 10
+        while not received and time.time() < deadline:
+            time.sleep(0.1)
+        passages = " ".join(received[0][k] for k in received[0] if k != "none")
+        for said in ("I changed ledger.go", "now add a test for the ledger", "word000", "word124"):
+            self.assertIn(said, passages)
+        self.assertTrue(all(len(received[0][k]) <= 400 for k in received[0]))
+
+    def test_explanation_passages_are_packed_by_characters_and_never_cut_short(self):
+        received = self.explaining_typesafe()
         paragraphs = [("Миграция реестра " * 9)[:150]] * 2 + ["р" * 199 + "a", "р" * 199 + "b"]
         self.session("ledger", "Ledger migration", user("migrate the ledger"), tool("Bash"),
                      claude("\n\n".join(paragraphs)))
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
         self.open_picker()
         self.keys("where did we migrate the ledger", "C-r")
         deadline = time.time() + 10
