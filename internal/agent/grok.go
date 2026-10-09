@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io/fs"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,15 +40,12 @@ func newGrokReader(path string) (reader, error) {
 	dir := filepath.Dir(path)
 	folder, _ := url.PathUnescape(filepath.Base(filepath.Dir(dir)))
 	g.t.Cwd = folder
-	raw, err := os.ReadFile(filepath.Join(dir, "summary.json"))
+	raw, err := readSmall(filepath.Join(dir, "summary.json"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return g, nil
 	}
-	if err != nil {
-		return nil, err
-	}
 	var s grokSummary
-	if json.Unmarshal(raw, &s) != nil {
+	if err != nil || json.Unmarshal(raw, &s) != nil {
 		g.t.Incomplete = true
 		return g, nil
 	}

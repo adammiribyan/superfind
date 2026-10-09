@@ -64,7 +64,9 @@ func (a *Agent) homes() []string {
 	var dirs []string
 	for _, c := range candidates {
 		d := Resolve(c)
-		if info, err := os.Stat(filepath.Join(d, marker)); err == nil && info.IsDir() && !seen[d] {
+		info, err := os.Stat(filepath.Join(d, marker))
+		exists := (err == nil && info.IsDir()) || (err != nil && !errors.Is(err, fs.ErrNotExist) && dirExists(d))
+		if exists && !seen[d] {
 			seen[d] = true
 			dirs = append(dirs, d)
 		}
@@ -73,6 +75,11 @@ func (a *Agent) homes() []string {
 }
 
 var globMeta = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`)
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
 
 func (a *Agent) Sessions(home string) ([]string, []error) {
 	var paths []string
@@ -104,6 +111,8 @@ func (a *Agent) Sessions(home string) ([]string, []error) {
 				}
 			} else if info, err := os.Stat(path); err == nil && info.IsDir() {
 				walk(path, parts[1:])
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				unreadable = append(unreadable, err)
 			}
 		}
 	}

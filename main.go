@@ -229,9 +229,11 @@ func mustOpenSearch() *sql.DB {
 	return db
 }
 
-func mustIndex(command string) []session.Row {
+func mustIndex(command string) []session.Row { return mustRefresh(command, session.Index) }
+
+func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
 	noticed := false
-	rows, problems, err := session.Index(func(stale int) {
+	rows, problems, err := refresh(func(stale int) {
 		if term.IsTerminal(os.Stderr.Fd()) {
 			fmt.Fprintf(stderr, "  Indexing %d sessions…", stale)
 			noticed = true
@@ -368,7 +370,7 @@ func run(args []string) {
 		rows := session.Annotate(mustIndex("search"))
 		found, err := session.Search(mustOpenSearch(), query, rows)
 		if errors.Is(err, session.ErrDamaged) {
-			rows = session.Annotate(mustIndex("search"))
+			rows = session.Annotate(mustRefresh("search", session.Rebuild))
 			found, err = session.Search(mustOpenSearch(), query, rows)
 		}
 		if err != nil {
