@@ -56,7 +56,7 @@ The setup line takes effect in shells started after you add it, so open a new te
 
 ## Use
 
-Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
+Type `superfind` or `sfd`, press **Ctrl-X**, then **c**, in zsh or bash, or press **Cmd-Shift-O** in Ghostty. The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
 
 | Key | Does |
 |---|---|
@@ -87,7 +87,7 @@ Often you remember what a session was about but not the words it used. Type a de
 
 For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list.
 
-Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise, so asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
 
 Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
 
