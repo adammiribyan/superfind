@@ -1,5 +1,6 @@
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -123,10 +124,14 @@ def grok_lines(turns):
 def main(home):
     home = Path(home)
     shutil.rmtree(home, ignore_errors=True)
+    real_claude, real_home = os.environ.get("DEMO_CLAUDE", ""), os.environ.get("DEMO_HOME", "")
     for name in ("claude", "codex", "grok"):
         stand_in = home / "bin" / name
         stand_in.parent.mkdir(parents=True, exist_ok=True)
-        stand_in.write_text("#!/bin/sh\nexit 0\n")
+        script = "#!/bin/sh\n"
+        if name == "claude" and real_claude and real_home:
+            script += f'[ "$1" = -p ] && HOME={shlex.quote(real_home)} exec {shlex.quote(real_claude)} "$@"\n'
+        stand_in.write_text(script + "exit 0\n")
         stand_in.chmod(0o755)
     now = time.time()
     for age, (project, title, branch, turns) in enumerate(SESSIONS):

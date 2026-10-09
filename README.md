@@ -1,8 +1,15 @@
-# superfind
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/superfind-lockup-white.svg">
+    <img alt="superfind" src="assets/superfind-lockup-ink.svg" width="300">
+  </picture>
+</p>
 
-Find any past AI coding session and resume it. superfind reads Claude Code, Codex, and Grok sessions, opens the session's folder, and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh or bash.
+<p align="center">Find any past AI coding session and resume it.</p>
 
-![superfind finding a session from a description and resuming it](demo/superfind.gif)
+superfind reads your Claude Code, Codex, and Grok sessions and finds the one you want, by the words in it or by a description. Then it opens the session's folder and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh or bash.
+
+![superfind searching sessions from three agents, asking for one by description, and resuming it](demo/superfind.gif)
 
 ## Install
 
@@ -42,12 +49,13 @@ Type `superfind` or `sfd`, press **Ctrl-X c** in zsh or bash, or press **Cmd-Shi
 | Key | Does |
 |---|---|
 | type | Search titles, projects, branches, and the conversations themselves for the words you type. Every word must match. Titles that match come first. |
-| Ctrl-R | Ask: find the session you describe, even when it used other words. "where did we stop charging people twice" finds "Checkout button double-charges on slow networks". |
+| Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
 | Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). The command lands in your shell history. |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
 | Ctrl-U | Clear the search. |
+| Esc, Ctrl-C | Close the picker without resuming anything. |
 | `is:waiting` | Show only sessions waiting on you. `is:unfinished` works the same way. |
 | `agent:codex` | Show only Codex sessions. `agent:claude` and `agent:grok` work the same way. |
 
@@ -57,15 +65,11 @@ The preview opens on where the session left off: your last real request and the 
 
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
 
-## Waiting on you
+## Ask for the session you remember
 
-With a TypeSafe key, superfind marks sessions that need you. **waiting on you** means the agent stopped on a question, an approval, or a choice it can't make alone. **unfinished** means work stopped partway: the agent was interrupted, hit an error, or never answered. Sessions that simply finished, including ones that end with an optional "want me to also…?", stay unmarked. Type `is:waiting` or `is:unfinished` to list only those.
+Often you remember what a session was about but not the words it used. Type a description in the picker and press **Ctrl-R**. superfind lists the sessions that best fit it, best match first: "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
 
-[Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether the agent was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure. It disappears as soon as the session changes, and after two weeks away, since a session you haven't returned to in that long isn't really waiting. On 21 hand-labeled Claude Code sessions, 13 of the 15 labels shown were right, and 1 of the 14 sessions that needed a label got none. On 42 hand-labeled Codex and Grok sessions, all 3 labels shown were right, and all 3 sessions that needed a label got one. Treat labels as a hint. Labeling runs in the background when the picker opens and only reads recent sessions that changed, so opening never waits on it.
-
-## Ask
-
-Ask (Ctrl-R in the picker, or `superfind ask`) ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
 
 Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
 
@@ -89,7 +93,17 @@ TYPESAFE_API_KEY=your-key
 
 Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`. If asking fails, the line under the search box says why, and typing goes back to search.
 
-**What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+## Waiting on you
+
+With a TypeSafe key, superfind marks sessions that need you. **waiting on you** means the agent stopped on a question, an approval, or a choice it can't make alone. **unfinished** means work stopped partway: the agent was interrupted, hit an error, or never answered. Sessions that simply finished, including ones that end with an optional "want me to also…?", stay unmarked. Type `is:waiting` or `is:unfinished` to list only those.
+
+[Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether the agent was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure. It disappears as soon as the session changes, and after two weeks away, since a session you haven't returned to in that long isn't really waiting. On 21 hand-labeled Claude Code sessions, 13 of the 15 labels shown were right, and 1 of the 14 sessions that needed a label got none. On 42 hand-labeled Codex and Grok sessions, all 3 labels shown were right, and all 3 sessions that needed a label got one. Treat labels as a hint. Labeling runs in the background when the picker opens and only reads recent sessions that changed, so opening never waits on it.
+
+## What leaves your machine
+
+Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+
+superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
 ## Sessions it finds
 
@@ -120,17 +134,27 @@ The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when t
 
 superfind takes its colors from your terminal. Until your terminal reports them, superfind shows the selected row in reverse video, and it switches to the tinted row as soon as they arrive. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video, and always shows the selected row in reverse video.
 
-## Develop
+## Uninstall
+
+Remove the binary the way you installed it:
 
 ```sh
-go build -o bin/superfind .              # build
-python3 -m unittest discover -s tests    # behavior tests against bin/superfind, using fake transcripts and homes
-vhs demo/superfind.tape                  # re-record demo/superfind.gif from fake sessions
+brew uninstall --cask adammiribyan/tap/superfind   # Homebrew
+rm "$(go env GOPATH)/bin/superfind"                # go install, or $GOBIN/superfind if you set GOBIN
+rm ~/.local/bin/superfind                          # install.sh
 ```
 
-The picker and shell tests drive real terminals through tmux, so they need tmux, zsh, and bash. CI runs everything on macOS and Linux.
+Delete the `eval "$(superfind init …)"` line from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
 
-To release, set `version` in `main.go`, commit, and push a tag like `v0.9.0`. The release workflow checks that the tag matches `superfind --version`, then builds the binaries and updates the Homebrew tap.
+```sh
+rm -rf ~/.cache/superfind ~/.config/superfind      # and $XDG_CACHE_HOME/superfind if you set XDG_CACHE_HOME
+```
+
+superfind only reads your sessions and never changes them, so uninstalling leaves every Claude Code, Codex, and Grok session as it was.
+
+## Contributing
+
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build and test superfind, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each version. Please report security problems privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
