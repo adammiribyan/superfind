@@ -28,7 +28,6 @@ import (
 const (
 	wideColumns    = 100
 	headerLines    = 4
-	clay           = "#D77757"
 	colorTimeout   = 300 * time.Millisecond
 	labelsInterval = 1500 * time.Millisecond
 	marginTop      = 1
@@ -584,10 +583,9 @@ func (m picker) rowLine(r session.Row, selected bool, width int) string {
 func (m picker) inputBox(width int) []string {
 	border := lipgloss.NewStyle().Foreground(m.colors.border)
 	muted := lipgloss.NewStyle().Foreground(m.colors.muted)
-	label := " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render("✻") + " " +
-		lipgloss.NewStyle().Bold(true).Render(m.label) + " "
+	label := " " + lipgloss.NewStyle().Bold(true).Render(m.label) + " "
 	if m.asking {
-		label = " " + lipgloss.NewStyle().Foreground(lipgloss.Color(clay)).Render(m.spin.View()) + " " +
+		label = " " + lipgloss.NewStyle().Foreground(m.colors.accent).Render(m.spin.View()) + " " +
 			lipgloss.NewStyle().Bold(true).Render("Searching deeper…") + " "
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
