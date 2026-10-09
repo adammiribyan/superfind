@@ -26,12 +26,19 @@ Press **Cmd-Shift-O** in Ghostty, **Ctrl-X c** in any zsh, or type `hop`.
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
 | Ctrl-U | Clear the search. |
+| `is:waiting` | Show only sessions waiting on you. `is:unfinished` works the same way. |
 
 Each row shows a session's title, how long ago it was active, and its project. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
+
+## Waiting on you
+
+With a TypeSafe key, hop marks sessions that need you. **waiting on you** means Claude stopped on a question, an approval, or a choice it can't make alone. **unfinished** means work stopped partway: Claude was interrupted, hit an error, or never answered. Sessions that simply finished, including ones that end with an optional "want me to also…?", stay unmarked. Type `is:waiting` or `is:unfinished` to list only those.
+
+[Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether Claude was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure, and disappears as soon as the session changes. On a hand-checked sample of 14 labels, 11 were right; treat them as a hint. Labeling runs in the background when the picker opens and only reads sessions that changed, so opening never waits on it. The first run over about 350 sessions took 22 seconds.
 
 ## Ask
 
@@ -57,7 +64,7 @@ To use Jev, put the key in your environment or in a `.env` file next to the `hop
 TYPESAFE_API_KEY=your-key
 ```
 
-**What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Typing never sends anything; keyword search runs locally.
+**What leaves your machine.** Asking sends each session's title, project, last request, and one short passage to the ranker: to TypeSafe with a key, to Anthropic without one. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe, and labeling sends the ending of every session (its last six turns, clipped) to TypeSafe once, and again whenever it changes. Without a key nothing is labeled. Typing never sends anything; keyword search runs locally.
 
 ## Sessions it finds
 
@@ -72,6 +79,7 @@ hop                  # open the picker
 hop search <words>   # print matching sessions
 hop ask <question>   # print sessions ranked by meaning
 hop index            # build or refresh the index
+hop label            # mark sessions waiting on you (needs a TypeSafe key)
 hop --version
 ```
 

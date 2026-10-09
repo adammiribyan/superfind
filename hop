@@ -9,9 +9,12 @@
   hop search Q   fzf lines for sessions whose title or conversation contains Q
   hop ask Q      fzf lines for the sessions judged most relevant to Q (by Jev when a
                  TypeSafe key is configured, otherwise by Claude)
+  hop label      have Jev judge how each changed session ended (waiting on you,
+                 unfinished, finished); runs in the background when the picker opens
   hop explain Q P...
                  save the passage of each transcript P that best shows Q
 """
+import fcntl
 import json
 import shlex
 import sqlite3
@@ -35,9 +38,11 @@ CACHE = Path(os.environ.get("XDG_CACHE_HOME", HOME / ".cache")) / "hop" / "index
 CACHE_VERSION = 10
 ACTIVE_SECONDS = 120
 THROWAWAY_WORDS = 150
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 SEARCH_DB = CACHE.with_name("search.db")
 EXPLAINED = CACHE.with_name("explained.json")
+STATUS = CACHE.with_name("status.json")
+STATUS_SHOWN_AT = 0.85
 JEV_URL = "https://api.typesafe.ai/v1/systemone"
 JEV_CHUNK = 120
 JEV_SHORTLIST = 15
@@ -459,9 +464,9 @@ def is_here(s):
     return s.cwd == os.environ.get("PWD")
 
 
-def meta_parts(s, config_dir, show_account):
+def meta_parts(s, config_dir, show_account, status=None):
     """Project and age lead so a long branch never pushes recency out of view."""
-    parts = [s.project, when(s)]
+    parts = [s.project] + ([status] if status else []) + [when(s)]
     if s.branch and s.branch != "HEAD":
         parts.append(s.branch)
     parts.append(f"{s.prompts} prompt" + ("" if s.prompts == 1 else "s"))
@@ -483,9 +488,17 @@ def in_order(rows, paths):
 def items(rows):
     """Tab-separated fzf lines: path, cwd, session id, config dir, title, then the display."""
     show_account = len({r[1] for r in rows}) > 1
+    known = statuses()
     out = []
     for s, config_dir, path in rows:
-        context = f"{when(s)} · {s.project}" + ("" if os.path.isdir(s.cwd) else " · folder removed")
+        status = status_label(path, known)
+        if status == STATUSES["waiting"][0]:
+            flag = f"{ACCENT}{status}{RESET}{SECONDARY} · "
+        elif status:
+            flag = f"{status} · "
+        else:
+            flag = ""
+        context = f"{flag}{when(s)} · {s.project}" + ("" if os.path.isdir(s.cwd) else " · folder removed")
         if show_account:
             context += f" · {config_dir.name}"
         title = " ".join(s.title.split())
@@ -494,10 +507,18 @@ def items(rows):
     return "\n".join(out)
 
 
-INLINE = [
-    (re.compile(r"\*\*(.+?)\*\*"), BOLD + r"\1" + RESET),
-    (re.compile(r"`([^`]+)`"), DIM + "`" + RESET + r"\1" + DIM + "`" + RESET),
-]
+CODE_SPAN = re.compile(r"`([^`]+)`")
+BOLD_START, BOLD_END = "\x01", "\x02"
+
+
+def bold_across_lines(wrapped):
+    """Turn bold markers into ANSI per wrapped line, reopening bold when a span continues onto the next line."""
+    out, inside = [], False
+    for w in wrapped:
+        line = ((BOLD if inside else "") + w).replace(BOLD_START, BOLD).replace(BOLD_END, RESET)
+        inside ^= (w.count(BOLD_START) + w.count(BOLD_END)) % 2 == 1
+        out.append(line + (RESET if inside else ""))
+    return out
 
 
 def clip(line, width):
@@ -523,11 +544,10 @@ def render(text, width):
             indent = " " * (len(line) - len(line.lstrip()))
             bullet = stripped[:2] in ("- ", "* ") or re.match(r"\d+\. ", stripped)
             hang = indent + ("  " if bullet else "")
-            wrapped = textwrap.wrap(stripped, width - 2, initial_indent=indent, subsequent_indent=hang) or [""]
-            for w in wrapped:
-                for pattern, sub in INLINE:
-                    w = pattern.sub(sub, w)
-                lines.append("  " + w)
+            marked = re.sub(r"\*\*(.+?)\*\*", BOLD_START + r"\1" + BOLD_END, stripped)
+            wrapped = textwrap.wrap(marked, width - 2, initial_indent=indent, subsequent_indent=hang) or [""]
+            for w in bold_across_lines(wrapped):
+                lines.append("  " + CODE_SPAN.sub(DIM + "`" + RESET + r"\1" + DIM + "`" + RESET, w))
     while lines and not lines[-1].strip():
         lines.pop()
     return lines
@@ -551,6 +571,115 @@ def conversation(path):
             else:
                 turns.append((e["type"], text))
     return turns
+
+
+LAST_EVENTS = {
+    "assistant_text": "Claude's last action was writing a reply to the developer.",
+    "tool_call": "Claude's last action was starting a tool (a command, edit, or search) whose result never arrived.",
+    "user_prompt": "The developer's last action was sending a request that Claude never answered.",
+    "interrupted": "The developer interrupted Claude while it was working.",
+}
+
+
+def ending(path, turns_kept=6, clip=700):
+    """How a session ended: its last few turns, clipped, and what the very last event was."""
+    last_event = "assistant_text"
+    with open(path, "rb") as f:
+        for raw in f:
+            if b'"type":"assistant"' in raw:
+                last_event = "tool_call" if b'"type":"tool_use"' in raw else "assistant_text"
+            elif b'"type":"user"' in raw:
+                if b"[Request interrupted" in raw:
+                    last_event = "interrupted"
+                elif b'"tool_use_id"' in raw:
+                    last_event = "tool_result"
+                elif prompt_text(message_text(json.loads(raw)).strip()):
+                    last_event = "user_prompt"
+    if last_event == "tool_result":
+        last_event = "tool_call"
+    turns = [{"who": "developer" if role == "user" else "claude", "text": text[-clip:]}
+             for role, text in conversation(path)[-turns_kept:]]
+    return {"last_event": LAST_EVENTS[last_event], "recent_turns": turns}
+
+
+STATUSES = {
+    "waiting": ("waiting on you", "Claude cannot finish the developer's current request without them: it asked "
+                "a question it needs answered, or needs their approval, credentials, or a choice before continuing."),
+    "unfinished": ("unfinished", "Work on the developer's last request stopped before it was done: Claude was "
+                   "mid-step, was interrupted, hit an error or limit, or never answered."),
+    "finished": (None, "The developer's last request was completed. An optional offer of more work, such as "
+                 "\"want me to also…?\", does not mean Claude is waiting."),
+    "unclear": (None, "The ending does not show which of the other states applies."),
+}
+
+
+def judge_status(key, path):
+    """(status, probability) for how the session at path ended."""
+    answer = jev(key, ending(path), {"status": {
+        "type": "choice",
+        "instructions": "This is the end of a coding session between a developer and Claude. "
+                        "In what state did the session end?",
+        "criteria": {name: description for name, (_, description) in STATUSES.items()},
+    }})["status"]
+    return answer["choice"], answer["probabilities"][answer["choice"]]
+
+
+def statuses():
+    try:
+        return json.loads(STATUS.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def status_label(path, known):
+    """The label for a session's ending, if Jev judged its current transcript confidently enough to show it.
+    A session still being written shows "active now" instead: it hasn't ended."""
+    entry = known.get(str(path))
+    if not entry or entry["p"] < STATUS_SHOWN_AT:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    fresh = entry["mtime"] == st.st_mtime and entry["size"] == st.st_size and time.time() - st.st_mtime >= ACTIVE_SECONDS
+    return STATUSES[entry["status"]][0] if fresh else None
+
+
+def label_sessions(key):
+    """Judge every session whose transcript changed since it was last judged. One run at a time."""
+    STATUS.parent.mkdir(parents=True, exist_ok=True)
+    with open(STATUS.with_suffix(".lock"), "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return
+        known = statuses()
+        todo = []
+        for session, _, path in index():
+            st = path.stat()
+            entry = known.get(str(path))
+            if not session.throwaway and not session.active and not (entry and entry["mtime"] == st.st_mtime and entry["size"] == st.st_size):
+                todo.append((path, st))
+
+        def judge(item):
+            path, st = item
+            try:
+                status, p = judge_status(key, str(path))
+            except (OSError, ValueError, KeyError):
+                return None
+            return str(path), {"mtime": st.st_mtime, "size": st.st_size, "status": status, "p": round(p, 3)}
+
+        with ThreadPoolExecutor(8) as pool:
+            for result in pool.map(judge, todo):
+                if result:
+                    known[result[0]] = result[1]
+        tmp = STATUS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(known))
+        tmp.replace(STATUS)
+    port = os.environ.get("FZF_PORT")
+    if port and todo:
+        urllib.request.urlopen(urllib.request.Request(
+            f"http://localhost:{port}", data=b"refresh-preview", method="POST"), timeout=2).close()
 
 
 def speaker(role):
@@ -577,7 +706,8 @@ def preview(path):
             survivor = os.path.dirname(survivor)
         where = tilde(s.cwd) if survivor == s.cwd else f"folder removed · resumes from {tilde(survivor)}"
         print(f"{BOLD}{one_line(s.title, width)}{RESET}")
-        print(f"{SECONDARY}{one_line(' · '.join(meta_parts(s, config_dir, len(dirs) > 1)), width)}{RESET}")
+        status = status_label(path, statuses())
+        print(f"{SECONDARY}{one_line(' · '.join(meta_parts(s, config_dir, len(dirs) > 1, status)), width)}{RESET}")
         print(f"{SECONDARY}{one_line(where, width)}{RESET}")
         query = os.environ.get("FZF_QUERY", "")
         found = one_line(explained(path, query), width) or snippet(path, query)
@@ -684,6 +814,7 @@ def pick():
         f"--bind=change:reload-sync({self_path} search {{q}})+refresh-preview",
         f"--bind=alt-enter:change-input-label({ASKING_LABEL})+reload({self_path} ask {{q}})+refresh-preview",
         f"--bind=load:change-input-label({INPUT_LABEL})+refresh-preview",
+        f"--bind=start:execute-silent({self_path} label >/dev/null 2>&1 &)",
         "--bind=ctrl-u:clear-query,ctrl-/:toggle-preview,alt-up:preview-page-up,alt-down:preview-page-down",
         f"--color=fg:-1,bg:-1,{selection}",
         f"--color=prompt:blue,info:-1:dim,border:dim,input-border:dim,scrollbar:dim,preview-scrollbar:dim,"
@@ -726,9 +857,18 @@ if __name__ == "__main__":
     elif command == ["pick"]:
         pick()
     elif command == ["search"]:
+        words = (sys.argv[2] if len(sys.argv) > 2 else "").split()
+        wanted = {STATUSES[w[3:]][0] for w in words if w.startswith("is:") and STATUSES.get(w[3:], (None,))[0]}
         rows = cached_rows()
-        found = matches(sys.argv[2] if len(sys.argv) > 2 else "")
+        if wanted:
+            known = statuses()
+            rows = [r for r in rows if status_label(r[2], known) in wanted]
+        found = matches(" ".join(w for w in words if not w.startswith("is:")))
         emit(items(recent_first(rows) if found is None else in_order(rows, found)))
+    elif command == ["label"]:
+        key = typesafe_key()
+        if key:
+            label_sessions(key)
     elif command in (["--version"], ["version"]):
         print(f"hop {VERSION}")
     elif command == ["index"]:

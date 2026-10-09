@@ -49,7 +49,9 @@ SESSIONS = [
     ("infra", "Cut staging costs", "main", [
         ("user", "staging costs almost as much as production, why"),
         ("claude", "Staging runs the same instance sizes as production around the clock. Scheduling it to stop "
-                   "outside working hours and halving the database size saves about $1,900 a month."),
+                   "outside working hours and halving the database size would save about $1,900 a month. The "
+                   "schedule is ready, but it would stop staging during Monday's release rehearsal. Should I apply "
+                   "it now, or after Monday?"),
     ]),
     ("docs-site", "Dark mode code blocks", "main", [
         ("user", "code blocks are unreadable in dark mode"),

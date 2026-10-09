@@ -10,8 +10,8 @@ Set TypingSpeed 70ms
 
 Hide
 Type "export HOME=/tmp/hop-demo-home XDG_CACHE_HOME=/tmp/hop-demo-home/.cache PATH=$PWD:$PATH" Enter
-Type "python3 demo/make-home.py $HOME && source ./hop.zsh && cd ~/code/storefront && hop index >/dev/null && clear" Enter
-Sleep 2s
+Type "python3 demo/make-home.py $HOME && source ./hop.zsh && cd ~/code/storefront && hop index >/dev/null && hop label && clear" Enter
+Sleep 6s
 Show
 
 Type "hop" Enter
