@@ -167,6 +167,48 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("1 session file or folder couldn't be read")
         self.assertEqual(len(self.rows()), 3)
 
+    def test_labels_that_land_while_a_status_filter_is_typed_show_up(self):
+        self.three_sessions()
+        self.open_picker()
+        self.keys("is:waiting")
+        self.wait_for("No sessions match")
+        path = self.projects / "mid.jsonl"
+        st = os.stat(path)
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Invoice layout"])
+
+    def test_a_session_that_loses_its_label_leaves_status_filtered_ask_results(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        path = self.projects / "mid.jsonl"
+        st = os.stat(path)
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.open_picker()
+        self.keys("is:waiting invoice names", "C-r")
+        self.wait_for("1/3", timeout=10)
+        status.write_text("{}")
+        os.utime(status, (time.time() + 5, time.time() + 5))
+        self.wait_for("0/3")
+
+    def test_a_lost_search_index_is_rebuilt_even_when_the_picker_opens_first(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        (self.home / ".cache" / "superfind" / "search.db").unlink()
+        self.open_picker(index_first=False)
+        self.wait_for("3/3")
+        self.keys("Escape")
+        self.result()
+        found = subprocess.run([str(SUPERFIND), "search", "charged"], env=self.env, capture_output=True, text=True)
+        self.assertEqual([r.split("\t")[4] for r in found.stdout.splitlines()], ["Checkout double charge"])
+
     def test_a_machine_with_no_sessions_says_where_it_looked(self):
         shutil.rmtree(self.home / ".claude")
         self.open_picker(index_first=False, header="Sessions")

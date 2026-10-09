@@ -501,9 +501,20 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, next
 		}
 		m.statusSeen = info.ModTime()
+		focused := ""
+		if r := m.focused(); r != nil {
+			focused = r.Path
+		}
 		m.all = session.Annotate(m.all)
-		m.shown = session.InOrder(m.all, pathsOf(m.shown))
-		updated, load := m.loadPreview()
+		if m.askedFor == "" {
+			m.filter()
+		} else {
+			_, m.shown = session.Narrow(m.input.Value(), session.InOrder(m.all, pathsOf(m.shown)))
+		}
+		if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
+			m.cursor = i
+		}
+		updated, load := m.afterMove()
 		return updated, tea.Batch(next, load)
 	case bodyLoaded:
 		delete(m.loading, msg.key)
