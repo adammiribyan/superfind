@@ -13,13 +13,15 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 ## Install
 
-With Homebrew:
+superfind is a single binary with no other dependencies. It resumes a session with the agent that made it, so it needs [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session.
+
+### With Homebrew or Go
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
 ```
 
-With Go 1.26 or newer:
+Or, with Go 1.26 or newer:
 
 ```sh
 go install github.com/adammiribyan/superfind@latest
@@ -32,15 +34,27 @@ eval "$(superfind init zsh)"     # in ~/.zshrc
 eval "$(superfind init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
 ```
 
-Open a new terminal tab and type `superfind`, or `sfd` for short. To open it with Cmd-Shift-O in Ghostty, add this line to your Ghostty config:
+To open superfind with Cmd-Shift-O in Ghostty, also add this line to your Ghostty config:
 
 ```
 keybind = super+shift+o=text:\x18c
 ```
 
-To build from source instead, clone this repo and run `./install.sh`. It builds superfind with Go, copies it to `~/.local/bin`, adds the setup line for your shell, and adds the Ghostty keybind if Ghostty is installed. Running it again changes nothing.
+### From source
 
-superfind resumes a session with the agent that made it, so it needs [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. It's a single binary with no other dependencies.
+You need Go. If yours is older than 1.26, Go downloads the 1.26 toolchain on the first build.
+
+```sh
+git clone https://github.com/adammiribyan/superfind.git
+cd superfind
+./install.sh
+```
+
+`install.sh` builds superfind, copies it to `~/.local/bin`, and does the setup above for you: it adds the setup line to your shell's startup file, and the Cmd-Shift-O keybind to your Ghostty config if Ghostty is installed. Running it again changes nothing. `~/.local/bin` doesn't need to be on your PATH, because the setup line runs superfind from there by its full path. Add it to your PATH only if you want to run superfind from scripts or other shells.
+
+### Then
+
+Open a new terminal tab and type `superfind`, or `sfd` for short.
 
 ## Use
 
@@ -67,7 +81,7 @@ A session written in the last two minutes shows **active now**, because it's pro
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the picker and press **Ctrl-R**. superfind lists the sessions that best fit it, best match first: "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
+Often you remember what a session was about but not the words it used. Type a description in the picker and press **Ctrl-R**. While it asks, the search box is titled "Asking…". Then superfind lists only the sessions that fit, best match first, so the list may hold just one. Typing again goes back to search. For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", where typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same list. Ask takes the same `is:` and `agent:` filters as search.
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise.
 
@@ -91,7 +105,7 @@ Without a TypeSafe key, ask uses Claude Haiku through your Claude Code login, wh
 TYPESAFE_API_KEY=your-key
 ```
 
-Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`. If asking fails, the line under the search box says why, and typing goes back to search.
+Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`. If asking fails, the line under the search box says why, and typing goes back to search. For example, "Claude Code didn't answer" usually means Claude Code isn't installed or isn't logged in; run `claude` once to log in.
 
 ## Waiting on you
 
@@ -128,7 +142,7 @@ superfind label              # mark sessions waiting on you (needs a TypeSafe ke
 superfind --version
 ```
 
-A session is the path `superfind search` prints first: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`.
+`search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and the row as the picker shows it. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it to `preview` or `command`.
 
 The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set. Each run re-reads only the sessions that changed, so opening the picker stays instant. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 
