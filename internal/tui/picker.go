@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"database/sql"
@@ -17,6 +17,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/ask"
+	"github.com/adammiribyan/hop/internal/render"
+	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
 const (
@@ -66,7 +72,7 @@ func (t *theme) settle() {
 	t.accent = lipgloss.Color("4")
 	if t.plain() {
 		t.muted, t.border = lipgloss.Color("8"), lipgloss.Color("8")
-		t.mutedSeq = ansiDim
+		t.mutedSeq = render.Dim
 		return
 	}
 	blue, share := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255}), 0.10
@@ -97,7 +103,7 @@ type bodyKey struct {
 	path   string
 	width  int
 	recent bool
-	file   fileID
+	file   agent.FileID
 }
 
 type bodyLoaded struct {
@@ -121,19 +127,20 @@ type explainDone struct {
 type colorsSettled struct{}
 
 type indexed struct {
-	rows []Row
+	rows []session.Row
 	err  error
 }
+
 type labelsTick struct{}
 
 type picker struct {
-	all        []Row
-	shown      []Row
+	all        []session.Row
+	shown      []session.Row
 	db         *sql.DB
 	problem    string
 	dbProblem  string
 	statusSeen time.Time
-	tags       tags
+	tags       render.Tags
 	label      string
 
 	input     textinput.Model
@@ -159,18 +166,18 @@ type picker struct {
 	explained   map[string]string
 	message     string
 
-	chosen   *Row
+	chosen   *session.Row
 	quitting bool
 }
 
-func newPicker(rows []Row, db *sql.DB, problem string) picker {
+func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
 	in.Prompt = "› "
 	in.Placeholder = "Search sessions and conversations"
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: recentFirst(annotate(rows)), db: db, tags: tagsFor(rows), label: pickerLabel(rows, places()),
+		all: session.RecentFirst(session.Annotate(rows)), db: db, tags: render.TagsFor(rows), label: render.PickerLabel(rows, agent.Places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 	}
 	m.problem, m.dbProblem = problem, problem
@@ -179,7 +186,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 	}
 	m.message = m.problem
 	m.shown = m.all
-	if info, err := os.Stat(cachePath("status.json")); err == nil {
+	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
 	}
 	m.colors.forcedPlain = os.Getenv("HOP_PLAIN_COLORS") != ""
@@ -192,7 +199,7 @@ func newPicker(rows []Row, db *sql.DB, problem string) picker {
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		func() tea.Msg {
-			rows, err := index(nil)
+			rows, err := session.Index(nil)
 			return indexed{rows, err}
 		},
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
@@ -239,7 +246,7 @@ func (m *picker) settleColors() {
 	m.styleInput()
 }
 
-func (m picker) focused() *Row {
+func (m picker) focused() *session.Row {
 	if m.cursor >= 0 && m.cursor < len(m.shown) {
 		return &m.shown[m.cursor]
 	}
@@ -266,7 +273,7 @@ func (m *picker) filter() {
 	case m.db == nil:
 		m.shown = m.all
 	default:
-		shown, err := searchRows(m.db, query, m.all)
+		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
 		switch {
 		case err != nil:
@@ -300,11 +307,11 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	if query == "" {
 		query = m.input.Value()
 	}
-	req := previewRequest{agent: r.Agent, path: r.Path, width: l.previewWidth, recent: m.recent, query: query,
-		explained: m.explained[r.Path], secondary: m.colors.mutedSeq}
-	m.header = previewHeader(req, *r, m.tags, m.db)
+	req := render.PreviewRequest{Agent: r.Agent, Path: r.Path, Width: l.previewWidth, Recent: m.recent, Query: query,
+		Explained: m.explained[r.Path], Secondary: m.colors.mutedSeq}
+	m.header = render.PreviewHeader(req, *r, m.tags, m.db)
 	key := bodyKey{path: r.Path, width: l.previewWidth, recent: m.recent}
-	if id, _, err := r.Agent.stat(r.Path); err == nil {
+	if id, _, err := r.Agent.Stat(r.Path); err == nil {
 		key.file = id
 	}
 	m.showing = key
@@ -321,9 +328,9 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 		return m, nil
 	}
 	m.loading[key] = true
-	req.secondary = secondaryMark
+	req.Secondary = secondaryMark
 	return m, func() tea.Msg {
-		body, err := previewBody(req)
+		body, err := render.PreviewBody(req)
 		return bodyLoaded{key, body, err == nil}
 	}
 }
@@ -350,7 +357,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 }
 
 func (m picker) startAsk() (picker, tea.Cmd) {
-	query, rows := narrow(m.input.Value(), m.all)
+	query, rows := session.Narrow(m.input.Value(), m.all)
 	if query == "" {
 		return m, nil
 	}
@@ -362,13 +369,13 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	m.asking, m.message = true, ""
 	seq, db := m.askSeq, m.db
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		paths, err := ask(db, query, rows)
+		paths, err := ask.Ask(db, query, rows)
 		return askDone{seq, query, paths, err}
 	})
 }
 
 func spawnLabeler() {
-	if typesafeKey() == "" {
+	if typesafe.Key() == "" {
 		return
 	}
 	exe, err := os.Executable()
@@ -423,13 +430,13 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all, m.tags, m.label = recentFirst(annotate(msg.rows)), tagsFor(msg.rows), pickerLabel(msg.rows, places())
+		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
 		}
 		if m.askedFor != "" {
-			m.shown = inOrder(m.all, pathsOf(m.shown))
+			m.shown = session.InOrder(m.all, pathsOf(m.shown))
 			m.message = m.problem
 		} else {
 			m.filter()
@@ -441,13 +448,13 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterMove()
 	case labelsTick:
 		next := tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} })
-		info, err := os.Stat(cachePath("status.json"))
+		info, err := os.Stat(session.CachePath("status.json"))
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
 		}
 		m.statusSeen = info.ModTime()
-		m.all = annotate(m.all)
-		m.shown = inOrder(m.all, pathsOf(m.shown))
+		m.all = session.Annotate(m.all)
+		m.shown = session.InOrder(m.all, pathsOf(m.shown))
 		updated, load := m.loadPreview()
 		return updated, tea.Batch(next, load)
 	case bodyLoaded:
@@ -473,18 +480,18 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.err.Error()
 			return m, nil
 		}
-		m.shown, m.cursor, m.offset, m.askedFor = inOrder(m.all, msg.paths), 0, 0, msg.query
+		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
 		if len(m.shown) == 0 {
 			m.message = "Deep search found nothing for “" + msg.query + "”"
 		}
 		updated, load := m.loadPreview()
-		key, top := typesafeKey(), msg.paths[:min(explainTop, len(msg.paths))]
+		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
 		if key == "" || len(top) == 0 {
 			return updated, load
 		}
 		seq, db, query := msg.seq, m.db, msg.query
 		return updated, tea.Batch(load, func() tea.Msg {
-			return explainDone{seq, explain(db, key, query, top)}
+			return explainDone{seq, ask.Explain(db, key, query, top)}
 		})
 	case explainDone:
 		if msg.seq == m.askSeq {
@@ -550,7 +557,7 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return updated, tea.Batch(cmd, load)
 }
 
-func (m picker) rowLine(r Row, selected bool, width int) string {
+func (m picker) rowLine(r session.Row, selected bool, width int) string {
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -561,12 +568,12 @@ func (m picker) rowLine(r Row, selected bool, width int) string {
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(lipgloss.NewStyle().Foreground(m.colors.muted))
-	t := rowTextOf(r, m.tags)
+	t := render.RowTextOf(r, m.tags)
 	segment := ""
-	if t.waiting != "" {
-		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(t.waiting) + muted.Render(" · ")
+	if t.Waiting != "" {
+		segment = paint(lipgloss.NewStyle().Foreground(m.colors.accent)).Render(t.Waiting) + muted.Render(" · ")
 	}
-	line := plain.Render(" "+t.title+"  ") + segment + muted.Render(strings.Join(t.context, " · "))
+	line := plain.Render(" "+t.Title+"  ") + segment + muted.Render(strings.Join(t.Context, " · "))
 	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
 	if pad := width - lipgloss.Width(line); pad > 0 {
 		line += plain.Render(strings.Repeat(" ", pad))
@@ -690,7 +697,7 @@ func (m picker) View() tea.View {
 	return view
 }
 
-func pathsOf(rows []Row) []string {
+func pathsOf(rows []session.Row) []string {
 	paths := make([]string, len(rows))
 	for i, r := range rows {
 		paths[i] = r.Path
@@ -698,9 +705,9 @@ func pathsOf(rows []Row) []string {
 	return paths
 }
 
-func pick() (*Row, error) {
+func Pick() (*session.Row, error) {
 	problem := ""
-	db, err := openSearch()
+	db, err := session.OpenSearch()
 	if err != nil {
 		problem = "Search is unavailable: " + err.Error()
 	}
@@ -709,7 +716,7 @@ func pick() (*Row, error) {
 		return nil, fmt.Errorf("hop pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
-	final, err := tea.NewProgram(newPicker(cachedRows(), db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
+	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), tea.WithInput(tty), tea.WithOutput(tty)).Run()
 	if err != nil {
 		return nil, err
 	}

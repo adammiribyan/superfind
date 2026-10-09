@@ -1,17 +1,13 @@
-package main
+package ask
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -19,14 +15,17 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/adammiribyan/hop/internal/render"
+	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/typesafe"
 )
 
 const (
 	claudeTimeout = 90 * time.Second
-	jevURL        = "https://api.typesafe.ai/v1/systemone"
 	jevChunk      = 120
 	jevShortlist  = 15
-	explainTop    = 5
+	ExplainTop    = 5
 )
 
 const askPrompt = "You rank a developer's past coding sessions by how relevant they are to a search. Each session is one " +
@@ -34,131 +33,25 @@ const askPrompt = "You rank a developer's past coding sessions by how relevant t
 	"not shared words. Reply with only a JSON array of the numbers of up to 15 relevant sessions, best first, " +
 	"or [] if none are relevant."
 
-var envKey = regexp.MustCompile(`(?m)^\s*(?:export\s+)?TYPESAFE_API_KEY\s*=\s*["']?([^"'\s]+)`)
-
-func typesafeKey() string {
-	if value, set := os.LookupEnv("TYPESAFE_API_KEY"); set {
-		return value
-	}
-	var places []string
-	if exe, err := os.Executable(); err == nil {
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			places = append(places, filepath.Join(filepath.Dir(real), ".env"), filepath.Join(filepath.Dir(filepath.Dir(real)), ".env"))
-		}
-	}
-	places = append(places, filepath.Join(home(), ".config", "hop", "env"))
-	for _, p := range places {
-		if raw, err := os.ReadFile(p); err == nil {
-			if m := envKey.FindSubmatch(raw); m != nil {
-				return string(m[1])
-			}
-		}
-	}
-	return ""
-}
-
-var httpClient = &http.Client{Timeout: 20 * time.Second}
-
-type jevAnswer struct {
-	Choice        string             `json:"choice"`
-	Probabilities map[string]float64 `json:"probabilities"`
-	Noul          float64            `json:"noul"`
-}
-
-type option struct {
-	key, meaning string
-}
-
-type options []option
-
-func (o options) MarshalJSON() ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	for i, opt := range o {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		encoder := json.NewEncoder(&buf)
-		encoder.SetEscapeHTML(false)
-		encoder.Encode(opt.key)
-		buf.Truncate(buf.Len() - 1)
-		buf.WriteByte(':')
-		encoder.Encode(opt.meaning)
-		buf.Truncate(buf.Len() - 1)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
-
-func asciiJSON(v any) []byte {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	encoder.Encode(v)
-	var out strings.Builder
-	for _, r := range strings.TrimRight(buf.String(), "\n") {
-		switch {
-		case r < 0x80:
-			out.WriteRune(r)
-		case r > 0xFFFF:
-			r -= 0x10000
-			fmt.Fprintf(&out, "\\u%04x\\u%04x", 0xD800+(r>>10), 0xDC00+(r&0x3FF))
-		default:
-			fmt.Fprintf(&out, "\\u%04x", r)
-		}
-	}
-	return []byte(out.String())
-}
-
-func jev(key string, state any, questions map[string]any) (map[string]jevAnswer, error) {
-	body := asciiJSON(map[string]any{"model": "jev-latest", "state": state, "questions": questions})
-	url := jevURL
-	if override := os.Getenv("TYPESAFE_URL"); override != "" {
-		url = override
-	}
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "hop/"+version)
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("TypeSafe answered %d", resp.StatusCode)
-	}
-	var out struct {
-		Answers map[string]jevAnswer `json:"answers"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
-	return out.Answers, nil
-}
-
-func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string, error) {
-	var kept []Row
-	for _, r := range recentFirst(rows) {
+func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []string, error) {
+	var kept []session.Row
+	for _, r := range session.RecentFirst(rows) {
 		if !r.Session.Throwaway() {
 			kept = append(kept, r)
 		}
 	}
 	passages := map[string]string{}
-	openings, err := queryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
+	openings, err := session.QueryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
 	if err != nil {
 		return nil, nil, err
 	}
 	var anyWord []string
-	for _, w := range meaningfulWords(query) {
+	for _, w := range session.MeaningfulWords(query) {
 		anyWord = append(anyWord, `"`+w+`"*`)
 	}
 	var matched [][2]string
 	if len(anyWord) > 0 {
-		matched, err = queryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
+		matched, err = session.QueryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
 			strings.Join(anyWord, " OR "))
 		if err != nil {
 			return nil, nil, err
@@ -170,13 +63,13 @@ func askCards(db *sql.DB, query string, rows []Row) ([]Row, []string, error) {
 	cards := make([]string, len(kept))
 	for i, r := range kept {
 		s := r.Session
-		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), ago(s.Mtime),
-			oneLine(s.LastPrompt, 160), oneLine(passages[r.Path], 300))
+		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), render.Ago(s.Mtime),
+			render.OneLine(s.LastPrompt, 160), render.OneLine(passages[r.Path], 300))
 	}
 	return kept, cards, nil
 }
 
-func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
+func jevRank(key, query string, rows []session.Row, cards []string) ([]string, error) {
 	if len(cards) == 0 {
 		return nil, nil
 	}
@@ -189,12 +82,12 @@ func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
 		wg.Add(1)
 		go func(start, end int) {
 			defer wg.Done()
-			var criteria options
+			var criteria typesafe.Options
 			for i := start; i < end; i++ {
-				criteria = append(criteria, option{"s" + strconv.Itoa(i), cards[i]})
+				criteria = append(criteria, typesafe.Option{Key: "s" + strconv.Itoa(i), Meaning: cards[i]})
 			}
-			criteria = append(criteria, option{"none", "None of these sessions is where the developer did this work."})
-			answers, err := jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
+			criteria = append(criteria, typesafe.Option{Key: "none", Meaning: "None of these sessions is where the developer did this work."})
+			answers, err := typesafe.Jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type": "choice",
 				"instructions": "A developer is searching their past AI coding sessions with `search`. " +
 					"Which session is the one where they did the work the search describes?",
@@ -253,7 +146,7 @@ func jevRank(key, query string, rows []Row, cards []string) ([]string, error) {
 			},
 		}
 	}
-	second, err := jev(key, map[string]any{"search": query, "sessions": sessions}, questions)
+	second, err := typesafe.Jev(key, map[string]any{"search": query, "sessions": sessions}, questions)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +175,7 @@ var errNoAnswer = errors.New("no answer")
 
 var rankList = regexp.MustCompile(`\[[\d,\s]*\]`)
 
-func claudeRank(query string, kept []Row, cards []string) ([]string, error) {
+func claudeRank(query string, kept []session.Row, cards []string) ([]string, error) {
 	var request strings.Builder
 	request.WriteString("Search: " + query + "\n\nSessions:\n")
 	for i, c := range cards {
@@ -324,16 +217,16 @@ func runClaude(args []string, input string) ([]byte, error) {
 	return cmd.Output()
 }
 
-type askFailure struct{ reason string }
+type Failure struct{ reason string }
 
-func (a askFailure) Error() string { return "Deep search failed: " + a.reason + "." }
+func (a Failure) Error() string { return "Deep search failed: " + a.reason + "." }
 
-func ask(db *sql.DB, query string, rows []Row) ([]string, error) {
+func Ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
 	kept, cards, err := askCards(db, query, rows)
 	if err != nil {
-		return nil, askFailure{"the search index couldn't be read (" + err.Error() + ")"}
+		return nil, Failure{"the search index couldn't be read (" + err.Error() + ")"}
 	}
-	key := typesafeKey()
+	key := typesafe.Key()
 	if key != "" {
 		if ranked, err := jevRank(key, query, kept, cards); err == nil && len(ranked) > 0 {
 			return ranked, nil
@@ -344,9 +237,9 @@ func ask(db *sql.DB, query string, rows []Row) ([]string, error) {
 		return paths, nil
 	}
 	if key != "" {
-		return nil, askFailure{"TypeSafe and Claude didn't answer"}
+		return nil, Failure{"TypeSafe and Claude didn't answer"}
 	}
-	return nil, askFailure{"Claude Code didn't answer"}
+	return nil, Failure{"Claude Code didn't answer"}
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)
@@ -366,7 +259,7 @@ func passagesOf(body, query string) []string {
 		pieces = append(pieces, current)
 	}
 	var words []string
-	for _, w := range meaningfulWords(query) {
+	for _, w := range session.MeaningfulWords(query) {
 		if utf8.RuneCountInString(w) > 2 {
 			words = append(words, w)
 		}
@@ -390,7 +283,7 @@ func passagesOf(body, query string) []string {
 	return pieces
 }
 
-func explain(db *sql.DB, key, query string, paths []string) map[string]string {
+func Explain(db *sql.DB, key, query string, paths []string) map[string]string {
 	bodies := map[string]string{}
 	for _, p := range paths {
 		var body string
@@ -409,12 +302,12 @@ func explain(db *sql.DB, key, query string, paths []string) map[string]string {
 		wg.Add(1)
 		go func(path string, pieces []string) {
 			defer wg.Done()
-			var criteria options
+			var criteria typesafe.Options
 			for i, piece := range pieces {
-				criteria = append(criteria, option{"p" + strconv.Itoa(i), piece})
+				criteria = append(criteria, typesafe.Option{Key: "p" + strconv.Itoa(i), Meaning: piece})
 			}
-			criteria = append(criteria, option{"none", "No passage shows this work."})
-			answers, err := jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
+			criteria = append(criteria, typesafe.Option{Key: "none", Meaning: "No passage shows this work."})
+			answers, err := typesafe.Jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type":         "choice",
 				"instructions": "Which passage from this coding session best shows the work described by `search`?",
 				"criteria":     criteria,
@@ -423,9 +316,9 @@ func explain(db *sql.DB, key, query string, paths []string) map[string]string {
 				return
 			}
 			for _, opt := range criteria {
-				if opt.key == answers["which"].Choice {
+				if opt.Key == answers["which"].Choice {
 					mu.Lock()
-					found[path] = opt.meaning
+					found[path] = opt.Meaning
 					mu.Unlock()
 				}
 			}

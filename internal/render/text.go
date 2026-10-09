@@ -1,14 +1,17 @@
-package main
+package render
 
 import (
-	"database/sql"
+	"fmt"
 	"regexp"
-	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/session"
 )
 
 const (
@@ -44,7 +47,16 @@ func clipText(line string, width int) string {
 		return line
 	}
 	head, _ := cutToWidth(line, max(width-1, 0))
-	return head + ansiDim + "…" + ansiReset
+	return head + Dim + "…" + Reset
+}
+
+func OneLine(text string, width int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if displayWidth(text) <= width {
+		return text
+	}
+	head, _ := cutToWidth(text, max(width-1, 0))
+	return head + "…"
 }
 
 func expandTabs(text string) string {
@@ -188,14 +200,14 @@ func boldAcrossLines(wrapped []string) []string {
 	for _, w := range wrapped {
 		line := w
 		if inside {
-			line = ansiBold + line
+			line = Bold + line
 		}
-		line = strings.ReplaceAll(strings.ReplaceAll(line, boldStart, ansiBold), boldEnd, ansiReset)
+		line = strings.ReplaceAll(strings.ReplaceAll(line, boldStart, Bold), boldEnd, Reset)
 		if (strings.Count(w, boldStart)+strings.Count(w, boldEnd))%2 == 1 {
 			inside = !inside
 		}
 		if inside {
-			line += ansiReset
+			line += Reset
 		}
 		out = append(out, line)
 	}
@@ -224,9 +236,9 @@ func render(text string, width int) []string {
 			lines = append(lines, "    "+clipText(line, width-4))
 		case strings.HasPrefix(stripped, "|"):
 			cells := clipText(stripped, width-2)
-			lines = append(lines, "  "+strings.ReplaceAll(cells, "|", ansiDim+"|"+ansiReset))
+			lines = append(lines, "  "+strings.ReplaceAll(cells, "|", Dim+"|"+Reset))
 		case strings.HasPrefix(stripped, "#"):
-			lines = append(lines, "  "+ansiBold+clipText(strings.TrimSpace(strings.TrimLeft(stripped, "#")), width-2)+ansiReset)
+			lines = append(lines, "  "+Bold+clipText(strings.TrimSpace(strings.TrimLeft(stripped, "#")), width-2)+Reset)
 		default:
 			indent := strings.Repeat(" ", utf8.RuneCountInString(line)-utf8.RuneCountInString(strings.TrimLeftFunc(line, unicode.IsSpace)))
 			hang := indent
@@ -239,7 +251,7 @@ func render(text string, width int) []string {
 				wrapped = []string{""}
 			}
 			for _, w := range boldAcrossLines(wrapped) {
-				lines = append(lines, "  "+codeSpan.ReplaceAllString(w, ansiDim+"`"+ansiReset+"$1"+ansiDim+"`"+ansiReset))
+				lines = append(lines, "  "+codeSpan.ReplaceAllString(w, Dim+"`"+Reset+"$1"+Dim+"`"+Reset))
 			}
 		}
 	}
@@ -249,116 +261,36 @@ func render(text string, width int) []string {
 	return lines
 }
 
-func speaker(role string, a *agent) string {
-	if role == "user" {
-		return ansiAccent + ansiBold + "you" + ansiReset
+func tilde(path string) string {
+	h := agent.Home()
+	if path == h || strings.HasPrefix(path, h+"/") {
+		return "~" + path[len(h):]
 	}
-	return ansiBold + a.id + ansiReset
+	return path
 }
 
-func excerpt(lines []string, keep int, fromEnd bool, note, secondary string) []string {
-	if len(lines) <= keep {
-		return lines
-	}
-	marker := "  " + secondary + "… " + note + ansiReset
-	if fromEnd {
-		return append([]string{marker}, lines[len(lines)-keep:]...)
-	}
-	return append(append([]string{}, lines[:keep]...), marker)
-}
-
-type previewRequest struct {
-	agent     *agent
-	path      string
-	width     int
-	recent    bool
-	query     string
-	explained string
-	secondary string
-}
-
-func previewHeader(req previewRequest, r Row, shown tags, db *sql.DB) []string {
-	width := req.width - 2
-	s := r.Session
-	where := tilde(s.Cwd)
-	if survivor := survivingDir(s.Cwd); survivor != s.Cwd {
-		where = "folder removed · resumes from " + tilde(survivor)
-	}
-	found := oneLine(plainPassage(req.explained), width)
-	if found == "" && db != nil {
-		found = snippet(db, req.path, req.query)
-	}
-	header := []string{
-		ansiBold + oneLine(s.Title, width) + ansiReset,
-		req.secondary + oneLine(strings.Join(metaParts(r, shown), " · "), width) + ansiReset,
-		req.secondary + oneLine(where, width) + ansiReset,
-		"",
-	}
-	if found != "" {
-		header[3] = req.secondary + found + ansiReset
-	}
-	return header
-}
-
-const recentTurns = 8
-
-func substantialAsk(t turn) bool { return t.role == "user" && len(strings.Fields(t.text)) > 3 }
-
-func previewBody(req previewRequest) ([]string, error) {
-	width := req.width - 2
-	enough := func(turns []turn) bool { return slices.ContainsFunc(turns, substantialAsk) }
-	if req.recent {
-		enough = func(turns []turn) bool { return len(turns) >= recentTurns }
-	}
-	turns, err := readEnding(req.agent, req.path, enough)
-	if err != nil {
-		return []string{req.secondary + clipText("  Couldn't read this session: "+err.Error(), width) + ansiReset}, err
-	}
-	var body []string
-	if req.recent {
-		for _, t := range turns[max(len(turns)-recentTurns, 0):] {
-			body = append(body, speaker(t.role, req.agent))
-			body = append(body, render(t.text, width)...)
-			body = append(body, "")
-		}
-		return body, nil
-	}
-	lastAny, lastSubstantial := -1, -1
-	for i, t := range turns {
-		if t.role == "user" {
-			lastAny = i
-		}
-		if substantialAsk(t) {
-			lastSubstantial = i
-		}
-	}
-	lastAsk := lastSubstantial
-	if lastAsk < 0 {
-		lastAsk = lastAny
-	}
-	if lastAsk >= 0 {
-		body = append(body, speaker("user", req.agent))
-		body = append(body, excerpt(render(turns[lastAsk].text, width), 10, false, "rest of your message", req.secondary)...)
-	}
-	reply := ""
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].role == "assistant" {
-			reply = turns[i].text
-			break
-		}
-	}
+func Ago(mtime float64) string {
+	seconds := session.Now() - mtime
 	switch {
-	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].role == "assistant"):
-		body = append(body, "", speaker("assistant", req.agent))
-		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.secondary)...)
-	case lastAsk >= 0:
-		body = append(body, "", req.secondary+"  No reply yet. "+req.agent.label+" stopped before answering."+ansiReset)
+	case seconds < 60:
+		return "just now"
+	case seconds < 3600:
+		return fmt.Sprintf("%dm ago", int(seconds/60))
+	case seconds < 86400:
+		return fmt.Sprintf("%dh ago", int(seconds/3600))
+	case seconds < 7*86400:
+		return fmt.Sprintf("%dd ago", int(seconds/86400))
 	}
-	return body, nil
+	t := time.Unix(int64(mtime), 0)
+	if t.Year() == time.Now().Year() {
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2 2006")
 }
 
-var markdownMarks = regexp.MustCompile("[*`#]+")
-
-func plainPassage(passage string) string {
-	return strings.Join(strings.Fields(markdownMarks.ReplaceAllString(passage, "")), " ")
+func when(s session.Session) string {
+	if s.Active() {
+		return "active now"
+	}
+	return Ago(s.Mtime)
 }

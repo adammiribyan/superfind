@@ -7,13 +7,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+
+	"github.com/adammiribyan/hop/internal/agent"
+	"github.com/adammiribyan/hop/internal/ask"
+	"github.com/adammiribyan/hop/internal/render"
+	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/hop/internal/tui"
+	"github.com/adammiribyan/hop/internal/typesafe"
 )
+
+const version = "0.9.0"
 
 const usage = `hop: find a past AI coding session and hop back into it. It reads Claude Code, Codex, and Grok sessions.
 
@@ -91,93 +98,19 @@ _hop_widget() {
 
 var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
 
-var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
-
-func secondaryFromEnv() string {
-	hx := os.Getenv("HOP_SECONDARY")
-	if !hexColor.MatchString(hx) {
-		return ansiDim
-	}
-	r, _ := strconv.ParseUint(hx[1:3], 16, 8)
-	g, _ := strconv.ParseUint(hx[3:5], 16, 8)
-	b, _ := strconv.ParseUint(hx[5:7], 16, 8)
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
-}
-
-func rowContext(t rowText, secondary string) string {
-	flag := ""
-	if t.waiting != "" {
-		flag = ansiAccent + t.waiting + ansiReset + secondary + " · "
-	}
-	return flag + strings.Join(t.context, " · ")
-}
-
-func printRows(rows []Row, shown tags) {
-	secondary := secondaryFromEnv()
+func printRows(rows []session.Row, shown render.Tags) {
+	secondary := render.SecondaryFromEnv()
 	for _, r := range rows {
-		t := rowTextOf(r, shown)
-		display := " " + t.title + "  " + secondary + rowContext(t, secondary) + ansiReset
-		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.title, display)
+		t := render.RowTextOf(r, shown)
+		display := " " + t.Title + "  " + secondary + render.RowContext(t, secondary) + render.Reset
+		fmt.Printf("%s\t%s\t%s\t%s\t%s\t%s\n", r.Path, r.Session.Cwd, r.Session.ID, r.Home, t.Title, display)
 	}
 }
 
-func narrow(query string, rows []Row) (string, []Row) {
-	var words, statuses []string
-	var from []*agent
-	for _, w := range strings.Fields(query) {
-		switch {
-		case strings.HasPrefix(w, "is:"):
-			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
-				statuses = append(statuses, label)
-			}
-		case strings.HasPrefix(w, "agent:"):
-			if a := agentNamed(strings.ToLower(w[6:])); a != nil {
-				from = append(from, a)
-			}
-		default:
-			words = append(words, w)
-		}
-	}
-	if len(statuses) > 0 || len(from) > 0 {
-		var kept []Row
-		for _, r := range rows {
-			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
-				kept = append(kept, r)
-			}
-		}
-		rows = kept
-	}
-	return strings.Join(words, " "), rows
-}
-
-func searchRows(db *sql.DB, query string, rows []Row) ([]Row, error) {
-	words, rows := narrow(query, rows)
-	if db == nil {
-		return recentFirst(rows), nil
-	}
-	found, searched, err := matches(db, words)
-	if err != nil {
-		return nil, fmt.Errorf("the search index couldn't be read: %w", err)
-	}
-	if !searched {
-		return recentFirst(rows), nil
-	}
-	return inOrder(rows, found), nil
-}
-
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
-
-func shellQuote(s string) string {
-	if s != "" && shellSafe.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
-}
-
-func handoffTitle(r Row) string {
+func handoffTitle(r session.Row) string {
 	title := strings.Join(strings.Fields(r.Session.Title), " ")
 	if r.Session.Active() {
-		title += ansiReset + ansiDim + " · may still be open in another window"
+		title += render.Reset + render.Dim + " · may still be open in another window"
 	}
 	return title
 }
@@ -198,16 +131,16 @@ func selfPath() string {
 }
 
 func mustOpenSearch() *sql.DB {
-	db, err := openSearch()
+	db, err := session.OpenSearch()
 	if err != nil {
-		fail("hop: can't open the search index in " + cacheDir() + ": " + err.Error())
+		fail("hop: can't open the search index in " + session.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
 
-func mustIndex(command string) []Row {
+func mustIndex(command string) []session.Row {
 	noticed := false
-	rows, err := index(func(stale int) {
+	rows, err := session.Index(func(stale int) {
 		if term.IsTerminal(os.Stderr.Fd()) {
 			fmt.Fprintf(os.Stderr, "  Indexing %d sessions…", stale)
 			noticed = true
@@ -222,24 +155,24 @@ func mustIndex(command string) []Row {
 	return rows
 }
 
-func sessionAt(command, arg string) (r Row, indexed bool, rows []Row) {
-	path := filepath.Join(resolve(filepath.Dir(arg)), filepath.Base(arg))
-	p, ok := locate(path, places())
+func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session.Row) {
+	path := filepath.Join(agent.Resolve(filepath.Dir(arg)), filepath.Base(arg))
+	p, ok := agent.Locate(path, agent.Places())
 	if !ok {
-		labels := make([]string, len(agents))
-		for i, a := range agents {
-			labels[i] = a.label
+		labels := make([]string, len(agent.Agents))
+		for i, a := range agent.Agents {
+			labels[i] = a.Label
 		}
 		fail("hop " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
-	rows = annotate(mustIndex(command))
+	rows = session.Annotate(mustIndex(command))
 	for _, r := range rows {
 		if r.Path == path {
 			return r, true, rows
 		}
 	}
-	return Row{Agent: p.agent, Home: p.home, Path: path}, false, rows
+	return session.Row{Agent: p.Agent, Home: p.Home, Path: path}, false, rows
 }
 
 func fail(message string) {
@@ -248,6 +181,7 @@ func fail(message string) {
 }
 
 func main() {
+	typesafe.UserAgent = "hop/" + version
 	args := os.Args[1:]
 	if len(args) == 0 {
 		fmt.Print(usage)
@@ -264,12 +198,12 @@ func main() {
 		if !ok {
 			fail("hop init: which shell? hop init zsh or hop init bash")
 		}
-		fmt.Printf(setup, shellQuote(selfPath()))
+		fmt.Printf(setup, agent.ShellQuote(selfPath()))
 	case "index":
 		fmt.Printf("%d sessions indexed\n", len(mustIndex("index")))
 	case "search":
-		rows := annotate(mustIndex("search"))
-		shown := tagsFor(rows)
+		rows := session.Annotate(mustIndex("search"))
+		shown := render.TagsFor(rows)
 		db := mustOpenSearch()
 		deep, words := false, []string{}
 		for _, arg := range args[1:] {
@@ -281,60 +215,60 @@ func main() {
 		}
 		query := strings.Join(words, " ")
 		if !deep {
-			found, err := searchRows(db, query, rows)
+			found, err := session.Search(db, query, rows)
 			if err != nil {
 				fail("hop search: " + err.Error())
 			}
 			printRows(found, shown)
 			return
 		}
-		query, eligible := narrow(query, rows)
+		query, eligible := session.Narrow(query, rows)
 		if query == "" {
-			printRows(recentFirst(eligible), shown)
+			printRows(session.RecentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask(db, query, eligible)
-		var failure askFailure
+		paths, err := ask.Ask(db, query, eligible)
+		var failure ask.Failure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		printRows(inOrder(rows, paths), shown)
+		printRows(session.InOrder(rows, paths), shown)
 	case "label":
-		key := typesafeKey()
+		key := typesafe.Key()
 		if key == "" {
 			fail("hop label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/hop/env")
 		}
-		if err := labelSessions(key, mustIndex("label")); err != nil {
+		if err := session.Label(key, mustIndex("label")); err != nil {
 			fail("hop label: " + err.Error())
 		}
 	case "preview":
 		if len(args) < 2 {
 			fail("hop preview: which session?")
 		}
-		req := previewRequest{width: 80, secondary: secondaryFromEnv()}
+		req := render.PreviewRequest{Width: 80, Secondary: render.SecondaryFromEnv()}
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--recent":
-				req.recent = true
+				req.Recent = true
 			case "--width":
 				if i+1 < len(args) {
-					req.width, _ = strconv.Atoi(args[i+1])
+					req.Width, _ = strconv.Atoi(args[i+1])
 					i++
 				}
 			case "--query":
 				if i+1 < len(args) {
-					req.query = args[i+1]
+					req.Query = args[i+1]
 					i++
 				}
 			}
 		}
 		r, indexed, rows := sessionAt("preview", args[1])
-		req.agent, req.path = r.Agent, r.Path
+		req.Agent, req.Path = r.Agent, r.Path
 		var header []string
 		if indexed {
-			header = append(previewHeader(req, r, tagsFor(rows), mustOpenSearch()), "")
+			header = append(render.PreviewHeader(req, r, render.TagsFor(rows), mustOpenSearch()), "")
 		}
-		body, err := previewBody(req)
+		body, err := render.PreviewBody(req)
 		for _, line := range append(header, body...) {
 			fmt.Println(line)
 		}
@@ -349,9 +283,9 @@ func main() {
 		if !indexed {
 			fail("hop command: not an indexed session: " + args[1])
 		}
-		fmt.Println(resumeCommand(r))
+		fmt.Println(agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":
-		chosen, err := pick()
+		chosen, err := tui.Pick()
 		if err != nil {
 			fail(err.Error())
 		}
@@ -359,7 +293,7 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(handoffTitle(*chosen))
-		fmt.Println(resumeCommand(*chosen))
+		fmt.Println(agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

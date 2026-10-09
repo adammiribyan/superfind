@@ -1,6 +1,7 @@
-package main
+package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -102,9 +103,9 @@ func codexPrompt(blocks []codexBlock) string {
 	return strings.Join(kept, " ")
 }
 
-type codexReader struct{ t transcript }
+type codexReader struct{ t Transcript }
 
-func newCodexReader(string) (reader, error) { return &codexReader{t: transcript{last: replied}}, nil }
+func newCodexReader(string) (reader, error) { return &codexReader{t: Transcript{Last: Replied}}, nil }
 
 func (c *codexReader) feed(raw []byte) bool {
 	t := &c.t
@@ -121,22 +122,22 @@ func (c *codexReader) feed(raw []byte) bool {
 	}
 	switch {
 	case l.Type == "session_meta":
-		t.cwd = item.Cwd
+		t.Cwd = item.Cwd
 		if item.Git != nil {
-			t.branch = item.Git.Branch
+			t.Branch = item.Git.Branch
 		}
-		t.hidden = item.ParentThreadID != ""
-		return !t.hidden
+		t.Hidden = item.ParentThreadID != ""
+		return !t.Hidden
 	case l.Type == "turn_context":
-		t.cwd = firstNonEmpty(item.Cwd, t.cwd)
+		t.Cwd = cmp.Or(item.Cwd, t.Cwd)
 	case l.Type == "event_msg":
 		if item.Type == "turn_aborted" {
-			t.last = interrupted
+			t.Last = Interrupted
 		}
 	case l.Type == "response_item", len(l.Payload) == 0 && l.Type != "":
 		c.item(item)
 	case l.Type == "" && l.Git != nil:
-		t.branch = l.Git.Branch
+		t.Branch = l.Git.Branch
 	}
 	return true
 }
@@ -149,17 +150,17 @@ func (c *codexReader) item(it codexItem) {
 		json.Unmarshal(it.Content, &blocks)
 		switch it.Role {
 		case "user":
-			if t.cwd == "" {
+			if t.Cwd == "" {
 				for _, b := range blocks {
 					if m := cwdTag.FindStringSubmatch(b.Text); m != nil {
-						t.cwd = strings.TrimSpace(m[1])
+						t.Cwd = strings.TrimSpace(m[1])
 						break
 					}
 				}
 			}
 			if prompt := codexPrompt(blocks); prompt != "" {
-				t.last = prompted
-				t.prompts = append(t.prompts, prompt)
+				t.Last = Prompted
+				t.Prompts = append(t.Prompts, prompt)
 				t.say("user", prompt)
 			}
 		case "assistant":
@@ -172,14 +173,14 @@ func (c *codexReader) item(it codexItem) {
 			if text := strings.TrimSpace(strings.Join(texts, " ")); text != "" {
 				t.say("assistant", text)
 			}
-			t.last = replied
+			t.Last = Replied
 		}
 	case "function_call", "custom_tool_call", "local_shell_call", "web_search_call", "tool_search_call":
-		t.toolCalls++
-		t.last = calledTool
+		t.ToolCalls++
+		t.Last = CalledTool
 	case "function_call_output", "custom_tool_call_output", "tool_search_output":
-		t.last = calledTool
+		t.Last = CalledTool
 	}
 }
 
-func (c *codexReader) done() transcript { return c.t }
+func (c *codexReader) done() Transcript { return c.t }
