@@ -593,10 +593,20 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("\x1b[2m", plain)
         self.assertIn("Deployed ", plain)
 
-    def test_search_no_longer_takes_a_deep_flag(self):
+    def test_search_points_a_deep_flag_to_ask_and_rejects_other_flags(self):
         self.session("a1", user("fix the deep build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.session("b2", user("fix the build cache"), tool("Bash"), claude("Fixed."), title="Build cache")
-        self.assertEqual(self.titles("--deep", "build"), ["Build fix"])
+        deep = self.run_superfind("search", "--deep", "build")
+        self.assertEqual((deep.returncode, deep.stdout), (2, ""))
+        self.assertIn("superfind ask", deep.stderr)
+        for command in ("search", "ask"):
+            other = self.run_superfind(command, "--frobnicate", "build")
+            self.assertEqual((other.returncode, other.stdout), (2, ""), command)
+            self.assertIn(f"there is no --frobnicate option. To search for it, put -- first: superfind {command} -- --frobnicate",
+                          other.stderr)
+        self.assertEqual(self.titles("--", "--deep", "build"), ["Build fix"])
+        literal = self.run_superfind("search", "--", "-h")
+        self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         self.assertIn(f"typeset -g _superfind_bin={SUPERFIND}", self.superfind("init", "zsh"))
@@ -1132,7 +1142,7 @@ class SuperfindBehavior(unittest.TestCase):
                              (("--width", "-5"), "--width needs a number"), (("--width",), "--width needs a value"),
                              (("--wdith", "60"), "there is no --wdith option")):
             result = self.run_superfind("preview", str(path), *args)
-            self.assertEqual((result.returncode, result.stdout), (1, ""), args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn(reason, result.stderr, args)
         self.assertIn("Upgraded.", self.superfind("preview", "--width", "60", str(path), "--recent"))
         self.assertIn("Upgraded.", self.superfind("preview", str(path), "--query", "--help"))
@@ -1440,6 +1450,22 @@ class SuperfindBehavior(unittest.TestCase):
         printed = self.superfind("search", "redirect").split("\t")[0]
         self.assertEqual(self.superfind("command", printed), "cd /tmp && claude --resume a1\n")
         self.assertIn("Fixed.", self.superfind("preview", printed))
+
+    def test_usage_mistakes_exit_2_and_say_what_was_wrong(self):
+        for args, reason in ((("init",), "which shell?"), (("init", "fish"), "which shell?"), (("command",), "which session?"),
+                             (("preview",), "which session?")):
+            result = self.run_superfind(*args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
+            self.assertIn(reason, result.stderr, args)
+
+    @unittest.skipUnless(os.path.exists("/dev/full"), "needs /dev/full, where every write fails")
+    def test_output_that_cannot_be_written_is_an_error(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        for args in (("search", "redirect"), ("--help",), ("init", "zsh")):
+            with open("/dev/full", "w") as full:
+                result = subprocess.run([str(SUPERFIND), *args], env=self.env, stdout=full, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(result.returncode, 1, args)
+            self.assertIn("superfind: couldn't write the output", result.stderr, args)
 
 
 if __name__ == "__main__":
