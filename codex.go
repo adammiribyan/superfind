@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -28,12 +29,15 @@ type codexBlock struct {
 	Text string `json:"text"`
 }
 
-const codexRequest = "## My request for Codex:"
+const (
+	codexRequest = "## My request for Codex:"
+	answersOpen  = "<send_user_message_question_reply>"
+	answersClose = "</send_user_message_question_reply>"
+)
 
 var (
-	codexMachinePrefixes = []string{"<", "# AGENTS.md instructions for", "# Files mentioned by the user",
-		"# Files pasted by the user", "# Context from my IDE setup"}
-	cwdTag = regexp.MustCompile(`(?s)<cwd>(.*?)</cwd>`)
+	codexContextHeadings = []string{"# Context from my IDE setup", "# Files mentioned by the user", "# Files pasted by the user"}
+	cwdTag               = regexp.MustCompile(`(?s)<cwd>(.*?)</cwd>`)
 )
 
 func codexID(path string) string {
@@ -56,24 +60,42 @@ func codexNames(home string) map[string]string {
 	return names
 }
 
+func codexAnswers(text string) string {
+	inner, _, _ := strings.Cut(strings.TrimPrefix(text, answersOpen), answersClose)
+	var replies []struct {
+		Answer string `json:"answer"`
+	}
+	json.Unmarshal([]byte(inner), &replies)
+	var answers []string
+	for _, r := range replies {
+		if a := strings.TrimSpace(r.Answer); a != "" {
+			answers = append(answers, a)
+		}
+	}
+	return strings.Join(answers, " ")
+}
+
+func codexBlockPrompt(text string) string {
+	text = strings.TrimSpace(text)
+	switch {
+	case strings.HasPrefix(text, answersOpen):
+		return codexAnswers(text)
+	case slices.ContainsFunc(codexContextHeadings, func(h string) bool { return strings.HasPrefix(text, h) }):
+		_, request, _ := strings.Cut(text, codexRequest)
+		return strings.TrimSpace(request)
+	case strings.HasPrefix(text, "<"), strings.HasPrefix(text, "# AGENTS.md instructions for"):
+		return ""
+	}
+	return text
+}
+
 func codexPrompt(blocks []codexBlock) string {
 	var kept []string
 	for _, b := range blocks {
 		if b.Type != "input_text" {
 			continue
 		}
-		text := strings.TrimSpace(b.Text)
-		if _, request, ok := strings.Cut(text, codexRequest); ok {
-			text = strings.TrimSpace(request)
-		} else {
-			for _, p := range codexMachinePrefixes {
-				if strings.HasPrefix(text, p) {
-					text = ""
-					break
-				}
-			}
-		}
-		if text != "" {
+		if text := codexBlockPrompt(b.Text); text != "" {
 			kept = append(kept, text)
 		}
 	}
@@ -106,7 +128,7 @@ func (c *codexReader) feed(raw []byte) bool {
 		t.hidden = item.ParentThreadID != ""
 		return !t.hidden
 	case l.Type == "turn_context":
-		t.cwd = firstNonEmpty(t.cwd, item.Cwd)
+		t.cwd = firstNonEmpty(item.Cwd, t.cwd)
 	case l.Type == "event_msg":
 		if item.Type == "turn_aborted" {
 			t.last = interrupted
@@ -152,10 +174,10 @@ func (c *codexReader) item(it codexItem) {
 			}
 			t.last = replied
 		}
-	case "function_call", "custom_tool_call", "local_shell_call", "web_search_call":
+	case "function_call", "custom_tool_call", "local_shell_call", "web_search_call", "tool_search_call":
 		t.toolCalls++
 		t.last = calledTool
-	case "function_call_output", "custom_tool_call_output":
+	case "function_call_output", "custom_tool_call_output", "tool_search_output":
 		t.last = calledTool
 	}
 }

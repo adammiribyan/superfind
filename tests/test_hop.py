@@ -63,6 +63,16 @@ def codex_output(output="ok"):
     return codex_item(type="function_call_output", call_id="c1", output=output)
 
 
+def codex_turn(cwd):
+    return line(timestamp="2026-10-09T10:00:00Z", type="turn_context", payload={"cwd": cwd})
+
+
+def codex_answers(*answers):
+    replies = [{"answer": a, "question": "?", "questionItemId": f"[\"request_user_input_async\",\"c1\",{n}]"}
+               for n, a in enumerate(answers)]
+    return codex_user(f"<send_user_message_question_reply>\n{json.dumps(replies)}\n</send_user_message_question_reply>")
+
+
 def codex_aborted():
     return line(timestamp="2026-10-09T10:00:00Z", type="event_msg", payload={"type": "turn_aborted", "reason": "interrupted"})
 
@@ -665,14 +675,6 @@ class HopBehavior(unittest.TestCase):
         self.assertEqual(self.hop("command", str(path)), f"cd /tmp && codex resume {uid(1)}\n")
         self.assertEqual(self.hop("preview", str(path)).splitlines()[1].split(" · ")[2:], ["main", "1 prompt"])
 
-    def test_a_codex_compaction_summary_is_not_counted_as_a_prompt(self):
-        compacted = line(timestamp="2026-10-09T10:00:00Z", type="compacted", payload={"message": "", "replacement_history": [
-            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "fix the build"}]}]})
-        path = self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
-                                  compacted, codex_reply("Fixed."))
-        self.hop("index")
-        self.assertEqual(self.hop("preview", str(path)).splitlines()[1].split(" · ")[-1], "1 prompt")
-
     def test_a_codex_interruption_is_reported_to_the_labeler(self):
         self.codex_session(uid(1), codex_meta(), codex_user("run the ledger migration"), codex_call(), codex_output(),
                            codex_reply("Starting the migration now."), codex_aborted())
@@ -703,6 +705,60 @@ class HopBehavior(unittest.TestCase):
         self.hop("index")
         self.assertEqual(self.hop("preview", str(path)).splitlines()[5:],
                          ["you", "  now add a test for the retries", "", "codex", "  Added a retry test."])
+
+    def test_codex_and_grok_sessions_report_their_last_request(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("inspect the invoices"), codex_call(), codex_output(),
+                           codex_reply("Inspected."), codex_user("now fix the OAuth login"), codex_reply("Fixed."))
+        self.grok_session(uid(2), "/tmp", grok_user("look at the ledger"), grok_reply("Looked.", tools=1),
+                          grok_user("now add the retry test"), grok_reply("Added."))
+        self.hop("index")
+        requests = self.record_typesafe()
+        self.env["PATH"] = "/usr/bin:/bin"
+        self.run_hop("search", "--deep", "where did we fix the login")
+        cards = [c for k, c in requests[0]["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertEqual({c.split(" | ")[0]: c.split(" | ")[3] for c in cards},
+                         {"inspect the invoices": "now fix the OAuth login", "look at the ledger": "now add the retry test"})
+
+    def test_a_short_codex_session_that_ran_any_kind_of_tool_is_not_treated_as_throwaway(self):
+        self.codex_session(uid(1), codex_meta(), codex_user("find the jira tool"),
+                           codex_item(type="tool_search_call", call_id="c1", status="completed", arguments={"query": "jira"}),
+                           codex_item(type="tool_search_output", call_id="c1", status="completed", tools=[]))
+        self.codex_session(uid(2), codex_meta(), codex_user("apply the patch"),
+                           codex_item(type="custom_tool_call", name="apply_patch", input="*** Begin Patch", call_id="c2"),
+                           codex_item(type="custom_tool_call_output", call_id="c2", output="Done"))
+        self.codex_session(uid(3), codex_meta(), codex_user("hi"), codex_reply("Hello."))
+        self.assertEqual(self.titles(), ["apply the patch", "find the jira tool", "hi"])
+
+    def test_a_codex_prompt_that_mentions_the_ide_marker_is_kept_whole(self):
+        prompt = "Please explain the heading ## My request for Codex: and preserve the whole sentence"
+        self.codex_session(uid(1), codex_meta(), codex_user(prompt), codex_reply("It marks the request."))
+        self.assertEqual(self.titles(), [prompt])
+
+    def test_a_codex_session_resumes_in_the_folder_of_its_latest_turn(self):
+        later = self.home.resolve()
+        path = self.codex_session(uid(1), codex_meta(), codex_turn("/tmp"), codex_user("fix the build"),
+                                  codex_turn(str(later)), codex_user("now add a test"), codex_reply("Added."))
+        self.hop("index")
+        self.assertEqual(self.hop("command", str(path)), f"cd {later} && codex resume {uid(1)}\n")
+
+    def test_a_developers_answer_to_a_codex_question_counts_as_a_prompt(self):
+        path = self.codex_session(uid(1), codex_meta(), codex_user("pick a name for the app"), codex_call(),
+                                  codex_output(), codex_reply("Does the name need a .com domain, and which markets?"),
+                                  codex_answers("A .dev, .app, or get<name>.com is fine", "United States"))
+        self.hop("index")
+        self.assertEqual(self.hop("preview", str(path)).splitlines()[5:],
+                         ["you", "  A .dev, .app, or get<name>.com is fine United States", "",
+                          "  No reply yet. Codex stopped before answering."])
+        requests = self.record_typesafe()
+        self.run_hop("label")
+        self.assertEqual(requests[0]["state"]["last_event"],
+                         "The developer's last action was sending a request that Codex never answered.")
+
+    def test_a_codex_branch_shows_in_the_preview(self):
+        path = self.codex_session(uid(1), codex_meta(branch="retries"), codex_user("fix the build"), codex_call(),
+                                  codex_output(), codex_reply("Fixed."))
+        self.hop("index")
+        self.assertEqual(self.hop("preview", str(path)).splitlines()[1].split(" · ")[2:], ["retries", "1 prompt"])
 
     def test_a_grok_session_is_listed_and_resumes_with_grok(self):
         path = self.grok_session(uid(1), "/tmp", GROK_SYSTEM, GROK_OPENER, grok_user("rate the code in this repo"),
@@ -743,6 +799,16 @@ class HopBehavior(unittest.TestCase):
         self.grok_session(uid(1), "/work/billing", grok_user("fix the build"), grok_reply("Fixed."), summary=False)
         self.hop("index")
         self.assertEqual([row.split("\t")[1] for row in self.hop("search").splitlines()], ["/work/billing"])
+
+    def test_a_grok_summary_folder_wins_over_the_directory_name(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."))
+        self.grok_summary(chat, "/work/billing")
+        self.hop("index")
+        self.assertEqual([row.split("\t")[1] for row in self.hop("search").splitlines()], ["/work/billing"])
+
+    def test_a_grok_prompt_that_mentions_the_query_tag_is_kept_whole(self):
+        self.grok_session(uid(1), "/tmp", grok_user("Fix handling of </user_query> in grok.go"), grok_reply("Fixed."))
+        self.assertEqual(self.titles(), ["Fix handling of </user_query> in grok.go"])
 
     def test_a_grok_summary_that_cannot_be_read_is_read_again_next_time(self):
         chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix")

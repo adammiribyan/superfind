@@ -29,7 +29,7 @@ type grokLine struct {
 	ToolCalls       []json.RawMessage `json:"tool_calls"`
 }
 
-var userQuery = regexp.MustCompile(`(?s)<user_query>\s*(.*?)\s*</user_query>`)
+var userQuery = regexp.MustCompile(`(?s)<user_query>(.*)</user_query>`)
 
 func grokID(path string) string { return filepath.Base(filepath.Dir(path)) }
 
@@ -91,12 +91,16 @@ func (g *grokReader) feed(raw []byte) bool {
 	switch l.Type {
 	case "user":
 		m := userQuery.FindStringSubmatch(grokText(l.Content))
-		if l.SyntheticReason != "" || m == nil || m[1] == "" {
+		if l.SyntheticReason != "" || m == nil {
+			return true
+		}
+		prompt := strings.TrimSpace(m[1])
+		if prompt == "" {
 			return true
 		}
 		t.last = prompted
-		t.prompts = append(t.prompts, m[1])
-		t.say("user", m[1])
+		t.prompts = append(t.prompts, prompt)
+		t.say("user", prompt)
 	case "assistant":
 		t.toolCalls += len(l.ToolCalls)
 		t.last = replied

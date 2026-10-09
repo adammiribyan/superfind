@@ -21,9 +21,9 @@ func parse(f found) (*Session, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	firstPrompt := ""
+	firstPrompt, latestPrompt := "", ""
 	if len(t.prompts) > 0 {
-		firstPrompt = t.prompts[0]
+		firstPrompt, latestPrompt = t.prompts[0], t.prompts[len(t.prompts)-1]
 	}
 	if t.hidden || t.cwd == "" || (firstPrompt == "" && t.lastPrompt == "") {
 		return nil, "", nil
@@ -32,7 +32,7 @@ func parse(f found) (*Session, string, error) {
 	return &Session{
 		ID: f.agent.idOf(f.path), Cwd: t.cwd,
 		Title:      firstNonEmpty(f.name, t.customTitle, t.aiTitle, firstPrompt, t.lastPrompt),
-		LastPrompt: firstNonEmpty(t.lastPrompt, firstPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
+		LastPrompt: firstNonEmpty(t.lastPrompt, latestPrompt), Branch: t.branch, Prompts: max(len(t.prompts), 1),
 		Words: len(strings.Fields(body)), ToolCalls: t.toolCalls, Mtime: f.id.seconds(),
 	}, body, nil
 }
