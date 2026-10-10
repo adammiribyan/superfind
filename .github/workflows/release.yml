@@ -65,6 +65,12 @@ jobs:
           path: dist/homebrew/Casks/superfind.rb
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aur-${{ github.ref_name }}
+          path: dist/aur/
+          if-no-files-found: error
+          retention-days: 7
 
   verify:
     needs: build
@@ -103,6 +109,10 @@ jobs:
         with:
           name: cask-${{ github.ref_name }}
           path: cask
+      - uses: actions/download-artifact@v4
+        with:
+          name: aur-${{ github.ref_name }}
+          path: aur
       - name: Push the cask to adammiribyan/homebrew-tap
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -124,3 +134,21 @@ jobs:
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
           [ "$(echo "$id" | wc -w)" -eq 1 ] || { echo "::error::expected one draft release for $GITHUB_REF_NAME, found: $id"; exit 1; }
           gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -f make_latest=true --jq .html_url
+      - name: Push superfind-bin to the AUR, now that the release its PKGBUILD downloads from is public
+        env:
+          AUR_KEY: ${{ secrets.AUR_KEY }}
+        run: |
+          [ -n "$AUR_KEY" ] || { echo "::notice::AUR_KEY isn't set, so superfind-bin on the AUR stays as it is"; exit 0; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$AUR_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes"
+          git clone ssh://aur@aur.archlinux.org/superfind-bin.git aur-repo
+          cp aur/superfind-bin.pkgbuild aur-repo/PKGBUILD
+          cp aur/superfind-bin.srcinfo aur-repo/.SRCINFO
+          cd aur-repo
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && { echo "already up to date"; exit 0; }
+          git -c user.name="Adam Miribyan" -c user.email=adam@adam.am commit -m "superfind ${GITHUB_REF_NAME#v}"
+          git push origin HEAD:master
