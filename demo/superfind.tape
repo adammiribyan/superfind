@@ -36,6 +36,4 @@ Wait+Screen@30s /Sessions by description/
 Sleep 2.5s
 Enter
 Wait+Screen@10s /Resuming/
-Sleep 2s
-Up
-Sleep 3s
+Sleep 3.5s
