@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -480,26 +481,76 @@ func QueryPairs(db *sql.DB, query string, args ...any) ([][2]string, error) {
 	return out, rows.Err()
 }
 
-func matches(db *sql.DB, query string) ([]string, bool, error) {
+type scored struct {
+	path  string
+	tier  int
+	score float64
+}
+
+func matches(db *sql.DB, query string) ([]scored, bool, error) {
 	match := ftsQuery(query)
 	if match == "" {
 		return nil, false, nil
 	}
 	seen := map[string]bool{}
-	var out []string
-	for _, scoped := range []string{"title : (" + match + ")", match} {
-		pairs, err := QueryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
+	var out []scored
+	for tier, scoped := range []string{"title : (" + match + ")", match} {
+		rows, err := db.Query("SELECT path, bm25(docs) FROM docs WHERE docs MATCH ? ORDER BY rank, path", scoped)
 		if err != nil {
 			return nil, true, err
 		}
-		for _, pair := range pairs {
-			if !seen[pair[0]] {
-				seen[pair[0]] = true
-				out = append(out, pair[0])
+		for rows.Next() {
+			var hit scored
+			if err := rows.Scan(&hit.path, &hit.score); err != nil {
+				rows.Close()
+				return nil, true, err
 			}
+			if !seen[hit.path] {
+				seen[hit.path] = true
+				hit.tier, hit.score = tier, -hit.score
+				out = append(out, hit)
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, true, err
 		}
 	}
 	return out, true, nil
+}
+
+const bandRatio = 1.25
+
+func banded(hits []scored, mtime map[string]float64) []string {
+	hits = slices.DeleteFunc(slices.Clone(hits), func(h scored) bool {
+		_, listed := mtime[h.path]
+		return !listed
+	})
+	best := map[int]float64{}
+	for _, h := range hits {
+		best[h.tier] = max(best[h.tier], h.score)
+	}
+	type ranked struct {
+		scored
+		band int
+	}
+	order := make([]ranked, len(hits))
+	for i, h := range hits {
+		order[i] = ranked{h, math.MaxInt}
+		if h.score > 0 {
+			order[i].band = int(math.Floor(math.Log(best[h.tier]/h.score) / math.Log(bandRatio)))
+		}
+	}
+	slices.SortFunc(order, func(a, b ranked) int {
+		return cmp.Or(cmp.Compare(a.tier, b.tier), cmp.Compare(a.band, b.band), cmp.Compare(mtime[b.path], mtime[a.path]),
+			strings.Compare(a.path, b.path))
+	})
+	paths := make([]string, len(order))
+	for i, r := range order {
+		paths[i] = r.path
+	}
+	return paths
 }
 
 func Snippet(db *sql.DB, path, query, before, after string) string {
@@ -560,5 +611,9 @@ func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
 	if !searched {
 		return RecentFirst(rows), nil
 	}
-	return InOrder(rows, found), nil
+	mtime := make(map[string]float64, len(rows))
+	for _, r := range rows {
+		mtime[r.Path] = r.Session.Mtime
+	}
+	return InOrder(rows, banded(found, mtime)), nil
 }

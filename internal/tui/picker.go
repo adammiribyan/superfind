@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
@@ -37,7 +38,9 @@ const (
 	marginTop      = 1
 	marginSide     = 1
 	listChrome     = 6
+	minStatusTitle = 8
 	stackedMinimum = headerLines + 4
+	selectionShare = 0.24
 )
 
 type theme struct {
@@ -82,11 +85,11 @@ func (t *theme) settle() {
 		t.muted, t.border = foreground(lipgloss.Color("8")), foreground(lipgloss.Color("8"))
 		return
 	}
-	blue, share := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255}), 0.10
+	blue := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255})
 	if isDark(t.bg) {
-		blue, share = color.RGBA{0x63, 0xA8, 0xF8, 255}, 0.16
+		blue = color.RGBA{0x63, 0xA8, 0xF8, 255}
 	}
-	t.tint = blend(t.bg, blue, share)
+	t.tint = blend(t.bg, blue, selectionShare)
 	muted := blend(t.bg, t.fg, 0.70)
 	t.muted, t.border = foreground(muted), foreground(blend(t.bg, t.fg, 0.35))
 	t.mutedSeq = ansiFor(muted)
@@ -149,6 +152,7 @@ type picker struct {
 	dbProblem  string
 	statusSeen time.Time
 	tags       render.Tags
+	widths     render.Widths
 	label      string
 
 	input     textinput.Model
@@ -181,9 +185,35 @@ type picker struct {
 	reindex  bool
 }
 
+type phase int
+
+const (
+	searching phase = iota
+	asking
+	asked
+)
+
+func (m picker) phase() phase {
+	switch {
+	case m.asking:
+		return asking
+	case m.askedFor != "":
+		return asked
+	}
+	return searching
+}
+
+func (m picker) matchWords() []string {
+	if m.phase() != searching {
+		return nil
+	}
+	words, _ := session.Narrow(m.input.Value(), nil)
+	return strings.FieldsFunc(words, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' })
+}
+
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
-	in.Prompt = "› "
+	in.Prompt = ""
 	in.Placeholder = "Search sessions and conversations"
 	in.SetVirtualCursor(false)
 	in.Focus()
@@ -192,6 +222,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 		asks: &asks{},
 	}
+	m.widths = render.Measure(m.all, m.tags)
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
 		m.problem = "Indexing your sessions…"
@@ -237,7 +268,7 @@ func (m picker) layout() layout {
 	case m.hidePreview:
 		l.listHeight = free
 	case m.width >= wideColumns:
-		l.listWidth = m.width * 45 / 100
+		l.listWidth = m.width * 54 / 100
 		l.previewWidth = m.width - l.listWidth - 3
 		l.previewHeight = m.height
 		l.listHeight = free
@@ -254,7 +285,6 @@ func (m picker) layout() layout {
 
 func (m *picker) styleInput() {
 	styles := textinput.DefaultStyles(m.colors.bg == nil || isDark(m.colors.bg))
-	styles.Focused.Prompt = m.colors.accent
 	styles.Focused.Text = lipgloss.NewStyle()
 	styles.Focused.Placeholder = m.colors.muted
 	styles.Cursor.Color = nil
@@ -308,12 +338,15 @@ func (m *picker) filter() {
 	default:
 		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
+		words, _ := session.Narrow(query, nil)
 		if errors.Is(err, session.ErrDamaged) {
 			m.db, m.shown, m.reindex = nil, m.all, true
 		}
 		switch {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
+		case len(m.shown) == 0 && len(m.all) > 0 && words != "":
+			m.message = "No session contains these words. ctrl-r asks by description."
 		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
@@ -394,7 +427,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 
 func (m picker) startAsk() (picker, tea.Cmd) {
 	query, rows := session.Narrow(m.input.Value(), m.all)
-	if query == "" {
+	if query == "" || len(m.all) == 0 {
 		return m, nil
 	}
 	if m.db == nil {
@@ -447,7 +480,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.screenHeight = msg.Height
 		m.width, m.height = max(msg.Width-2*marginSide, 1), max(msg.Height-marginTop, 1)
-		m.input.SetWidth(max(m.layout().listWidth-14, 4))
+		m.input.SetWidth(max(m.layout().listWidth-12, 4))
 		return m.afterMove()
 	case tea.BackgroundColorMsg:
 		m.colors.bg = msg.Color
@@ -472,6 +505,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
+		m.widths = render.Measure(m.all, m.tags)
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
 				if m.db != nil && !m.asking {
@@ -511,6 +545,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all = session.Annotate(m.all)
+		m.widths = render.Measure(m.all, m.tags)
 		if m.askedFor == "" {
 			m.filter()
 		} else {
@@ -564,7 +599,14 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "esc":
+			if m.phase() != searching {
+				m.search()
+				return m.afterMove()
+			}
+			m.quitting = true
+			return m, tea.Quit
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
@@ -588,7 +630,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.loadPreview()
 		case "ctrl+/", "ctrl+_":
 			m.hidePreview = !m.hidePreview
-			m.input.SetWidth(max(m.layout().listWidth-14, 4))
+			m.input.SetWidth(max(m.layout().listWidth-12, 4))
 			return m.afterMove()
 		case "alt+up":
 			m.body.PageUp()
@@ -625,7 +667,9 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return updated, tea.Batch(cmd, load)
 }
 
-func (m picker) rowLine(r session.Row, selected bool, width int) string {
+func cell(text string, width int) string { return pad(ansi.Truncate(text, width, "…"), width) + "  " }
+
+func (m picker) rowLine(r session.Row, selected bool, width int, c render.Columns, words []string) string {
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -635,25 +679,56 @@ func (m picker) rowLine(r session.Row, selected bool, width int) string {
 		}
 		return st
 	}
-	plain, muted := paint(lipgloss.NewStyle()), paint(m.colors.muted)
-	t := render.RowTextOf(r, m.tags)
-	segment := ""
-	if t.Waiting != "" {
-		segment = paint(m.colors.accent).Render(t.Waiting) + muted.Render(" · ")
+	plain, muted, title := paint(lipgloss.NewStyle()), paint(m.colors.muted), paint(lipgloss.NewStyle())
+	if selected {
+		muted, title = plain, title.Bold(true)
 	}
-	line := plain.Render(" "+t.Title+"  ") + segment + muted.Render(strings.Join(t.Context, " · "))
-	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
-	if pad := width - lipgloss.Width(line); pad > 0 {
-		line += plain.Render(strings.Repeat(" ", pad))
+	hit := title.Bold(true)
+	if !m.colors.plain() {
+		hit = hit.Foreground(lipgloss.Color("4"))
 	}
-	return line
+	cells := render.CellsOf(r, m.tags)
+	c = c.For(cells, width)
+	right := ""
+	if c.Project > 0 {
+		right += muted.Render(cell(cells.Project, c.Project))
+	}
+	if c.Agent > 0 {
+		right += muted.Render(cell(cells.Agent, c.Agent))
+	}
+	right += muted.Render(fmt.Sprintf("%*s ", render.AgeWidth, cells.Age))
+	room := max(width-3-lipgloss.Width(right), 1)
+	marked := ""
+	for _, span := range render.Marks(cells.Title, words) {
+		if span.Hit {
+			marked += hit.Render(span.Text)
+		} else {
+			marked += title.Render(span.Text)
+		}
+	}
+	status := ""
+	if word := 2 + lipgloss.Width(cells.Status); cells.Status != "" && room-word >= minStatusTitle {
+		room -= word
+		paintStatus := muted
+		if cells.Waiting {
+			paintStatus = plain
+		}
+		status = plain.Render("  ") + paintStatus.Render(cells.Status)
+	}
+	left := plain.Render(" ") + ansi.Truncate(marked, room, title.Render("…")) + status
+	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 2)
+	return ansi.Truncate(left+plain.Render(strings.Repeat(" ", gap))+right, width, "")
 }
 
 func (m picker) inputBox(width int) []string {
 	border, muted := m.colors.border, m.colors.muted
-	label := " " + lipgloss.NewStyle().Bold(true).Render(m.label) + " "
-	if m.asking {
-		label = " " + m.colors.accent.Render(m.spin.View()) + " " + lipgloss.NewStyle().Bold(true).Render("Asking…") + " "
+	bold := lipgloss.NewStyle().Bold(true)
+	label := " " + bold.Render(m.label) + " "
+	switch m.phase() {
+	case asking:
+		label = " " + m.colors.accent.Render(m.spin.View()) + " " + bold.Render("Asking…") + " "
+	case asked:
+		label = " " + bold.Render("Sessions by description") + " "
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")
@@ -666,16 +741,26 @@ func (m picker) inputBox(width int) []string {
 	return []string{top, middle, bottom}
 }
 
+func (m picker) hints() [][2]string {
+	switch {
+	case m.phase() == asking:
+		return [][2]string{{"esc", "stop asking"}}
+	case m.phase() == asked && len(m.shown) == 0:
+		return [][2]string{{"esc", "back to search"}}
+	case m.phase() == asked:
+		return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"esc", "back to search"}}
+	case len(m.all) == 0:
+		return [][2]string{{"esc", "quit"}}
+	case len(m.shown) == 0:
+		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
+	}
+	return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
+}
+
 func (m picker) footer(width int) string {
 	muted := m.colors.muted
-	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
-	if len(m.all) == 0 {
-		pairs = [][2]string{{"esc", "quit"}}
-	} else if len(m.shown) == 0 {
-		pairs = [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
-	}
 	line, used := "", 1
-	for i, p := range pairs {
+	for i, p := range m.hints() {
 		hint, separator := p[0]+muted.Render(" "+p[1]), ""
 		if i > 0 {
 			separator = muted.Render(" · ")
@@ -723,9 +808,10 @@ func (m picker) View() tea.View {
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
+	cols, words := m.widths.Fit(l.listWidth), m.matchWords()
 	for i := m.offset; i < m.offset+l.listHeight; i++ {
 		if i < len(m.shown) {
-			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth))
+			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth, cols, words))
 		} else {
 			column = append(column, "")
 		}

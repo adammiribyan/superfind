@@ -145,3 +145,85 @@ func RowContext(t RowText, secondary string) string {
 	}
 	return flag + strings.Join(t.Context, " · ")
 }
+
+const (
+	AgeWidth        = 8
+	MinTitle        = 24
+	minLabeledTitle = 16
+	columnCap       = 14
+)
+
+type Cells struct {
+	Title, Status, Project, Agent, Age string
+	Waiting                            bool
+}
+
+func CellsOf(r session.Row, t Tags) Cells {
+	c := Cells{Title: Flat(r.Session.Title), Project: Flat(r.Session.Project()), Agent: strings.Join(t.of(r), " "),
+		Age: Age(r.Session.Mtime), Waiting: r.Status == session.WaitingLabel}
+	switch {
+	case r.Status != "":
+		c.Status = r.Status
+	case r.Session.Active():
+		c.Status = "active now"
+	case r.FolderGone:
+		c.Status = "folder removed"
+	}
+	if session.IsHere(r.Session) {
+		c.Project = ""
+	}
+	return c
+}
+
+type Widths struct{ Project, Agent int }
+
+func Measure(rows []session.Row, t Tags) Widths {
+	var w Widths
+	for _, r := range rows {
+		c := CellsOf(r, t)
+		w.Project = max(w.Project, displayWidth(c.Project))
+		w.Agent = max(w.Agent, displayWidth(c.Agent))
+	}
+	w.Project, w.Agent = min(w.Project, columnCap), min(w.Agent, columnCap)
+	return w
+}
+
+type Columns struct{ Project, Agent int }
+
+func (c Columns) titleRoom(width int) int {
+	room := width - 3 - AgeWidth - 1
+	for _, w := range []int{c.Project, c.Agent} {
+		if w > 0 {
+			room -= w + 2
+		}
+	}
+	return room
+}
+
+func (w Widths) Fit(width int) Columns {
+	c := Columns(w)
+	for _, drop := range []*int{&c.Agent, &c.Project} {
+		if c.titleRoom(width) >= MinTitle {
+			break
+		}
+		*drop = 0
+	}
+	return c
+}
+
+func (c Columns) For(cells Cells, width int) Columns {
+	if cells.Project == "" {
+		c.Project = 0
+	}
+	if cells.Status == "" {
+		return c
+	}
+	word := 2 + displayWidth(cells.Status)
+	for _, drop := range []*int{&c.Agent, &c.Project} {
+		if c.titleRoom(width)-word >= minLabeledTitle {
+			break
+		}
+		*drop = 0
+	}
+	return c
+}

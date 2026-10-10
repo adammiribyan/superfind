@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -302,6 +303,67 @@ func Ago(mtime float64) string {
 	}
 	return t.Format("Jan 2 2006")
 }
+
+func Age(mtime float64) string {
+	seconds := session.Now() - mtime
+	switch {
+	case seconds < 3600:
+		return fmt.Sprintf("%dm", max(int(seconds/60), 1))
+	case seconds < 86400:
+		return fmt.Sprintf("%dh", int(seconds/3600))
+	case seconds < 7*86400:
+		return fmt.Sprintf("%dd", int(seconds/86400))
+	}
+	t := time.Unix(int64(mtime), 0)
+	if t.Year() == time.Now().Year() {
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2006")
+}
+
+type Span struct {
+	Text string
+	Hit  bool
+}
+
+func Marks(title string, words []string) []Span {
+	runes := []rune(title)
+	lower := lowered(runes)
+	hit := make([]bool, len(runes))
+	for _, w := range words {
+		want := lowered([]rune(w))
+		if len(want) == 0 {
+			continue
+		}
+		for i := 0; i+len(want) <= len(lower); i++ {
+			if (i == 0 || !isLetterOrDigit(lower[i-1])) && slices.Equal(lower[i:i+len(want)], want) {
+				for k := i; k < i+len(want); k++ {
+					hit[k] = true
+				}
+			}
+		}
+	}
+	var spans []Span
+	for i := 0; i < len(runes); {
+		j := i
+		for j < len(runes) && hit[j] == hit[i] {
+			j++
+		}
+		spans = append(spans, Span{string(runes[i:j]), hit[i]})
+		i = j
+	}
+	return spans
+}
+
+func lowered(runes []rune) []rune {
+	out := make([]rune, len(runes))
+	for i, r := range runes {
+		out[i] = unicode.ToLower(r)
+	}
+	return out
+}
+
+func isLetterOrDigit(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
 func when(s session.Session) string {
 	if s.Active() {

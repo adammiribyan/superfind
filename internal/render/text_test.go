@@ -1,6 +1,7 @@
 package render
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -66,6 +67,25 @@ func TestWrappingAMegabyteTokenKeepsItAll(t *testing.T) {
 	for _, line := range lines {
 		if displayWidth(line) > 60 {
 			t.Fatalf("a line is %d wide", displayWidth(line))
+		}
+	}
+}
+
+func TestMarksFindWordStartsInAnyCase(t *testing.T) {
+	cases := []struct {
+		title string
+		words []string
+		want  []Span
+	}{
+		{"Reindex the Index", []string{"index"}, []Span{{"Reindex the ", false}, {"Index", true}}},
+		{"Überprüfung der Rechnung", []string{"üb"}, []Span{{"Üb", true}, {"erprüfung der Rechnung", false}}},
+		{"Kelvin \u212Aelvin scale", []string{"kel", "sc"}, []Span{{"Kel", true}, {"vin ", false}, {"\u212Ael", true}, {"vin ", false}, {"sc", true}, {"ale", false}}},
+		{"ledger-ledger", []string{"ledger"}, []Span{{"ledger", true}, {"-", false}, {"ledger", true}}},
+		{"Checkout double charge", []string{"double", "charge"}, []Span{{"Checkout ", false}, {"double", true}, {" ", false}, {"charge", true}}},
+	}
+	for _, c := range cases {
+		if got := Marks(c.title, c.words); !slices.Equal(got, c.want) {
+			t.Errorf("Marks(%q, %q) = %+v, want %+v", c.title, c.words, got, c.want)
 		}
 	}
 }

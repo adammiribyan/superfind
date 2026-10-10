@@ -2,6 +2,7 @@ import http.server
 import json
 import os
 import fcntl
+import re
 import pty
 import select
 import shutil
@@ -16,6 +17,10 @@ from pathlib import Path
 
 from test_superfind import (SUPERFIND, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, colors_in,
                             grok_reply, grok_user, line, tool, uid, user)
+
+
+AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
+CELL_GAP = r" {2,}"
 
 
 def tmux(*args):
@@ -52,18 +57,19 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         if linger:
             command += "; sleep 60"
-        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
+        style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
+        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command, *style)
         self.wait_for(header)
 
-    def screen(self):
-        return tmux("capture-pane", "-p", "-t", self.session_name).stdout
+    def screen(self, *flags):
+        return tmux("capture-pane", "-p", *flags, "-t", self.session_name).stdout
 
     def wait_for(self, text, timeout=5):
         deadline = time.time() + timeout
@@ -100,14 +106,127 @@ class PickerBehavior(unittest.TestCase):
                      tool("Edit"), claude("The Pay button now disables itself until the charge finishes."),
                      user("add a test that taps twice"), tool("Edit"), claude("Added a test that taps Pay twice."))
 
+    def row_lines(self):
+        return [l.split("│")[0].rstrip() for l in self.screen().expandtabs().splitlines()
+                if AGE.fullmatch(re.split(CELL_GAP, l.split("│")[0].strip())[-1])]
+
+    def cells(self):
+        return [re.split(CELL_GAP, l.strip()) for l in self.row_lines()]
+
     def rows(self):
-        return [l.strip() for l in self.screen().splitlines() if " ago · tmp" in l or " · tmp" in l]
+        return ["  ".join(c) for c in self.cells()]
+
+    def titles(self):
+        return [c[0] for c in self.cells()]
 
     def test_sessions_are_listed_newest_first(self):
         self.three_sessions()
         self.open_picker()
-        titles = [r.split("  ")[0] for r in self.rows()]
+        titles = self.titles()
         self.assertEqual(titles[:3], ["Checkout double charge", "Invoice layout", "Ledger migration"])
+
+    def test_every_age_ends_in_one_column_and_a_long_title_keeps_its_age(self):
+        self.three_sessions()
+        self.session("long", "Rework the invoice numbering so credit notes and refunds share one sequence per tenant",
+                     user("renumber invoices"), tool("Edit"), claude("Renumbered."))
+        os.utime(self.projects / "long.jsonl", (time.time() - 600, time.time() - 600))
+        self.open_picker()
+        lines = self.row_lines()
+        self.assertEqual(len(lines), 4)
+        self.assertEqual({len(l) for l in lines}, {len(lines[0])})
+        self.assertEqual(self.cells()[0], ["Rework the invoice numbering so credit notes and refunds…", "tmp", "10m"])
+
+    def label_waiting(self, path):
+        st = os.stat(path)
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
+
+    def test_a_status_follows_the_title_only_on_the_row_that_has_one(self):
+        self.three_sessions()
+        self.label_waiting(self.projects / "mid.jsonl")
+        self.open_picker()
+        self.assertEqual(self.cells(), [["Checkout double charge", "tmp", "2d"], ["Invoice layout", "waiting on you", "tmp", "2d"],
+                                        ["Ledger migration", "tmp", "2d"]])
+        self.assertTrue(self.row_lines()[1].startswith("  Invoice layout  waiting on you "), self.row_lines()[1])
+        self.assertEqual({len(l) for l in self.row_lines()}, {len(self.row_lines()[0])})
+
+    def test_an_active_session_says_active_now_and_still_shows_its_age(self):
+        self.three_sessions()
+        os.utime(self.projects / "mid.jsonl", (time.time() - 20, time.time() - 20))
+        self.open_picker()
+        self.assertEqual(self.cells()[0], ["Invoice layout", "active now", "tmp", "1m"])
+
+    def test_one_labeled_session_keeps_project_agent_and_age_on_every_row(self):
+        folder = self.home / "payments-reconciliation"
+        folder.mkdir()
+        self.session("ledger", "Ledger migration", user("migrate the ledger", cwd=str(folder)), tool("Bash"),
+                     claude("Migrated."))
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.label_waiting(self.projects / "ledger.jsonl")
+        self.open_picker(header="─ Sessions ")
+        self.assertEqual(self.cells(), [["fix the build", "tmp", "codex", "2d"],
+                                        ["Ledger migration", "waiting on you", "payments-reco…", "claude", "2d"]])
+
+    def test_a_labeled_row_gives_its_agent_cell_to_a_cramped_title(self):
+        folder = self.home / "payments-reconciliation"
+        folder.mkdir()
+        self.session("ledger", "Ledger migration", user("migrate the ledger", cwd=str(folder)), tool("Bash"),
+                     claude("Migrated."))
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.label_waiting(self.projects / "ledger.jsonl")
+        self.open_picker(width=120, header="─ Sessions ")
+        self.assertEqual(self.cells(), [["fix the build", "tmp", "codex", "2d"],
+                                        ["Ledger migration", "waiting on you", "payments-reco…", "2d"]])
+        self.assertEqual({len(l) for l in self.row_lines()}, {len(self.row_lines()[0])})
+
+    def test_a_narrow_list_drops_the_agent_column_before_the_project(self):
+        folder = self.home / "payments-reconciliation"
+        folder.mkdir()
+        self.session("ledger", "Ledger migration", user("migrate the ledger", cwd=str(folder)), tool("Bash"),
+                     claude("Migrated."))
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
+                           codex_reply("Fixed."))
+        self.open_picker(header="─ Sessions ")
+        self.assertEqual(self.cells(), [["fix the build", "tmp", "codex", "2d"],
+                                        ["Ledger migration", "payments-reco…", "claude", "2d"]])
+        tmux("resize-window", "-t", self.session_name, "-x", "60", "-y", "24")
+        time.sleep(0.8)
+        self.assertEqual(self.cells(), [["fix the build", "tmp", "2d"], ["Ledger migration", "payments-reco…", "2d"]])
+
+    def test_opened_from_a_subfolder_its_sessions_come_first_without_a_project(self):
+        for name in ("app/web", "shop"):
+            (self.home / name).mkdir(parents=True)
+        self.session("here", "Ledger migration", user("migrate the ledger", cwd=str(self.home / "app")), tool("Bash"),
+                     claude("Done."))
+        self.session("there", "Invoice layout", user("wrap names", cwd=str(self.home / "shop")), tool("Edit"), claude("Done."))
+        self.env["PWD"] = str(self.home / "app" / "web")
+        self.open_picker()
+        self.assertEqual(self.cells(), [["Ledger migration", "2d"], ["Invoice layout", "shop", "2d"]])
+
+    def test_a_session_from_the_home_folder_is_not_here_in_its_subfolders(self):
+        for name in ("shop", "other"):
+            (self.home / name).mkdir()
+        self.session("home", "Dotfiles cleanup", user("tidy the dotfiles", cwd=str(self.home)), tool("Bash"), claude("Done."))
+        self.session("other", "Invoice layout", user("wrap names", cwd=str(self.home / "other")), tool("Edit"), claude("Done."))
+        self.env["PWD"] = str(self.home / "shop")
+        self.open_picker()
+        self.assertEqual(self.cells(), [["Invoice layout", "other", "2d"], ["Dotfiles cleanup", self.home.name, "2d"]])
+
+    def test_a_session_from_this_folder_gives_its_blank_project_cells_to_the_title(self):
+        for name in ("shop", "payments-reconciliation"):
+            (self.home / name).mkdir()
+        self.session("there", "Ledger migration", user("migrate the ledger", cwd=str(self.home / "payments-reconciliation")),
+                     tool("Bash"), claude("Done."))
+        self.session("here", "Checkout button double-charge on slow networks",
+                     user("customers get charged twice", cwd=str(self.home / "shop")), tool("Edit"), claude("Done."))
+        self.env["PWD"] = str(self.home / "shop")
+        self.open_picker(width=112, height=16)
+        self.assertEqual(self.cells(), [["Checkout button double-charge on slow networks", "2d"],
+                                        ["Ledger migration", "payments-reco…", "2d"]])
+        self.assertEqual({len(l) for l in self.row_lines()}, {len(self.row_lines()[0])})
 
     def test_typing_narrows_the_list_and_shows_the_matching_passage(self):
         self.three_sessions()
@@ -115,8 +234,75 @@ class PickerBehavior(unittest.TestCase):
         tmux("set-buffer", "-b", self.session_name, "charged")
         tmux("paste-buffer", "-p", "-d", "-b", self.session_name, "-t", self.session_name)
         self.wait_for("1/3")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
         self.assertIn("customers get charged twice", self.screen())
+
+    def test_sessions_that_match_about_as_well_list_newest_first(self):
+        self.session("old", "Ledger migration", user("move the ledger"), tool("Bash"), claude("Moved."))
+        self.session("new", "Ledger migration follow-up", user("check the ledger"), tool("Bash"), claude("Checked."))
+        self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
+        self.open_picker()
+        self.keys("ledger")
+        self.wait_for("2/3")
+        self.assertEqual(self.titles(), ["Ledger migration follow-up", "Ledger migration"])
+
+    def list_column(self):
+        return "\n".join(re.sub(r"(\x1b\[[0-9;]*m| )+$", "", l.split("│")[0]) for l in self.screen("-e").splitlines())
+
+    def test_the_selected_row_has_a_bold_title_and_full_strength_columns(self):
+        self.three_sessions()
+        self.open_picker()
+        rows = [l for l in self.list_column().splitlines() if "tmp" in l]
+        self.assertRegex(rows[0], r"\x1b\[1mCheckout double charge")
+        self.assertNotIn("\x1b[2m", rows[0])
+        self.assertNotRegex(rows[1], r"\x1b\[1mInvoice layout")
+        self.assertRegex(rows[1], r"\x1b\[2mtmp")
+
+    def answering_claude(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+
+    def two_ledger_sessions(self):
+        self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
+        self.session("old", "Ledger migration", user("move the ledger"), tool("Bash"), claude("Moved."))
+        self.session("new", "Ledger migration follow-up", user("check the ledger"), tool("Bash"), claude("Checked."))
+
+    def ledger_rows(self):
+        self.keys("ledger")
+        self.wait_for("2/3")
+        return [l for l in self.list_column().splitlines() if "migration" in l]
+
+    def test_matched_words_are_bold_and_blue_while_searching_and_plain_in_ask_results(self):
+        self.answering_claude()
+        del self.env["NO_COLOR"]
+        self.two_ledger_sessions()
+        self.open_picker(colors=True)
+        blue = r"\x1b\[1m\x1b\[[0-9;]*34mLedger\x1b\[[0-9;]*m migration"
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(unselected, r"^  " + blue + r"( |\x1b)")
+        self.keys("C-r")
+        time.sleep(1.5)
+        self.assertNotIn("Asking", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration follow-up"])
+        self.assertNotRegex(self.list_column(), blue)
+
+    def test_matched_words_are_bold_under_no_color(self):
+        self.two_ledger_sessions()
+        self.open_picker()
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(unselected, r"^  \x1b\[1mLedger\x1b\[0m migration ")
+        self.assertNotIn("34m", selected + unselected)
+
+    def test_a_match_on_the_selected_row_is_bold_without_a_blue_block_when_the_terminal_hides_its_colors(self):
+        del self.env["NO_COLOR"]
+        self.two_ledger_sessions()
+        self.open_picker()
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(selected, r"^ \x1b\[7m \x1b\[1mLedger migration follow-up")
+        self.assertNotIn("34m", selected + unselected)
 
     def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
         self.three_sessions()
@@ -128,7 +314,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker(index_first=False)
         self.keys("charged")
         self.wait_for("1/3")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
 
     def test_the_picker_searches_the_rebuilt_index_not_the_damaged_one_it_opened(self):
         import sqlite3
@@ -141,7 +327,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker(index_first=False)
         self.keys("charged")
         self.wait_for("1/3")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
 
     def test_damage_found_while_typing_rebuilds_the_index_and_finds_the_session(self):
         import sqlite3
@@ -156,7 +342,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker(index_first=False)
         self.keys("charged")
         self.wait_for("1/33")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
 
     @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
     def test_a_folder_that_cannot_be_read_is_named_in_the_picker(self):
@@ -178,7 +364,7 @@ class PickerBehavior(unittest.TestCase):
         status = self.home / ".cache" / "superfind" / "status.json"
         status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
         self.wait_for("1/3")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Invoice layout"])
+        self.assertEqual(self.titles(), ["Invoice layout"])
 
     def test_a_session_that_loses_its_label_leaves_status_filtered_ask_results(self):
         stub = self.home / "stub"
@@ -214,10 +400,11 @@ class PickerBehavior(unittest.TestCase):
         shutil.rmtree(self.home / ".claude")
         self.open_picker(index_first=False, header="Sessions")
         self.wait_for("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.")
-        self.keys("abc")
+        self.keys("abc", "C-r")
         screen = self.settled_screen()
         self.assertIn("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.", screen)
         self.assertIn("esc quit", screen)
+        self.assertNotIn("Asking", screen)
         self.assertNotIn("deep search", screen)
         self.keys("Escape")
         self.assertEqual(self.result(), (1, ""))
@@ -230,7 +417,7 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual(tmux("display", "-p", "-t", self.session_name, "#{window_width}x#{window_height}").stdout, "1x1\n")
         tmux("resize-window", "-t", self.session_name, "-x", "140", "-y", "32")
         time.sleep(0.8)
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge", "Invoice layout", "Ledger migration"])
+        self.assertEqual(self.titles(), ["Checkout double charge", "Invoice layout", "Ledger migration"])
 
     def test_the_title_handed_to_the_shell_carries_no_terminal_commands(self):
         self.session("esc", "make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway",
@@ -244,10 +431,18 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.open_picker()
         self.keys("kubernetes")
-        self.wait_for("No sessions match “kubernetes”")
+        self.wait_for("No session contains these words. ctrl-r asks by description.")
         self.assertIn("ctrl-u clear search", self.screen())
         self.keys("C-u")
         self.wait_for("3/3")
+
+    def test_the_search_box_has_no_prompt_mark_and_the_cursor_follows_the_text(self):
+        self.three_sessions()
+        self.open_picker()
+        self.keys("led")
+        box = next(l for l in self.screen().splitlines() if "1/3" in l)
+        cursor = tmux("display", "-p", "-t", self.session_name, "#{cursor_x},#{cursor_y}").stdout.strip()
+        self.assertEqual((box[:7], cursor), (" │ led ", f"6,{self.screen().splitlines().index(box)}"))
 
     def test_enter_prints_the_title_and_the_command_that_resumes_it(self):
         self.three_sessions()
@@ -299,7 +494,7 @@ class PickerBehavior(unittest.TestCase):
         tmux("set-buffer", "-b", self.session_name, "charged")
         tmux("paste-buffer", "-p", "-d", "-b", self.session_name, "-t", self.session_name)
         self.wait_for("1/3")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
 
     def test_a_scrolled_preview_keeps_its_place_when_labels_refresh(self):
         turns = []
@@ -340,7 +535,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("charged")
         self.wait_for("Search failed: the search index couldn't be read")
-        self.assertNotIn("No sessions match", self.screen())
+        self.assertNotIn("No session", self.screen())
 
     def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
         self.three_sessions()
@@ -404,7 +599,7 @@ class PickerBehavior(unittest.TestCase):
         fcntl.flock(lock, fcntl.LOCK_EX)
         self.open_picker(index_first=False)
         self.keys("Down")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()][:3],
+        self.assertEqual(self.titles()[:3],
                          ["Checkout double charge", "Invoice layout", "Ledger migration"])
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
@@ -417,8 +612,7 @@ class PickerBehavior(unittest.TestCase):
         self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(),
                            codex_reply("Fixed."))
         self.open_picker(header="─ Sessions ")
-        self.assertEqual([r.split("│")[0].strip() for r in self.rows()[:2]],
-                         ["fix the build  2d ago · tmp · codex", "Checkout double charge  2d ago · tmp · claude"])
+        self.assertEqual(self.cells()[:2], [["fix the build", "tmp", "codex", "2d"], ["Checkout double charge", "tmp", "claude", "2d"]])
         self.assertNotIn("Claude sessions", self.screen())
 
     def test_choosing_a_codex_session_prints_its_resume_command(self):
@@ -548,8 +742,8 @@ class PickerBehavior(unittest.TestCase):
         deadline = time.time() + 10
         while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
             time.sleep(0.1)
+        self.assertIn("esc stop asking", self.screen())
         self.keys("Escape")
-        self.assertEqual(self.result()[0], 1)
         time.sleep(0.5)
         alive = []
         for pid in map(int, pids.read_text().split()):
@@ -559,6 +753,29 @@ class PickerBehavior(unittest.TestCase):
             except ProcessLookupError:
                 pass
         self.assertEqual(alive, [])
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertNotIn("Asking", self.screen())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+    def test_escape_leaves_ask_results_for_the_keyword_search_and_then_quits(self):
+        self.answering_claude()
+        self.three_sessions()
+        self.open_picker()
+        self.keys("ledger")
+        self.wait_for("1/3")
+        self.keys("C-r")
+        self.wait_for("Sessions by description")
+        self.assertIn("enter resume · tab view · esc back to search", self.screen())
+        self.assertEqual(self.titles(), ["Checkout double charge"])
+        self.keys("Escape")
+        self.wait_for("Claude sessions")
+        self.assertNotIn("Sessions by description", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertIn("enter resume · tab view · ctrl-r ask", self.screen())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
 
     def test_interrupting_the_picker_during_an_ask_stops_claude_too(self):
         stub = self.home / "stub"
@@ -606,7 +823,7 @@ class PickerBehavior(unittest.TestCase):
         self.assertTrue(db_path.exists())
         lock.close()
         self.wait_for("1/33")
-        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+        self.assertEqual(self.titles(), ["Checkout double charge"])
 
     def test_damage_found_during_an_ask_does_not_crash_the_picker(self):
         import sqlite3
@@ -785,12 +1002,12 @@ class PtyPicker(unittest.TestCase):
 
 class PickerColors(PtyPicker):
     COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
-    TINT = b"48;2;41;52;64"
+    TINT = b"48;2;46;63;82"
 
     def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
         before = self.read(until=b"\x1b[7m")
         self.assertIn(b"\x1b]11;?", before)
-        self.assertIn(b"\x1b[7m Ledger", before)
+        self.assertIn(b"\x1b[7m \x1b[1mLedger", before)
         time.sleep(0.6)
         os.write(self.terminal, self.COLORS)
         self.assertIn(self.TINT, self.read(until=self.TINT))
