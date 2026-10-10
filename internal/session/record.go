@@ -2,7 +2,6 @@ package session
 
 import (
 	"database/sql"
-	"slices"
 	"strings"
 	"time"
 
@@ -69,9 +68,7 @@ func RecordOf(r Row, clean func(string) string) Record {
 	}
 }
 
-func AsksForAgents(query string) bool {
-	return slices.ContainsFunc(strings.Fields(query), func(w string) bool { return strings.EqualFold(w, AgentFilter) })
-}
+func AsksForAgents(query string) bool { return Parse(query).Agents }
 
 func Passages(db *sql.DB, query string) map[string]string {
 	match := ftsQuery(query)

@@ -40,11 +40,13 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
   superfind search WORDS [--json]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent, and
-                          is:agent shows sessions another program started
+                          agent:claude, agent:codex, and agent:grok by the agent,
+                          is:agent shows sessions another program started, and in:here,
+                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
+                          and last activity
   superfind ask WORDS [--json]
                           print the sessions that best fit what you describe, even in other words;
-                          takes the same is: and agent: filters
+                          takes the same filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
@@ -91,18 +93,27 @@ unless you ask for them with is:agent.
   is:waiting      only sessions waiting on you; is:unfinished works the same way
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
+  in:here         only sessions from this folder, a folder inside it, or a folder that holds
+                  it; your home folder and / count only for sessions started right there
+  branch:main     only sessions that ended on that branch, in any letter case; several
+                  branch: filters mean any of them
+  after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
+                  date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
+  before:DAY      only sessions last active before that day; after:2026-10-09
+                  before:2026-10-10 is October 9
   --json          print one JSON object per session instead, including the ones another
                   program started, each with its kind and the passage that matched
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with --, put --
-before it.
+before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
 `,
 	"ask": `superfind ask WORDS [--json]
 
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
-without one. Takes the same is: and agent: filters as search, and prints the same fields.
+without one. Takes the same filters as search, such as agent:codex or in:here, and prints
+the same fields.
 With --json, it prints one JSON object per session, as search --json does.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
@@ -446,6 +457,14 @@ func writeRecords(rows []session.Row, db *sql.DB, query string) {
 	}
 }
 
+func mustParse(command, text string) session.Query {
+	q := session.Parse(text)
+	if q.Problem != nil {
+		usageError("superfind " + command + ": " + q.Problem.Error())
+	}
+	return q
+}
+
 func searchWords(command string, args []string) (string, bool) {
 	var words []string
 	asJSON := false
@@ -517,6 +536,7 @@ func run(args []string) {
 		fmt.Fprintf(stdout, "%d %s indexed\n", n, noun)
 	case "search":
 		query, asJSON := searchWords("search", args[1:])
+		q := mustParse("search", query)
 		find := session.Search
 		if asJSON {
 			find = session.SearchEvery
@@ -536,17 +556,14 @@ func run(args []string) {
 			writeRecords(found, db, query)
 			return
 		}
-		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
+		printRows(found, render.TagsFor(session.SameKind(rows, q.Agents)))
 	case "ask":
-		rows := session.Annotate(mustIndex("ask"))
-		shown := render.TagsFor(session.SameKind(rows, session.AsksForAgents(strings.Join(args[1:], " "))))
-		db := mustOpenSearch()
 		words, asJSON := searchWords("ask", args[1:])
-		narrow := session.Narrow
-		if asJSON {
-			narrow = session.NarrowEvery
-		}
-		query, eligible := narrow(words, rows)
+		q := mustParse("ask", words)
+		rows := session.Annotate(mustIndex("ask"))
+		shown := render.TagsFor(session.SameKind(rows, q.Agents))
+		db := mustOpenSearch()
+		query, eligible := q.Words, q.Rows(rows, asJSON)
 		if query == "" && asJSON {
 			writeRecords(session.RecentFirst(eligible), db, "")
 			return
