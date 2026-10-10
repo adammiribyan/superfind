@@ -76,7 +76,16 @@ func CacheDir() string {
 
 func CachePath(name string) string { return filepath.Join(CacheDir(), name) }
 
-func isHere(s Session) bool { return s.Cwd == os.Getenv("PWD") }
+func IsHere(s Session) bool {
+	if s.Cwd == "" {
+		return false
+	}
+	cwd, pwd := filepath.Clean(s.Cwd), filepath.Clean(os.Getenv("PWD"))
+	if cwd == pwd {
+		return true
+	}
+	return cwd != filepath.Clean(agent.Home()) && strings.HasPrefix(pwd, cwd+"/")
+}
 
 func RecentFirst(rows []Row) []Row {
 	out := append([]Row(nil), rows...)
@@ -85,8 +94,8 @@ func RecentFirst(rows []Row) []Row {
 		if a.Throwaway() != b.Throwaway() {
 			return !a.Throwaway()
 		}
-		if isHere(a) != isHere(b) {
-			return isHere(a)
+		if IsHere(a) != IsHere(b) {
+			return IsHere(a)
 		}
 		if a.Mtime != b.Mtime {
 			return a.Mtime > b.Mtime
