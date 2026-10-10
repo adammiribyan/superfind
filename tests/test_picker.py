@@ -399,10 +399,11 @@ class PickerBehavior(unittest.TestCase):
         shutil.rmtree(self.home / ".claude")
         self.open_picker(index_first=False, header="Sessions")
         self.wait_for("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.")
-        self.keys("abc")
+        self.keys("abc", "C-r")
         screen = self.settled_screen()
         self.assertIn("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.", screen)
         self.assertIn("esc quit", screen)
+        self.assertNotIn("Asking", screen)
         self.assertNotIn("deep search", screen)
         self.keys("Escape")
         self.assertEqual(self.result(), (1, ""))
@@ -429,7 +430,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.open_picker()
         self.keys("kubernetes")
-        self.wait_for("No sessions match “kubernetes”")
+        self.wait_for("No session contains these words. ctrl-r asks by description.")
         self.assertIn("ctrl-u clear search", self.screen())
         self.keys("C-u")
         self.wait_for("3/3")
@@ -525,7 +526,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("charged")
         self.wait_for("Search failed: the search index couldn't be read")
-        self.assertNotIn("No sessions match", self.screen())
+        self.assertNotIn("No session", self.screen())
 
     def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
         self.three_sessions()
@@ -732,8 +733,8 @@ class PickerBehavior(unittest.TestCase):
         deadline = time.time() + 10
         while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
             time.sleep(0.1)
+        self.assertIn("esc stop asking", self.screen())
         self.keys("Escape")
-        self.assertEqual(self.result()[0], 1)
         time.sleep(0.5)
         alive = []
         for pid in map(int, pids.read_text().split()):
@@ -743,6 +744,29 @@ class PickerBehavior(unittest.TestCase):
             except ProcessLookupError:
                 pass
         self.assertEqual(alive, [])
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertNotIn("Asking", self.screen())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+    def test_escape_leaves_ask_results_for_the_keyword_search_and_then_quits(self):
+        self.answering_claude()
+        self.three_sessions()
+        self.open_picker()
+        self.keys("ledger")
+        self.wait_for("1/3")
+        self.keys("C-r")
+        self.wait_for("Sessions by description")
+        self.assertIn("enter resume · tab view · esc back to search", self.screen())
+        self.assertEqual(self.titles(), ["Checkout double charge"])
+        self.keys("Escape")
+        self.wait_for("Claude sessions")
+        self.assertNotIn("Sessions by description", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertIn("enter resume · tab view · ctrl-r ask", self.screen())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
 
     def test_interrupting_the_picker_during_an_ask_stops_claude_too(self):
         stub = self.home / "stub"

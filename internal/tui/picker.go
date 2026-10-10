@@ -339,12 +339,15 @@ func (m *picker) filter() {
 	default:
 		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
+		words, _ := session.Narrow(query, nil)
 		if errors.Is(err, session.ErrDamaged) {
 			m.db, m.shown, m.reindex = nil, m.all, true
 		}
 		switch {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
+		case len(m.shown) == 0 && len(m.all) > 0 && words != "":
+			m.message = "No session contains these words. ctrl-r asks by description."
 		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
@@ -425,7 +428,7 @@ func (m *picker) showBody(key bodyKey, body []string) {
 
 func (m picker) startAsk() (picker, tea.Cmd) {
 	query, rows := session.Narrow(m.input.Value(), m.all)
-	if query == "" {
+	if query == "" || len(m.all) == 0 {
 		return m, nil
 	}
 	if m.db == nil {
@@ -597,7 +600,14 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "esc":
+			if m.phase() != searching {
+				m.search()
+				return m.afterMove()
+			}
+			m.quitting = true
+			return m, tea.Quit
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
@@ -713,9 +723,13 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 
 func (m picker) inputBox(width int) []string {
 	border, muted := m.colors.border, m.colors.muted
-	label := " " + lipgloss.NewStyle().Bold(true).Render(m.label) + " "
-	if m.asking {
-		label = " " + m.colors.accent.Render(m.spin.View()) + " " + lipgloss.NewStyle().Bold(true).Render("Asking…") + " "
+	bold := lipgloss.NewStyle().Bold(true)
+	label := " " + bold.Render(m.label) + " "
+	switch m.phase() {
+	case asking:
+		label = " " + m.colors.accent.Render(m.spin.View()) + " " + bold.Render("Asking…") + " "
+	case asked:
+		label = " " + bold.Render("Sessions by description") + " "
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")
@@ -728,16 +742,26 @@ func (m picker) inputBox(width int) []string {
 	return []string{top, middle, bottom}
 }
 
+func (m picker) hints() [][2]string {
+	switch {
+	case m.phase() == asking:
+		return [][2]string{{"esc", "stop asking"}}
+	case m.phase() == asked && len(m.shown) == 0:
+		return [][2]string{{"esc", "back to search"}}
+	case m.phase() == asked:
+		return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"esc", "back to search"}}
+	case len(m.all) == 0:
+		return [][2]string{{"esc", "quit"}}
+	case len(m.shown) == 0:
+		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
+	}
+	return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
+}
+
 func (m picker) footer(width int) string {
 	muted := m.colors.muted
-	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
-	if len(m.all) == 0 {
-		pairs = [][2]string{{"esc", "quit"}}
-	} else if len(m.shown) == 0 {
-		pairs = [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
-	}
 	line, used := "", 1
-	for i, p := range pairs {
+	for i, p := range m.hints() {
 		hint, separator := p[0]+muted.Render(" "+p[1]), ""
 		if i > 0 {
 			separator = muted.Render(" · ")
