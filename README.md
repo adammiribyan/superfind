@@ -90,7 +90,7 @@ The preview opens on where the session left off: your last real request and the 
 
 When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/store && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 
-A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
+A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder that it may still be open in another window. When superfind sees the agent that has it open, the row shows **open** instead, and the reminder says it's already open in another window.
 
 superfind takes its colors from your terminal. If your terminal doesn't report them, the selected row is shown in reverse video instead of tinted. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video.
 

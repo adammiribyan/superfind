@@ -255,7 +255,10 @@ func field(s string) string {
 
 func handoffTitle(r session.Row) string {
 	title := render.Flat(r.Session.Title)
-	if r.Session.Active() {
+	switch {
+	case r.Open != nil:
+		title += render.Reset + render.Dim + " · already open in another window"
+	case r.Session.Active():
 		title += render.Reset + render.Dim + " · may still be open in another window"
 	}
 	return title
