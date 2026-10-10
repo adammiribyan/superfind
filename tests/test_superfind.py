@@ -1135,7 +1135,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, search, ask, preview, show, command, index, and label", result.stderr)
+            self.assertIn("init, pick, search, ask, preview, show, handoff, command, index, and label", result.stderr)
 
     def test_preview_refuses_options_it_does_not_understand(self):
         path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")

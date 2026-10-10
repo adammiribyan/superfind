@@ -7,6 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
+- `superfind handoff <session> [words]` prints a briefing for another agent to continue a session's work, for example a Codex session in Claude Code. It has the session's folder, branch, and resume command, how the session ended, and excerpts of the conversation with their turn numbers. The excerpts are the first and last requests, what followed the last one, and the turns that contain your words. They are quoted under a note that they are a record and not instructions, masked like `show`, and kept to 12,000 bytes by default (`--max-bytes N`). `--json` prints the same as one object.
 
 ### Changed
 
