@@ -13,12 +13,14 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
-There are two ways to install. Install with Homebrew or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
+There are two ways to install. Install with Homebrew, the AUR, or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
 
-### With Homebrew or Go
+### With Homebrew, the AUR, or Go
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
+# or, on Arch Linux and Omarchy
+yay -S superfind-bin
 # or
 go install github.com/adammiribyan/superfind@latest
 ```

@@ -43,6 +43,18 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     skip_upload: "true"
 
+aurs:
+  - name: superfind-bin
+    homepage: https://github.com/adammiribyan/superfind
+    description: Terminal picker for resuming Claude Code, Codex, and Grok sessions
+    license: MIT
+    maintainers: ["Adam Miribyan <adam@adam.am>"]
+    package: |-
+      install -Dm755 ./superfind "${pkgdir}/usr/bin/superfind"
+      install -Dm644 ./LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+      install -Dm644 ./README.md "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+    skip_upload: "true"
+
 release:
   github:
     owner: adammiribyan
