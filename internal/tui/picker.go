@@ -40,6 +40,7 @@ const (
 	listChrome     = 6
 	minStatusTitle = 8
 	stackedMinimum = headerLines + 4
+	selectionShare = 0.24
 )
 
 type theme struct {
@@ -84,11 +85,11 @@ func (t *theme) settle() {
 		t.muted, t.border = foreground(lipgloss.Color("8")), foreground(lipgloss.Color("8"))
 		return
 	}
-	blue, share := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255}), 0.10
+	blue := color.Color(color.RGBA{0x1C, 0x64, 0xC8, 255})
 	if isDark(t.bg) {
-		blue, share = color.RGBA{0x63, 0xA8, 0xF8, 255}, 0.16
+		blue = color.RGBA{0x63, 0xA8, 0xF8, 255}
 	}
-	t.tint = blend(t.bg, blue, share)
+	t.tint = blend(t.bg, blue, selectionShare)
 	muted := blend(t.bg, t.fg, 0.70)
 	t.muted, t.border = foreground(muted), foreground(blend(t.bg, t.fg, 0.35))
 	t.mutedSeq = ansiFor(muted)
@@ -669,9 +670,12 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 		}
 		return st
 	}
-	plain, muted := paint(lipgloss.NewStyle()), paint(m.colors.muted)
-	hit := plain.Bold(true)
-	if !m.colors.noColor {
+	plain, muted, title := paint(lipgloss.NewStyle()), paint(m.colors.muted), paint(lipgloss.NewStyle())
+	if selected {
+		muted, title = plain, title.Bold(true)
+	}
+	hit := title.Bold(true)
+	if !m.colors.plain() {
 		hit = hit.Foreground(lipgloss.Color("4"))
 	}
 	cells := render.CellsOf(r, m.tags)
@@ -685,12 +689,12 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 	}
 	right += muted.Render(fmt.Sprintf("%*s ", render.AgeWidth, cells.Age))
 	room := max(width-3-lipgloss.Width(right), 1)
-	title := ""
+	marked := ""
 	for _, span := range render.Marks(cells.Title, words) {
 		if span.Hit {
-			title += hit.Render(span.Text)
+			marked += hit.Render(span.Text)
 		} else {
-			title += plain.Render(span.Text)
+			marked += title.Render(span.Text)
 		}
 	}
 	status := ""
@@ -702,7 +706,7 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 		}
 		status = plain.Render("  ") + paintStatus.Render(cells.Status)
 	}
-	left := plain.Render(" ") + ansi.Truncate(title, room, plain.Render("…")) + status
+	left := plain.Render(" ") + ansi.Truncate(marked, room, title.Render("…")) + status
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 2)
 	return ansi.Truncate(left+plain.Render(strings.Repeat(" ", gap))+right, width, "")
 }

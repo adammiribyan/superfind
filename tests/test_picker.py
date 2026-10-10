@@ -246,7 +246,16 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual(self.titles(), ["Ledger migration follow-up", "Ledger migration"])
 
     def list_column(self):
-        return "\n".join(l.split("│")[0] for l in self.screen("-e").splitlines())
+        return "\n".join(re.sub(r"(\x1b\[[0-9;]*m| )+$", "", l.split("│")[0]) for l in self.screen("-e").splitlines())
+
+    def test_the_selected_row_has_a_bold_title_and_full_strength_columns(self):
+        self.three_sessions()
+        self.open_picker()
+        rows = [l for l in self.list_column().splitlines() if "tmp" in l]
+        self.assertRegex(rows[0], r"\x1b\[1mCheckout double charge")
+        self.assertNotIn("\x1b[2m", rows[0])
+        self.assertNotRegex(rows[1], r"\x1b\[1mInvoice layout")
+        self.assertRegex(rows[1], r"\x1b\[2mtmp")
 
     def answering_claude(self):
         stub = self.home / "stub"
@@ -284,6 +293,14 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         selected, unselected = self.ledger_rows()
         self.assertRegex(unselected, r"^  \x1b\[1mLedger\x1b\[0m migration ")
+        self.assertNotIn("34m", selected + unselected)
+
+    def test_a_match_on_the_selected_row_is_bold_without_a_blue_block_when_the_terminal_hides_its_colors(self):
+        del self.env["NO_COLOR"]
+        self.two_ledger_sessions()
+        self.open_picker()
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(selected, r"^ \x1b\[7m \x1b\[1mLedger migration follow-up")
         self.assertNotIn("34m", selected + unselected)
 
     def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
@@ -952,12 +969,12 @@ class PtyPicker(unittest.TestCase):
 
 class PickerColors(PtyPicker):
     COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
-    TINT = b"48;2;41;52;64"
+    TINT = b"48;2;46;63;82"
 
     def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
         before = self.read(until=b"\x1b[7m")
         self.assertIn(b"\x1b]11;?", before)
-        self.assertIn(b"\x1b[7m Ledger", before)
+        self.assertIn(b"\x1b[7m \x1b[1mLedger", before)
         time.sleep(0.6)
         os.write(self.terminal, self.COLORS)
         self.assertIn(self.TINT, self.read(until=self.TINT))
