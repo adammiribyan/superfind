@@ -4,16 +4,17 @@
   behavior.py list
       print the id of every behavior test, one per line
   behavior.py run SHARD SHARDS WORKERS COUNTS_FILE
-      run the tests of shard SHARD (1-based) of SHARDS, WORKERS at a time, each
-      test in its own process, and write what ran, failed, and was skipped,
-      with each test's duration, to COUNTS_FILE
+      run the tests of shard SHARD (1-based) of SHARDS in WORKERS long-lived
+      processes, and write what ran, failed, and was skipped, with each test's
+      duration, to COUNTS_FILE
   behavior.py total COUNTS_DIR
       check that the counts files under COUNTS_DIR cover every behavior test
       exactly once
 
 Shards are balanced on the durations in behavior-durations.json (a test
 missing from it counts as the median), longest first. Within a shard, each
-worker takes the next longest test as it frees up. Each worker has its own
+worker process takes the next longest test as it frees up, and keeps running
+tests until none are left, as one unittest process would. Each worker has its own
 TMUX_TMPDIR, so no two tests running at once share a tmux server.
 """
 import json
@@ -64,16 +65,50 @@ def shard_of(ids, shard, shards):
     return sorted(hands[shard - 1], key=lambda i: (-cost[i], i)), loads[shard - 1]
 
 
-RUNNER = """
-import json, sys, time, unittest
-test_id, out = sys.argv[1], sys.argv[2]
-suite = unittest.TestLoader().loadTestsFromName(test_id)
-start = time.time()
-result = unittest.TextTestRunner(verbosity=2, stream=sys.stdout).run(suite)
-json.dump({"ran": result.testsRun, "seconds": round(time.time() - start, 2),
-           "failed": bool(result.failures or result.errors or result.unexpectedSuccesses),
-           "skipped": bool(result.skipped)}, open(out, "w"))
+WORKER = """
+import io, json, os, sys, time, unittest
+out = os.fdopen(int(sys.argv[1]), "w")
+for line in sys.stdin:
+    test_id, stream, start = line.strip(), io.StringIO(), time.time()
+    try:
+        result = unittest.TextTestRunner(verbosity=2, stream=stream).run(unittest.TestLoader().loadTestsFromName(test_id))
+        found = {"ran": result.testsRun, "failed": bool(result.failures or result.errors or result.unexpectedSuccesses),
+                 "skipped": bool(result.skipped)}
+    except BaseException as e:
+        found = {"ran": 0, "failed": True, "skipped": False}
+        stream.write(repr(e))
+    found.update(seconds=round(time.time() - start, 2), output=stream.getvalue() if found["failed"] else "")
+    out.write(json.dumps(found) + "\\n")
+    out.flush()
 """
+
+
+class Worker:
+    def __init__(self, tmux):
+        read, write = os.pipe()
+        self.proc = subprocess.Popen([sys.executable, "-c", WORKER, str(write)], cwd=TESTS, stdin=subprocess.PIPE,
+                                     env={**os.environ, "TMUX_TMPDIR": str(tmux)}, pass_fds=(write,), text=True)
+        os.close(write)
+        self.results = os.fdopen(read)
+
+    def run(self, test_id):
+        try:
+            self.proc.stdin.write(test_id + "\n")
+            self.proc.stdin.flush()
+            line = self.results.readline()
+        except OSError:
+            line = ""
+        if not line:
+            return None
+        return json.loads(line)
+
+    def close(self):
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        self.proc.wait()
+        self.results.close()
 
 
 def run(shard, shards, workers, counts_file):
@@ -88,23 +123,26 @@ def run(shard, shards, workers, counts_file):
     def worker(n):
         tmux = work / f"tmux{n}"
         tmux.mkdir()
-        env = {**os.environ, "TMUX_TMPDIR": str(tmux)}
+        current = Worker(tmux)
         while True:
             try:
                 test_id = todo.get_nowait()
             except queue.Empty:
+                current.close()
                 return
-            out = work / f"{test_id}.json"
-            proc = subprocess.run([sys.executable, "-c", RUNNER, test_id, str(out)], cwd=TESTS, env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            result = json.loads(out.read_text()) if out.exists() else {"ran": 0, "seconds": 0, "failed": True, "skipped": False}
-            result["failed"] = result["failed"] or proc.returncode != 0 or result["ran"] != 1
+            result = current.run(test_id)
+            if result is None:
+                result = {"ran": 0, "seconds": 0, "failed": True, "skipped": False,
+                          "output": f"the worker process died running this test (exit {current.proc.poll()})"}
+                current.close()
+                current = Worker(tmux)
+            result["failed"] = result["failed"] or result["ran"] != 1
             with lock:
                 results[test_id] = result
                 mark = "FAIL" if result["failed"] else "skip" if result["skipped"] else "ok"
                 print(f"{mark:4} {result['seconds']:6.1f}s  {test_id}", flush=True)
                 if result["failed"]:
-                    print(f"::group::output of {test_id}\n{proc.stdout}::endgroup::", flush=True)
+                    print(f"::group::output of {test_id}\n{result['output']}\n::endgroup::", flush=True)
 
     start = time.time()
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(workers)]
