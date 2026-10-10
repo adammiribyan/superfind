@@ -185,7 +185,9 @@ func (p *parser) done() Transcript {
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
 	}
+	p.t.join()
 	if !p.typed && p.peers != nil {
+		p.peers.join()
 		p.t.Prompts, p.t.Turns, p.t.Messages = p.peers.Prompts, p.peers.Turns, p.peers.Messages
 		p.t.ByAgent, p.t.PeerDriven = true, true
 	}

@@ -114,4 +114,7 @@ func (g *grokReader) feed(raw []byte) bool {
 	return true
 }
 
-func (g *grokReader) done() Transcript { return g.t }
+func (g *grokReader) done() Transcript {
+	g.t.join()
+	return g.t
+}

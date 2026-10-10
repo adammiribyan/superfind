@@ -189,4 +189,7 @@ func (c *codexReader) item(it codexItem) {
 	}
 }
 
-func (c *codexReader) done() Transcript { return c.t }
+func (c *codexReader) done() Transcript {
+	c.t.join()
+	return c.t
+}
