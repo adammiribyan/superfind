@@ -54,6 +54,11 @@ const (
 )
 
 func Find(places []agent.Place) map[Key]State {
+	if len(places) == 0 {
+		return map[Key]State{}
+	}
+	listed := make(chan map[proc.TTY]Pane, 1)
+	go func() { listed <- tmuxPanes() }()
 	var claims []claim
 	present := map[string]bool{}
 	for _, p := range places {
@@ -85,7 +90,7 @@ func Find(places []agent.Place) map[Key]State {
 			}
 		}
 	}
-	return withPanes(strongest(claims))
+	return withPanes(strongest(claims), listed)
 }
 
 func claudeClaims(home string) []claim {
@@ -247,11 +252,11 @@ func strongest(claims []claim) map[Key]claim {
 	return best
 }
 
-func withPanes(claims map[Key]claim) map[Key]State {
+func withPanes(claims map[Key]claim, listed <-chan map[proc.TTY]Pane) map[Key]State {
 	var panes map[proc.TTY]Pane
 	for _, c := range claims {
 		if c.tty != (proc.TTY{}) {
-			panes = tmuxPanes()
+			panes = <-listed
 			break
 		}
 	}

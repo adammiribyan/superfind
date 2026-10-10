@@ -25,6 +25,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/typesafe"
@@ -226,7 +227,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		rows: session.RecentFirst(session.Annotate(rows)), db: db,
+		rows: session.RecentFirst(session.Annotate(rows, open.Find(agent.Places()))), db: db,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 		asks: &asks{},
 	}
@@ -517,7 +518,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.rows = session.RecentFirst(session.Annotate(msg.rows))
+		m.rows = session.RecentFirst(session.Annotate(msg.rows, open.Find(agent.Places())))
 		m.populate()
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
@@ -557,7 +558,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.rows = session.Annotate(m.rows)
+		m.rows = session.Annotate(m.rows, open.Find(agent.Places()))
 		m.populate()
 		if m.askedFor == "" {
 			m.filter()

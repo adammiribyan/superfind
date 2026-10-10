@@ -57,9 +57,7 @@ type Row struct {
 	Open       *open.State
 }
 
-func Annotate(rows []Row) []Row {
-	found := make(chan map[open.Key]open.State, 1)
-	go func() { found <- open.Find(agent.Places()) }()
+func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 	known := statuses()
 	out := make([]Row, len(rows))
 	for i, r := range rows {
@@ -67,7 +65,6 @@ func Annotate(rows []Row) []Row {
 		r.FolderGone = !folderExists(r.Session.Cwd)
 		out[i] = r
 	}
-	held := <-found
 	for i, r := range out {
 		if state, ok := held[open.Key{Agent: r.Agent.ID, ID: r.Session.ID}]; ok {
 			out[i].Open = &state

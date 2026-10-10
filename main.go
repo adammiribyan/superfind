@@ -21,6 +21,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
@@ -285,6 +286,13 @@ func mustOpenSearch() *sql.DB {
 
 func mustIndex(command string) []session.Row { return mustRefresh(command, session.Index) }
 
+func annotated(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
+	held := make(chan map[open.Key]open.State, 1)
+	go func() { held <- open.Find(agent.Places()) }()
+	rows := mustRefresh(command, refresh)
+	return session.Annotate(rows, <-held)
+}
+
 func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
 	noticed := false
 	rows, problems, err := refresh(func(stale int) {
@@ -323,7 +331,7 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 		fail("superfind " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
-	rows = session.Annotate(mustIndex(command))
+	rows = annotated(command, session.Index)
 	for _, want := range located {
 		for _, r := range rows {
 			if r.Path == want.Path {
@@ -338,7 +346,7 @@ func findSession(command, arg string) (session.Row, bool, []session.Row) {
 	if strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
 		return sessionAt(command, arg)
 	}
-	rows := session.Annotate(mustIndex(command))
+	rows := annotated(command, session.Index)
 	matches, exact := session.ByID(rows, arg)
 	if len(matches) == 0 {
 		if strings.HasSuffix(arg, ".jsonl") {
@@ -523,11 +531,11 @@ func run(args []string) {
 		if asJSON {
 			find = session.SearchEvery
 		}
-		rows := session.Annotate(mustIndex("search"))
+		rows := annotated("search", session.Index)
 		db := mustOpenSearch()
 		found, err := find(db, query, rows)
 		if errors.Is(err, session.ErrDamaged) {
-			rows = session.Annotate(mustRefresh("search", session.Rebuild))
+			rows = annotated("search", session.Rebuild)
 			db = mustOpenSearch()
 			found, err = find(db, query, rows)
 		}
@@ -540,7 +548,7 @@ func run(args []string) {
 		}
 		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
 	case "ask":
-		rows := session.Annotate(mustIndex("ask"))
+		rows := annotated("ask", session.Index)
 		shown := render.TagsFor(session.SameKind(rows, session.AsksForAgents(strings.Join(args[1:], " "))))
 		db := mustOpenSearch()
 		words, asJSON := searchWords("ask", args[1:])
