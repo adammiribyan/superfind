@@ -81,6 +81,8 @@ into its folder and runs its agent's resume command, which lands in your shell h
 
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
+When an agent already has the session open in a tmux pane and you're in tmux, the second line
+is tmux switch-client to that pane instead.
 The shell setup from superfind init runs that command for you.
 `,
 	"search": `superfind search WORDS [--json]
