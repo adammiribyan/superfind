@@ -609,7 +609,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
-        self.assertIn(f"typeset -g _superfind_bin={SUPERFIND}", self.superfind("init", "zsh"))
+        for shell in ("zsh", "bash"):
+            self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
         import http.server
@@ -1629,6 +1630,28 @@ class SuperfindBehavior(unittest.TestCase):
         self.session("c3", user("move the tables"), tool("Bash"), claude("I will mi\u200egrate them tonight."), title="Tables")
         self.assertEqual(self.titles("rotate"), ["ro\u200ftate the signing keys"])
         self.assertEqual(self.titles("migrate"), ["Tables"])
+
+    @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash"), "needs zsh and bash")
+    def test_the_shell_functions_work_when_copied_without_their_variables(self):
+        dump = {"zsh": "typeset -f superfind sfd _superfind_run", "bash": "declare -f superfind sfd _superfind_run _superfind_resume"}
+        for shell in ("zsh", "bash"):
+            setup = self.superfind("init", shell)
+            snapshot = self.home / f"snapshot.{shell}"
+            functions = subprocess.run([shell, "-c", f'eval "$1" 2>/dev/null; {dump[shell]}', shell, setup],
+                                       env=self.env, capture_output=True, text=True).stdout
+            self.assertNotIn(str(SUPERFIND) + "=", functions)
+            snapshot.write_text(functions)
+            for command in ("superfind --version", "sfd --version"):
+                result = subprocess.run([shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
+                                        "HOME": str(self.home)}, capture_output=True, text=True)
+                self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (shell, command, result.stderr))
+            moved = self.home / "bin"
+            moved.mkdir(exist_ok=True)
+            shutil.copy(SUPERFIND, moved / "superfind")
+            snapshot.write_text(functions.replace(str(Path(SUPERFIND).resolve()), "/gone/superfind"))
+            result = subprocess.run([shell, "-c", f"source {snapshot}; superfind --version"],
+                                    env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, (shell, result.stderr))
 
 
 if __name__ == "__main__":
