@@ -382,7 +382,12 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	discarded := len(old) == 0
 	if len(results) > 0 || len(gone) > 0 || discarded {
-		if err := updateSearch(results, gone, discarded); err != nil {
+		db, err := OpenSearch()
+		if err == nil {
+			err = updateSearch(db, results, gone, discarded)
+			db.Close()
+		}
+		if err != nil {
 			return rows, problems, fmt.Errorf("updating the search index: %w", err)
 		}
 	}
@@ -394,12 +399,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	return rows, problems, nil
 }
 
-func updateSearch(results map[string]parsed, gone []string, discarded bool) error {
-	db, err := OpenSearch()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarded bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
