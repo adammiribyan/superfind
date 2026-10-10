@@ -7,10 +7,40 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+      MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+      MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
+      - name: Every release secret is set
+        run: |
+          missing=""
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID HOMEBREW_TAP_TOKEN; do
+            eval "value=\${$name}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::missing repository secrets:$missing"; exit 1; }
+      - name: The tap token can still reach homebrew-tap
+        run: GH_TOKEN="$HOMEBREW_TAP_TOKEN" gh api repos/adammiribyan/homebrew-tap --silent || { echo "::error::HOMEBREW_TAP_TOKEN can't read adammiribyan/homebrew-tap; it may have expired"; exit 1; }
+      - name: No published release exists for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --silent 2>/dev/null; then
+            echo "::error::$GITHUB_REF_NAME is already published; release a new version instead of rebuilding this one"
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -18,11 +48,79 @@ jobs:
         with:
           go-version-file: go.mod
       - name: The tag matches superfind --version
-        run: test "$(go run . --version)" = "superfind ${GITHUB_REF_NAME#v}"
-      - uses: goreleaser/goreleaser-action@v6
+        run: |
+          got=$(go run . --version)
+          want="superfind ${GITHUB_REF_NAME#v}"
+          [ "$got" = "$want" ] || { echo "::error::tag $GITHUB_REF_NAME needs $want, but the code says $got"; exit 1; }
+      - name: Build, sign, notarize, and upload to a draft release
+        uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: v2.18.3
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cask-${{ github.ref_name }}
+          path: dist/homebrew/Casks/superfind.rb
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            arch: arm64
+          - runner: macos-15-intel
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the ${{ matrix.arch }} archive from the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(uname -m | sed s/x86_64/amd64/)" = "${{ matrix.arch }}"
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .assets[] | select(.name | endswith(\"_darwin_${{ matrix.arch }}.tar.gz\")) | .id")
+          [ "$(echo "$asset" | wc -w)" -eq 1 ] || { echo "::error::expected one darwin ${{ matrix.arch }} archive in the $GITHUB_REF_NAME draft, found: $asset"; exit 1; }
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > archive.tar.gz
+      - name: The ${{ matrix.arch }} binary in the draft is signed, notarized, and runs under quarantine
+        run: |
+          mkdir unpacked
+          tar -xzf archive.tar.gz -C unpacked
+          sh .github/workflows/verify-darwin.sh unpacked/superfind "superfind ${GITHUB_REF_NAME#v}"
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cask-${{ github.ref_name }}
+          path: cask
+      - name: Push the cask to adammiribyan/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          path=Casks/superfind.rb
+          sha=$(gh api "repos/adammiribyan/homebrew-tap/contents/$path" --jq .sha 2>/dev/null || true)
+          gh api -X PUT "repos/adammiribyan/homebrew-tap/contents/$path" --silent \
+            -f message="superfind ${GITHUB_REF_NAME#v}" \
+            -f content="$(base64 -w0 cask/superfind.rb)" \
+            ${sha:+-f sha="$sha"}
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .html_url 2>/dev/null; then
+            echo "already published"
+            exit 0
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
+          [ "$(echo "$id" | wc -w)" -eq 1 ] || { echo "::error::expected one draft release for $GITHUB_REF_NAME, found: $id"; exit 1; }
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F draft=false -f make_latest=true --jq .html_url
