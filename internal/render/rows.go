@@ -162,10 +162,12 @@ func CellsOf(r session.Row, t Tags) Cells {
 	c := Cells{Title: Flat(r.Session.Title), Project: Flat(r.Session.Project()), Agent: strings.Join(t.of(r), " "),
 		Age: Age(r.Session.Mtime), Waiting: r.Status == session.WaitingLabel}
 	switch {
-	case r.Status != "":
+	case r.Status == session.WaitingLabel:
 		c.Status = r.Status
 	case r.Open != nil:
 		c.Status = "open"
+	case r.Status != "":
+		c.Status = r.Status
 	case r.Session.Active():
 		c.Status = "active now"
 	case r.FolderGone:

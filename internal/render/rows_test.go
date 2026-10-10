@@ -54,7 +54,7 @@ func TestCellsNameOneStatusAndLeaveTheProjectBlankHere(t *testing.T) {
 	}
 }
 
-func TestAnOpenSessionSaysSoUnlessItHasALabel(t *testing.T) {
+func TestAnOpenSessionSaysSoUnlessItWaitsOnYou(t *testing.T) {
 	claude := &agent.Agent{ID: "claude"}
 	held := &open.State{PID: 4242, Status: "busy"}
 	cases := []struct {
@@ -66,7 +66,11 @@ func TestAnOpenSessionSaysSoUnlessItHasALabel(t *testing.T) {
 		{session.Row{Agent: claude, Open: held, FolderGone: true, Session: session.Session{Title: "b", Cwd: "/work/shop", Mtime: session.Now() - 3*86400}},
 			Cells{Title: "b", Status: "open", Project: "shop", Age: "3d"}},
 		{session.Row{Agent: claude, Open: held, Status: "unfinished", Session: session.Session{Title: "c", Cwd: "/work/shop", Mtime: session.Now()}},
-			Cells{Title: "c", Status: "unfinished", Project: "shop", Age: "1m"}},
+			Cells{Title: "c", Status: "open", Project: "shop", Age: "1m"}},
+		{session.Row{Agent: claude, Open: held, Status: session.WaitingLabel, Session: session.Session{Title: "d", Cwd: "/work/shop", Mtime: session.Now()}},
+			Cells{Title: "d", Status: session.WaitingLabel, Project: "shop", Age: "1m", Waiting: true}},
+		{session.Row{Agent: claude, Status: "unfinished", Session: session.Session{Title: "e", Cwd: "/work/shop", Mtime: session.Now()}},
+			Cells{Title: "e", Status: "unfinished", Project: "shop", Age: "1m"}},
 	}
 	for _, c := range cases {
 		if got := CellsOf(c.row, Tags{}); got != c.want {
