@@ -7,20 +7,18 @@
 
 superfind reads your Claude Code, Codex, and Grok sessions and finds the one you want, by the words in it or by a description. Then it opens the session's folder and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh or bash.
 
-![superfind searching sessions from three agents, asking for one by description, and resuming it](demo/superfind.gif)
+![superfind searching sessions from three agents, listing the one waiting on you, asking for one by description, and resuming it](demo/superfind.gif)
 
 ## Install
 
 superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
-There are two ways to install. Install with Homebrew, the AUR, or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
+There are two ways to install. Install with Homebrew or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
 
-### With Homebrew, the AUR, or Go
+### With Homebrew or Go
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
-# or, on Arch Linux and Omarchy
-yay -S superfind-bin
 # or
 go install github.com/adammiribyan/superfind@latest
 ```
@@ -84,7 +82,7 @@ Each row shows a session's title, then its project, its agent when your sessions
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
-When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/storefront && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
+When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/store && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
 
@@ -94,7 +92,7 @@ superfind takes its colors from your terminal. If your terminal doesn't report t
 
 Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the box is titled "Sessions by description", and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again or pressing Esc goes back to search.
 
-For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
+For example, "where did we stop charging people twice" finds "Double charge on slow checkouts", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so instead of trying Claude.
 
