@@ -36,7 +36,7 @@ homebrew_casks:
   - name: superfind
     binaries: [superfind]
     homepage: https://github.com/adammiribyan/superfind
-    description: Find any past AI coding session and resume it in the terminal you're in
+    description: Terminal picker for resuming Claude Code, Codex, and Grok sessions
     repository:
       owner: adammiribyan
       name: homebrew-tap

@@ -107,7 +107,11 @@ gh repo edit adammiribyan/superfind --visibility public --accept-visibility-chan
 gh repo view adammiribyan/superfind --json visibility --jq .visibility
 ```
 
-The description and topics are already set.
+These are already set:
+
+- The repo description: "Pick up a past Claude Code, Codex, or Grok session from what you remember of it."
+- 13 topics.
+- The cask's `desc` in `.goreleaser.yaml`: "Terminal picker for resuming Claude Code, Codex, and Grok sessions". It has no trailing period, and `brew style` passes on the generated cask.
 
 ## 3. Create the Homebrew tap
 
