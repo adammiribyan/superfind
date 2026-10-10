@@ -6,10 +6,12 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - Shift-Up and Shift-Down page through the preview, as Alt-Up and Alt-Down do.
 
 ### Changed
 
+- `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3.
 - When the preview is too short for your last request and the end of the reply, it keeps the start of your request and cuts the reply from its start. Before, a short preview showed only the end of the reply.
 - Under the list, the preview now appears only when it has room for at least 6 lines below its heading. At 80×24 the list shows 5 sessions and the preview 7 lines, instead of 8 sessions and 3 lines. Beside the list, the preview is left out when the window is too short for 6 lines.
@@ -245,7 +247,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
-[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/adammiribyan/superfind/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/adammiribyan/superfind/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/adammiribyan/superfind/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/adammiribyan/superfind/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/adammiribyan/superfind/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/adammiribyan/superfind/compare/v0.7.2...v0.7.3

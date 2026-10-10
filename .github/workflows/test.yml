@@ -112,8 +112,31 @@ jobs:
           overwrite: true
           retention-days: 7
 
+  install:
+    needs: [changes, checks]
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    name: install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Piped to sh, install.sh installs the latest release
+        run: |
+          export HOME="$RUNNER_TEMP/home" SHELL=/bin/bash
+          mkdir "$HOME"
+          cd "$RUNNER_TEMP"
+          sh < "$GITHUB_WORKSPACE/install.sh"
+          "$HOME/.local/bin/superfind" --version
+          rc=.bashrc
+          if [ "$RUNNER_OS" = macOS ]; then rc=.bash_profile; fi
+          grep -F '/.local/bin/superfind" init bash)"' "$HOME/$rc"
+
   test:
-    needs: [changes, checks, race]
+    needs: [changes, checks, race, install]
     if: always()
     strategy:
       fail-fast: false
@@ -135,9 +158,10 @@ jobs:
       - name: Every job passed
         if: needs.changes.outputs.code != 'false'
         run: |
-          echo "checks=${{ needs.checks.result }} race=${{ needs.race.result }}"
+          echo "checks=${{ needs.checks.result }} race=${{ needs.race.result }} install=${{ needs.install.result }}"
           test "${{ needs.checks.result }}" = success
           test "${{ needs.race.result }}" = success
+          test "${{ needs.install.result }}" = success
       - uses: actions/checkout@v4
         if: needs.changes.outputs.code != 'false'
       - uses: actions/download-artifact@v4
