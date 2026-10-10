@@ -66,18 +66,19 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 
 | Key | Does |
 |---|---|
-| Type words | Search titles, projects, branches, and the conversations themselves. Every word must match. Titles that match come first. |
+| Type words | Search titles, projects, branches, and the conversations themselves. Every word must match. Titles that match come first, and among sessions that match about as well, newer ones come first. A title word that starts with a word you typed is bold. |
 | Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
 | Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
 | Ctrl-U | Clear the search. |
-| Esc, Ctrl-C | Close the picker without resuming anything. |
+| Esc | Close the picker without resuming anything. While ask runs or shows its results, Esc goes back to search instead. |
+| Ctrl-C | Close the picker without resuming anything. |
 
 Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words.
 
-Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
+Each row shows a session's title, then its project, its agent when your sessions come from more than one, and how long ago it was active, each in its own column. A label such as **waiting on you** follows the title. In a narrow window the agent column goes first, then the project column. Sessions from the folder you're in, or from a folder that contains it, come first and leave the project blank. Your home folder and the root folder count only for sessions started right there. Everything else follows, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
@@ -89,7 +90,7 @@ superfind takes its colors from your terminal. If your terminal doesn't report t
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the list holds only the sessions that fit, best match first, so it may hold just one. Typing again goes back to search.
+Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the box is titled "Sessions by description", and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again or pressing Esc goes back to search.
 
 For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
@@ -156,7 +157,7 @@ superfind help <command>     # explain one command; --help works too
 superfind --version
 ```
 
-`search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and the row as the picker shows it. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it to `preview` or `command`.
+`search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and a one-line summary of the session, such as its label, age, project, and agent. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it to `preview` or `command`.
 
 The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set, and only your account can read it. Each run re-reads only the sessions that changed, and the picker opens from the index while it refreshes in the background. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 

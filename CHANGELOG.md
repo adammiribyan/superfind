@@ -2,6 +2,20 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+## [0.9.1] - Unreleased
+
+### Changed
+
+- Picker rows put the project, the agent, and the age in columns that line up from row to row. Long titles are cut instead of the age, and a label such as "waiting on you" follows the title. A row with a label gives up its agent cell, then its project cell, before its title gets too short. In a narrow window the agent column goes first, then the project column.
+- Sessions from a folder that contains the one you're in count as here. They come first, and their project is left blank. Your home folder and the root folder count only for sessions started right there.
+- Among search results that match about as well, newer sessions come first. Tested on the maintainer's 576 sessions, weighted by the age of the sessions they actually resumed, this ranked the right session first in 36% of title-word searches instead of 32%.
+- A title word that starts with a word you typed is bold, and blue when the terminal reports its colors.
+- Beside the preview, the list takes about half the width (54% instead of 45%).
+- The selected row has a stronger tint, a bold title, and full-strength text.
+- After an ask, the search box is titled "Sessions by description", and Esc goes back to search instead of closing the picker. Esc during an ask stops it.
+- When no session contains the words you typed, the picker says that Ctrl-R asks by description.
+- The search box no longer has a "›" mark.
+
 ## [0.9.0] - Unreleased
 
 ### Changed
