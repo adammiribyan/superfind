@@ -205,7 +205,7 @@ _superfind_resume() {
 
 superfind() {
   local out arg
-  if [[ $1 == last && -t 0 && -t 1 ]]; then
+  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
     for arg in "${@:2}"; do
       [[ $arg == -* ]] && { _superfind_run "$@"; return; }
     done
@@ -250,7 +250,7 @@ _superfind_resume() {
 
 superfind() {
   local out arg
-  if [[ $1 == last && -t 0 && -t 1 ]]; then
+  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
     for arg in "${@:2}"; do
       [[ $arg == -* ]] && { _superfind_run "$@"; return; }
     done

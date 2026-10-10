@@ -1658,9 +1658,14 @@ class SuperfindBehavior(unittest.TestCase):
                 self.assertEqual((result.returncode, ANSI.sub("", result.stdout)),
                                  (0, f"Ledger fix\n{self.superfind('command', str(session))}"), (shell, command, result.stderr))
                 self.assertFalse((self.home / "resumed").exists(), (shell, command))
+            strict = subprocess.run([shell, "-c", f"set -u; source {snapshot}; superfind"], env={"PATH": "/usr/bin:/bin",
+                                    "HOME": str(self.home)}, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            self.assertEqual((strict.returncode, strict.stdout), (1, ""), (shell, strict.stderr))
+            self.assertIn("superfind pick needs a terminal", strict.stderr, shell)
             moved = self.home / "bin"
-            moved.mkdir(exist_ok=True)
-            shutil.copy(SUPERFIND, moved / "superfind")
+            if not moved.exists():
+                moved.mkdir()
+                shutil.copy(SUPERFIND, moved / "superfind")
             snapshot.write_text(functions.replace(str(Path(SUPERFIND).resolve()), "/gone/superfind"))
             result = subprocess.run([shell, "-c", f"source {snapshot}; superfind --version"],
                                     env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
