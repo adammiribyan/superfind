@@ -8,6 +8,8 @@ cd ~/src/tries/2026-10-09-claude-sessions-search
 
 ## 0. Before anything else: get Actions running, and reset the signing certificate secret
 
+**Done on 2026-10-10.** The Actions spending limit was raised, `MACOS_SIGN_P12` was reset at 07:48:36Z, and signing run 38004434376 signed and notarized both darwin binaries and verified them on both Mac architectures. Skip to step 1. The rest of this section stays here for the next time the certificate secret needs resetting.
+
 ### 0a. Actions billing
 
 Since about 23:04Z on 2026-10-09, GitHub has refused to start every Actions job on this repo with: "The job was not started because recent account payments have failed or your spending limit needs to be increased." Until that is fixed, no check runs: not the tests, not the signing check, not the release. Fix it one of two ways:
