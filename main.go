@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -441,6 +440,12 @@ func usageError(message string) {
 	exit(2)
 }
 
+func writeRecords(rows []session.Row, db *sql.DB, query string) {
+	if err := show.WriteRecords(stdout, rows, db, query); err != nil {
+		fail("superfind: couldn't write the output: " + err.Error())
+	}
+}
+
 func searchWords(command string, args []string) (string, bool) {
 	var words []string
 	asJSON := false
@@ -460,19 +465,6 @@ func searchWords(command string, args []string) (string, bool) {
 		words = append(words, arg)
 	}
 	return strings.Join(words, " "), asJSON
-}
-
-func printRecords(rows []session.Row, db *sql.DB, query string) {
-	words, _ := session.Narrow(query, nil)
-	enc := json.NewEncoder(stdout)
-	enc.SetEscapeHTML(false)
-	for _, r := range rows {
-		record := session.RecordOf(r, show.Clean)
-		record.Match = show.Clean(session.Snippet(db, r.Path, words, "", ""))
-		if err := enc.Encode(record); err != nil {
-			fail("superfind: couldn't write the output: " + err.Error())
-		}
-	}
 }
 
 func main() {
@@ -541,13 +533,13 @@ func run(args []string) {
 			fail("superfind search: " + err.Error())
 		}
 		if asJSON {
-			printRecords(found, db, query)
+			writeRecords(found, db, query)
 			return
 		}
-		printRows(found, render.TagsFor(rows))
+		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
 	case "ask":
 		rows := session.Annotate(mustIndex("ask"))
-		shown := render.TagsFor(rows)
+		shown := render.TagsFor(session.SameKind(rows, session.AsksForAgents(strings.Join(args[1:], " "))))
 		db := mustOpenSearch()
 		words, asJSON := searchWords("ask", args[1:])
 		narrow := session.Narrow
@@ -556,7 +548,7 @@ func run(args []string) {
 		}
 		query, eligible := narrow(words, rows)
 		if query == "" && asJSON {
-			printRecords(session.RecentFirst(eligible), db, "")
+			writeRecords(session.RecentFirst(eligible), db, "")
 			return
 		}
 		if query == "" {
@@ -575,7 +567,7 @@ func run(args []string) {
 			fail(failure.Error())
 		}
 		if asJSON {
-			printRecords(session.InOrder(rows, paths), db, query)
+			writeRecords(session.InOrder(rows, paths), db, query)
 			return
 		}
 		printRows(session.InOrder(rows, paths), shown)
@@ -623,7 +615,7 @@ func run(args []string) {
 		req.Agent, req.Path = r.Agent, r.Path
 		var header []string
 		if indexed {
-			header = append(render.PreviewHeader(req, r, render.TagsFor(rows), mustOpenSearch()), "")
+			header = append(render.PreviewHeader(req, r, render.TagsFor(session.SameKind(rows, r.Session.ByAgent)), mustOpenSearch()), "")
 		}
 		body, err := render.PreviewBody(req)
 		for _, line := range append(header, body...) {

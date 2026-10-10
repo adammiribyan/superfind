@@ -168,7 +168,7 @@ func Label(key string, rows []Row) error {
 		}
 		e, ok := known[r.Path]
 		recent := Now()-mtime < labelDays*86400
-		if recent && !r.Session.Throwaway() && !r.Session.Active() && !(ok && e.FileID == id) {
+		if recent && !r.Session.Throwaway() && !r.Session.ByAgent && !r.Session.Active() && !(ok && e.FileID == id) {
 			todo = append(todo, job{r, id})
 		}
 	}

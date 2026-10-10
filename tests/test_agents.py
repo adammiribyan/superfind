@@ -249,6 +249,18 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertEqual(kinds, [("agent", "claude"), ("agent", "codex"), ("interactive", "claude")])
         self.assertEqual([r["kind"] for r in self.records("search", "--json", "is:agent", "agent:codex")], ["agent"])
 
+    def test_labeling_sends_only_sessions_a_person_started(self):
+        self.session(uid(1), user("deploy the ledger migration please", cwd="/work/billing"), tool("Bash"),
+                     claude("Should I run it on production now?"), title="Ledger migration")
+        self.exec_review()
+        requests = self.record_typesafe(answer=lambda questions: {"status": {"choice": "waiting", "probabilities": {"waiting": 0.95}}})
+        result = self.run_superfind("label")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sent = json.dumps(requests)
+        self.assertIn("deploy the ledger migration", sent)
+        self.assertNotIn("review the idempotency change", sent)
+        self.assertEqual(len(requests), 1)
+
     def test_a_session_driven_by_another_session_shows_what_it_was_asked(self):
         self.peer_driven()
         self.assertIn("## user\n\nCheck the idempotency tests pass\n\n## claude\n\nAll idempotency tests pass.", self.show(uid(21)))
@@ -266,6 +278,42 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.logging_claude(reply="[0]")
         [row] = self.records("ask", "--json", "where", "did", "we", "stop", "charging", "twice")
         self.assertEqual((row["title"], row["kind"], row["match"]), ("Payment retries", "interactive", ""))
+
+    def test_ask_json_ranks_sessions_another_program_started_too(self):
+        self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
+                     claude("Each request now carries an idempotency key."), title="Payment retries")
+        self.exec_review()
+        log = self.logging_claude(reply="[0, 1]")
+        rows = self.records("ask", "--json", "who", "checked", "the", "retry", "change")
+        self.assertEqual(sorted(r["kind"] for r in rows), ["agent", "interactive"])
+        self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_hidden_sessions_do_not_add_an_agent_column_to_text_search(self):
+        self.checkout()
+        self.exec_review()
+        self.superfind("index")
+        [row] = self.superfind("search", "idempotency").splitlines()
+        self.assertNotIn("claude", row.split("\t")[5])
+        [agent_row] = self.superfind("search", "is:agent", "idempotency").splitlines()
+        self.assertNotIn("codex", agent_row.split("\t")[5])
+
+    def test_hidden_sessions_do_not_add_an_agent_tag_to_ask_or_preview(self):
+        path = self.checkout()
+        self.exec_review()
+        [row] = self.superfind("ask").splitlines()
+        self.assertNotIn("claude", row.split("\t")[5])
+        self.assertNotIn("claude", self.superfind("preview", str(path)).splitlines()[1])
+
+    def test_a_match_only_in_the_title_has_an_empty_passage(self):
+        self.session(uid(1), user("rename the invoice files", cwd="/w"), tool("Bash"), claude("Renamed them."), title="Quarterly cleanup")
+        self.assertEqual([r["match"] for r in self.records("search", "--json", "quarterly")], [""])
+        self.assertEqual([r["match"] for r in self.records("search", "--json", "invoice")], ["rename the invoice files Renamed them."])
+
+    def test_text_ask_leaves_out_sessions_another_program_started_unless_asked(self):
+        self.checkout()
+        self.exec_review()
+        self.assertEqual(self.superfind("ask", "agent:codex"), "")
+        self.assertEqual([r.split("\t")[2] for r in self.superfind("ask", "is:agent", "agent:codex").splitlines()], [uid(20)])
 
     def test_json_is_an_option_only_before_a_double_dash(self):
         self.session(uid(1), user("we pass --json to the API", cwd="/w"), claude("ok"), title="Flag talk")

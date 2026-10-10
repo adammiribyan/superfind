@@ -145,6 +145,8 @@ type indexed struct {
 type labelsTick struct{}
 
 type picker struct {
+	rows       []session.Row
+	agents     bool
 	all        []session.Row
 	shown      []session.Row
 	db         *sql.DB
@@ -211,6 +213,12 @@ func (m picker) matchWords() []string {
 	return strings.FieldsFunc(words, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' })
 }
 
+func (m *picker) populate() {
+	m.all = session.SameKind(m.rows, m.agents)
+	m.tags, m.label = render.TagsFor(m.all), render.PickerLabel(m.all, agent.Places())
+	m.widths = render.Measure(m.all, m.tags)
+}
+
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
 	in.Prompt = ""
@@ -218,11 +226,11 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in.SetVirtualCursor(false)
 	in.Focus()
 	m := picker{
-		all: session.RecentFirst(session.Annotate(rows)), db: db, tags: render.TagsFor(rows), label: render.PickerLabel(rows, agent.Places()),
+		rows: session.RecentFirst(session.Annotate(rows)), db: db,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 		asks: &asks{},
 	}
-	m.widths = render.Measure(m.all, m.tags)
+	m.populate()
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
 		m.problem = "Indexing your sessions…"
@@ -328,11 +336,15 @@ func (m *picker) search() {
 
 func (m *picker) filter() {
 	query := m.input.Value()
+	if agents := session.AsksForAgents(query); agents != m.agents {
+		m.agents = agents
+		m.populate()
+	}
 	m.message = m.problem
 	switch {
 	case strings.TrimSpace(query) == "", m.db == nil:
 		_, m.shown = session.Narrow(query, m.all)
-		if len(m.shown) == 0 && len(m.all) > 0 && m.problem == "" && strings.TrimSpace(query) == "" {
+		if len(m.all) == 0 && len(m.rows) > 0 && m.problem == "" && strings.TrimSpace(query) == "" {
 			m.message = "Only sessions other programs started. Type is:agent to see them."
 		}
 	default:
@@ -505,8 +517,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
-		m.widths = render.Measure(m.all, m.tags)
+		m.rows = session.RecentFirst(session.Annotate(msg.rows))
+		m.populate()
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
 				if m.db != nil && !m.asking {
@@ -520,7 +532,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
 		} else if unreadable := session.Unreadable(msg.problems); unreadable != "" {
 			m.problem = unreadable
-		} else if len(m.all) == 0 && m.problem == "" {
+		} else if len(m.rows) == 0 && m.problem == "" {
 			m.problem = render.NoSessions()
 		}
 		if m.askedFor != "" {
@@ -545,8 +557,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.all = session.Annotate(m.all)
-		m.widths = render.Measure(m.all, m.tags)
+		m.rows = session.Annotate(m.rows)
+		m.populate()
 		if m.askedFor == "" {
 			m.filter()
 		} else {
@@ -733,7 +745,10 @@ func (m picker) inputBox(width int) []string {
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")
-	count := muted.Render(fmt.Sprintf("%d/%d", len(m.shown), len(m.all)))
+	count := ""
+	if len(m.all) > 0 {
+		count = muted.Render(fmt.Sprintf("%d/%d", len(m.shown), len(m.all)))
+	}
 	inner := max(width-4, 0)
 	field := ansi.Truncate(m.input.View(), max(inner-lipgloss.Width(count)-1, 0), "")
 	gap := max(inner-lipgloss.Width(field)-lipgloss.Width(count), 1)

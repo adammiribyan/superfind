@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -61,12 +62,72 @@ func TestAClaudeSessionDrivenOnlyByAnotherSessionIsShownAsStartedByAnAgent(t *te
 }
 
 func TestAClaudeSessionWithBothKeepsOnlyWhatYouTyped(t *testing.T) {
-	tr := claudeLines(t, peer, reply, typed, reply)
-	if tr.ByAgent || strings.Join(tr.Prompts, "|") != "fix the login bug" {
+	tr := claudeLines(t, peer, reply, typed, reply, peer, reply)
+	if tr.ByAgent || tr.PeerDriven || strings.Join(tr.Prompts, "|") != "fix the login bug" {
 		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
 	}
-	if len(tr.Turns) != 3 || tr.Turns[1] != (Turn{"user", "fix the login bug"}) {
+	want := []Turn{{"assistant", "Fixed it."}, {"user", "fix the login bug"}, {"assistant", "Fixed it.\n\nFixed it."}}
+	if !slices.Equal(tr.Turns, want) {
 		t.Fatalf("turns = %+v", tr.Turns)
+	}
+}
+
+func TestEverySDKEntrypointMarksTheSessionAndOnlyTheFirstOneCounts(t *testing.T) {
+	for entrypoint, want := range map[string]bool{"sdk-cli": true, "sdk-ts": true, "sdk-py": true, "cli": false, "claude-desktop": false} {
+		if tr := claudeLines(t, strings.Replace(typed, `"cli"`, `"`+entrypoint+`"`, 1), reply); tr.ByAgent != want {
+			t.Errorf("entrypoint %s: ByAgent=%v", entrypoint, tr.ByAgent)
+		}
+	}
+	resumedByScript := strings.Replace(typed, `"cli"`, `"sdk-cli"`, 1)
+	if tr := claudeLines(t, typed, reply, resumedByScript, reply); tr.ByAgent {
+		t.Error("a later claude -p --resume marked a session a person started")
+	}
+}
+
+func TestAPreviewOfAMixedSessionLooksPastPeerRequestsForWhatYouTyped(t *testing.T) {
+	big := `{"type":"user","message":{"content":[{"type":"tool_result","content":"` + strings.Repeat("x", 2<<20) + `"}]}}`
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	tr := readLines(t, Named("claude"), path, typed, reply, big, peer, reply, peer, reply)
+	if tr.ByAgent {
+		t.Fatal("a session you typed in counted as started by another program")
+	}
+	turns, err := ReadEnding(Named("claude"), path, func(turns []Turn) bool {
+		return slices.ContainsFunc(turns, func(t Turn) bool { return t.Role == "user" })
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(turns, Turn{"user", "fix the login bug"}) || slices.Contains(turns, Turn{"user", "Review PR 14 please"}) {
+		t.Fatalf("preview turns = %+v", turns)
+	}
+}
+
+func TestAPeerMessageWithoutABodyKeepsTheTextInsideItsWrapper(t *testing.T) {
+	bare := `{"type":"user","cwd":"/w","isMeta":true,"origin":{"kind":"peer"},"message":{"content":"Another Claude session sent a message:\n` +
+		`<cross-session-message from=\"x\">\nRun the release checklist\n</cross-session-message>\n\nThis came from another session."}}`
+	if tr := claudeLines(t, bare, reply); strings.Join(tr.Prompts, "|") != "Run the release checklist" || !tr.ByAgent {
+		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
+	}
+}
+
+func TestACoordinatorMessageKeepsItsRequest(t *testing.T) {
+	coordinator := `{"type":"user","cwd":"/w","isMeta":true,"origin":{"kind":"coordinator"},"message":{"content":` +
+		`"The coordinator sent a message while you were working:\nFix the tenancy check.\n\nAddress this before completing your current task."}}`
+	if tr := claudeLines(t, coordinator, reply); strings.Join(tr.Prompts, "|") != "Fix the tenancy check." || !tr.ByAgent {
+		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
+	}
+}
+
+func TestAPeerMessageIsNeverCountedAsTyped(t *testing.T) {
+	plain := `{"type":"user","cwd":"/w","origin":{"kind":"peer","body":"Rebase onto main"},"message":{"content":"Rebase onto main"}}`
+	if tr := claudeLines(t, plain, reply); !tr.ByAgent || strings.Join(tr.Prompts, "|") != "Rebase onto main" {
+		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
+	}
+}
+
+func TestAnUnansweredRequestFromAnotherSessionIsTheLastEvent(t *testing.T) {
+	if tr := claudeLines(t, typed, reply, peer); tr.Last != Prompted {
+		t.Fatalf("last = %v", tr.Last)
 	}
 }
 

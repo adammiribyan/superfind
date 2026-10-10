@@ -92,7 +92,7 @@ func TestRecordOfCleansTextFieldsButKeepsPathsExact(t *testing.T) {
 func kindRows() []Row {
 	return []Row{
 		{Session: Session{ID: "typed", Title: "typed"}, Agent: agent.Named("claude"), Path: "/a"},
-		{Session: Session{ID: "exec", Title: "exec", ByAgent: true}, Agent: agent.Named("codex"), Path: "/b"},
+		{Session: Session{ID: "exec", Title: "exec", ByAgent: true}, Agent: agent.Named("codex"), Path: "/b", Status: WaitingLabel},
 	}
 }
 
@@ -119,6 +119,9 @@ func TestNarrowHidesSessionsAnAgentStartedUnlessAskedFor(t *testing.T) {
 		{"", true, "typed,exec", ""},
 		{"is:agent", true, "exec", ""},
 		{"agent:codex", true, "exec", ""},
+		{"is:waiting is:agent", false, "exec", ""},
+		{"is:waiting", false, "", ""},
+		{"is:waiting", true, "exec", ""},
 	}
 	for _, c := range cases {
 		narrow := Narrow

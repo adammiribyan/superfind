@@ -128,7 +128,7 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 ## What leaves your machine
 
-Asking sends the ranker your description and, for each session except very short ones (two prompts or fewer, under 150 words, and no tool calls), its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions and very short ones are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+Asking sends the ranker your description and, for each session except very short ones (two prompts or fewer, under 150 words, and no tool calls), its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions, very short ones, and ones another program started are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
@@ -137,7 +137,7 @@ superfind has no telemetry, analytics, or update checks. The requests above are 
 - Claude Code: `~/.claude/projects`, every `~/.claude-*` folder, `$CLAUDE_CONFIG_DIR`, and any folders listed in colon-separated `$SUPERFIND_CLAUDE_DIRS`.
 - Codex: `~/.codex/sessions`, every `~/.codex-*` folder, `$CODEX_HOME`, and `$SUPERFIND_CODEX_DIRS`. Sessions you archived are left out, and so are threads that another Codex thread started, such as subagents and reviews.
 - Grok: `~/.grok/sessions`, every `~/.grok-*` folder, `$GROK_HOME`, and `$SUPERFIND_GROK_DIRS`. Subagent runs are left out.
-- Sessions that another program started are kept out of the picker and of `search` and `ask`, unless you add `is:agent`, which lists only those. They are runs of `claude -p` and the Claude Agent SDK, runs of `codex exec`, headless Grok runs, and Claude Code sessions whose every request came from another Claude Code session. `--json` output always includes them, marked with `"kind": "agent"`.
+- Sessions that another program started are kept out of the picker and of `search` and `ask`, unless you add `is:agent`, which lists only those. They are runs of `claude -p`, even ones you ran yourself, and of the Claude Agent SDK, runs of `codex exec`, headless Grok runs, and Claude Code sessions whose every request came from another Claude Code session. `--json` output always includes them, marked with `"kind": "agent"`.
 - When one agent's sessions come from more than one folder, each row says which, and resuming sets that agent's home variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME`) to match.
 - Claude Code accounts you switch between with `/login` share one folder, so all their sessions appear. Resuming uses whichever account is logged in now.
 - A session whose folder was deleted, which is common with worktrees, is marked **folder removed** and resumes from the nearest parent folder that still exists.
@@ -176,7 +176,7 @@ superfind command "$id"               # the command that resumes it
 
 ### Search results as JSON
 
-`superfind search --json WORDS` and `superfind ask --json WORDS` print one JSON object per line, in the same order as without `--json`. With `--json` they include the sessions another program started (see [Sessions it finds](#sessions-it-finds)), so a script sees everything and can filter on `kind`; add `is:agent` to list only those.
+`superfind search --json WORDS` and `superfind ask --json WORDS` print one JSON object per line, best match first. With `--json` they include the sessions another program started (see [Sessions it finds](#sessions-it-finds)), so a script sees everything and can filter on `kind`; add `is:agent` to list only those.
 
 ```json
 {"schema":1,"agent":"codex","id":"019a…","path":"/Users/you/.codex/sessions/2026/10/09/rollout-….jsonl",

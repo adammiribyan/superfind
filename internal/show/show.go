@@ -1,6 +1,7 @@
 package show
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,6 +104,21 @@ func WriteText(w io.Writer, r session.Record, c Conversation) error {
 	}
 	for _, t := range c.Turns {
 		if _, err := fmt.Fprintf(w, "\n## %s\n\n%s\n", speaker(t.Role, r), t.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string) error {
+	words, _ := session.Narrow(query, nil)
+	passages := session.Passages(db, words)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	for _, r := range rows {
+		record := session.RecordOf(r, Clean)
+		record.Match = Clean(passages[r.Path])
+		if err := enc.Encode(record); err != nil {
 			return err
 		}
 	}

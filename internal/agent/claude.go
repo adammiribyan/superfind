@@ -83,18 +83,34 @@ func decodeContent(raw json.RawMessage) content {
 const interruptMark = "[Request interrupted"
 
 type parser struct {
-	t         Transcript
-	relocated string
-	byAgent   Transcript
+	t          Transcript
+	relocated  string
+	entrypoint string
+	typed      bool
+	peers      *Transcript
 }
 
 func newParser() *parser { return &parser{t: Transcript{Last: Replied}} }
 
-func agentPrompt(l logLine, text string) string {
+var (
+	agentMessageLine = regexp.MustCompile(`^(?:Another Claude session|The coordinator) sent a message[^\n]*:\n`)
+	wrappedMessage   = regexp.MustCompile(`(?s)^<[a-z][\w-]*[^<>]*>\n?(.*?)\n?</[a-z][\w-]*>`)
+)
+
+const coordinatorClosing = "Address this before completing your current task."
+
+func agentPrompt(l logLine, text string) (string, bool) {
 	if l.Origin.Kind != "peer" && l.Origin.Kind != "coordinator" {
-		return ""
+		return "", false
 	}
-	return strings.TrimSpace(cmp.Or(l.Origin.Body, withoutWrappers(strings.TrimPrefix(text, "Another Claude session sent a message:"))))
+	if body := strings.TrimSpace(l.Origin.Body); body != "" {
+		return body, true
+	}
+	text = agentMessageLine.ReplaceAllString(strings.TrimSpace(text), "")
+	if m := wrappedMessage.FindStringSubmatch(text); m != nil {
+		text = m[1]
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text), coordinatorClosing)), true
 }
 
 func (p *parser) feed(raw []byte) bool {
@@ -107,8 +123,9 @@ func (p *parser) feed(raw []byte) bool {
 		t.Cwd = l.Cwd
 	}
 	t.Branch = cmp.Or(l.GitBranch, t.Branch)
-	if l.Entrypoint == "sdk-cli" {
-		t.ByAgent = true
+	if p.entrypoint == "" && l.Entrypoint != "" {
+		p.entrypoint = l.Entrypoint
+		t.ByAgent = strings.HasPrefix(l.Entrypoint, "sdk-")
 	}
 	switch l.Type {
 	case "user":
@@ -119,9 +136,18 @@ func (p *parser) feed(raw []byte) bool {
 			wasInterrupted = wasInterrupted || strings.HasPrefix(strings.TrimSpace(r), interruptMark)
 		}
 		prompt := promptText(text)
-		if asked := agentPrompt(l, text); asked != "" {
-			p.byAgent.Prompts = append(p.byAgent.Prompts, asked)
-			p.byAgent.say("user", asked)
+		if asked, fromAgent := agentPrompt(l, text); fromAgent {
+			if asked != "" {
+				t.Last = Prompted
+				if !p.typed {
+					if p.peers == nil {
+						p.peers = &Transcript{}
+					}
+					p.peers.Prompts = append(p.peers.Prompts, asked)
+					p.peers.say("user", asked)
+				}
+			}
+			return true
 		}
 		switch {
 		case wasInterrupted:
@@ -132,6 +158,7 @@ func (p *parser) feed(raw []byte) bool {
 			t.Last = Prompted
 			t.Prompts = append(t.Prompts, prompt)
 			t.say("user", prompt)
+			p.typed, p.peers = true, nil
 		}
 	case "assistant":
 		c := decodeContent(l.Message.Content)
@@ -142,7 +169,9 @@ func (p *parser) feed(raw []byte) bool {
 		}
 		if text := strings.TrimSpace(c.text); text != "" && !l.IsMeta {
 			t.say("assistant", text)
-			p.byAgent.say("assistant", text)
+			if p.peers != nil {
+				p.peers.say("assistant", text)
+			}
 		}
 	case "custom-title":
 		t.CustomTitle = cmp.Or(l.CustomTitle, t.CustomTitle)
@@ -160,8 +189,9 @@ func (p *parser) done() Transcript {
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
 	}
-	if len(p.t.Prompts) == 0 && len(p.byAgent.Prompts) > 0 {
-		p.t.Prompts, p.t.Turns, p.t.Messages, p.t.ByAgent = p.byAgent.Prompts, p.byAgent.Turns, p.byAgent.Messages, true
+	if !p.typed && p.peers != nil {
+		p.t.Prompts, p.t.Turns, p.t.Messages = p.peers.Prompts, p.peers.Turns, p.peers.Messages
+		p.t.ByAgent, p.t.PeerDriven = true, true
 	}
 	return p.t
 }

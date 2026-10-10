@@ -577,7 +577,7 @@ func narrow(query string, rows []Row, everyKind bool) (string, []Row) {
 	byAgent := false
 	for _, w := range strings.Fields(query) {
 		switch {
-		case strings.EqualFold(w, AgentFilter):
+		case AsksForAgents(w):
 			byAgent = true
 		case strings.HasPrefix(w, "is:"):
 			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
