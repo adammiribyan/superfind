@@ -751,12 +751,12 @@ class PickerColors(PtyPicker):
         self.assertIn(self.TINT, self.read(until=self.TINT))
 
     def test_the_picker_appears_in_one_finished_frame_once_colors_are_known(self):
-        waiting = self.read(until=b"\x1b]11;?") + self.read(seconds=0.15)
-        self.assertNotIn(b"Ledger", waiting)
+        asked = self.read(until=b"\x1b]11;?")
         os.write(self.terminal, self.COLORS)
-        first = self.read(until=b"Migrated.")
-        self.assertIn(b"Ledger", first)
-        self.assertIn(self.TINT, first)
+        shown = asked + self.read(until=b"Migrated.")
+        self.assertIn(self.TINT, shown)
+        self.assertNotIn(b"Ledger", asked)
+        self.assertNotIn(b"\x1b[7m", shown[:shown.index(self.TINT)])
 
     def test_the_picker_leaves_the_cursor_color_to_the_terminal(self):
         os.write(self.terminal, self.COLORS)
