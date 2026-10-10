@@ -2,7 +2,7 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
-## [0.9.1] - Unreleased
+## [0.9.1] - 2026-10-10
 
 ### Changed
 
@@ -16,7 +16,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - When no session contains the words you typed, the picker says that Ctrl-R asks by description.
 - The search box no longer has a "›" mark.
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-10-10
 
 ### Changed
 
