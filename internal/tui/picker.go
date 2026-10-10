@@ -185,7 +185,7 @@ type picker struct {
 	askedFor    string
 	explained   map[string]string
 	message     string
-	notice      string
+	notice      notice
 	inTmux      bool
 
 	asks     *asks
@@ -193,6 +193,8 @@ type picker struct {
 	quitting bool
 	reindex  bool
 }
+
+type notice struct{ path, text string }
 
 type phase int
 
@@ -631,8 +633,10 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.explained = msg.passages
 			return m.loadPreview()
 		}
+	case tea.PasteMsg:
+		m.notice = notice{}
 	case tea.KeyPressMsg:
-		m.notice = ""
+		m.notice = notice{}
 		switch msg.String() {
 		case "esc":
 			if m.phase() != searching {
@@ -723,10 +727,13 @@ func (m picker) enter() (tea.Model, tea.Cmd) {
 	chosen := *r
 	chosen.Open = state
 	if action == sayWhere {
-		m.notice = "Already open in another terminal window."
+		text := "Already open in another terminal window."
 		if pane := state.Tmux; pane != nil {
-			m.notice = fmt.Sprintf("Already open in tmux session “%s”, window %d.", render.Flat(pane.Session), pane.Window)
+			text = fmt.Sprintf("Already open in tmux session “%s”, window %d.", render.Flat(pane.Session), pane.Window)
 		}
+		m.shown = slices.Clone(m.shown)
+		m.shown[m.cursor].Open = state
+		m.notice = notice{r.Path, text}
 		return m, nil
 	}
 	m.chosen, m.quitting = &chosen, true
@@ -898,8 +905,8 @@ func (m picker) View() tea.View {
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	message := m.message
-	if m.notice != "" {
-		message = m.notice
+	if r := m.focused(); r != nil && r.Path == m.notice.path && r.Open != nil {
+		message = m.notice.text
 	}
 	column = append(column, ansi.Truncate(muted.Render(" "+message), l.listWidth, "…"))
 	cols, words := m.widths.Fit(l.listWidth), m.matchWords()

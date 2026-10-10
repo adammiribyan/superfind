@@ -341,3 +341,23 @@ func TestEnterKeepsTheKnownPaneWhenTmuxDoesNotAnswerTheFreshLook(t *testing.T) {
 		t.Fatalf("enter sent %v and chose %+v, want it to quit choosing the session in pane %%3", msg, m.chosen)
 	}
 }
+
+func TestTheAlreadyOpenNoticeGoesAwayWhenTheSessionClosesOrTheSearchChanges(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	notice := func(t *testing.T) picker {
+		m, _ := press(openPicker(t), tea.KeyEnter)
+		if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
+			t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open", screen)
+		}
+		return m
+	}
+	next, _ := notice(t).Update(heldMsg{})
+	if screen := ansi.Strip(next.(picker).View().Content); strings.Contains(screen, "Already open") {
+		t.Errorf("after the session closed the screen still reads\n%s", screen)
+	}
+	next, _ = notice(t).Update(tea.PasteMsg{Content: "ledger"})
+	if screen := ansi.Strip(next.(picker).View().Content); strings.Contains(screen, "Already open") {
+		t.Errorf("after a paste the screen still reads\n%s", screen)
+	}
+}
