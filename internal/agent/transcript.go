@@ -7,10 +7,14 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-const bidiControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+const (
+	bidiControls = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+	bidiMarks    = "\u061c\u200e\u200f"
+)
 
 func Bidi(r rune) bool { return strings.ContainsRune(bidiControls, r) }
 
@@ -19,6 +23,15 @@ func dropped(r rune) bool {
 }
 
 var escapeSequence = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|[\\]P_^X][^\x07\x1b\n]*(?:\x07|\x1b\\\\)|[ -/]*[0-~])")
+
+func Searchable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(bidiMarks, r) {
+			return -1
+		}
+		return r
+	}, Printable(s))
+}
 
 func Printable(s string) string {
 	if !strings.ContainsFunc(s, dropped) {
@@ -37,19 +50,34 @@ var (
 	bareTag    = regexp.MustCompile(`^</?[^<>]*>$`)
 )
 
+func wholeElement(text string) bool {
+	m := leadingTag.FindStringSubmatch(text)
+	if m == nil {
+		return false
+	}
+	opener := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(leadingTag.FindString(text), "<"), ">"))
+	return strings.HasSuffix(text, "</"+m[1]+">") || strings.HasSuffix(text, "</"+opener+">")
+}
+
+var machineTags = []string{"system-reminder", "task-notification", "local-command-caveat", "local-command-stdout",
+	"local-command-stderr", "bash-input", "bash-stdout", "bash-stderr", "command-name", "command-message", "command-args",
+	"ci-monitor-event", "create-pr-command", "scheduled-task", "user-prompt-submit-hook", "environment_context",
+	"user_instructions", "codex_internal_context", "recommended_plugins", "in-app-browser-context", "turn_aborted",
+	"user_shell_command"}
+
 func withoutWrappers(text string) string {
 	for {
 		text = strings.TrimSpace(text)
-		if bareTag.MatchString(text) {
-			return ""
-		}
 		m := leadingTag.FindStringSubmatch(text)
 		if m == nil || !strings.ContainsAny(m[1], "-_") {
 			return text
 		}
 		end := strings.Index(text, "</"+m[1]+">")
 		if end < 0 {
-			return ""
+			if slices.Contains(machineTags, m[1]) {
+				return ""
+			}
+			return text
 		}
 		text = text[end+len(m[1])+3:]
 	}

@@ -609,7 +609,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
-        self.assertIn(f"typeset -g _superfind_bin={SUPERFIND}", self.superfind("init", "zsh"))
+        for shell in ("zsh", "bash"):
+            self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
         import http.server
@@ -1166,7 +1167,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("red"), ["make the red title go away esrever"])
         self.assertEqual(self.titles("isolated"), ["make the red title go away esrever"])
         self.assertEqual(self.titles("deploy"), ["deploy checklist"])
-        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the kubernetes cluster"])
+        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the ku\u200fber\u200enetes clu\u061cster"])
         search = self.run_superfind("search", "red").stdout
         self.assert_only_our_styles(search)
         self.assertEqual(search.split("\t")[4], "make the red title go away esrever")
@@ -1555,6 +1556,102 @@ class SuperfindBehavior(unittest.TestCase):
             except ProcessLookupError:
                 pass
         self.assertEqual(alive, [])
+
+    def test_a_healthy_index_is_never_judged_damaged_by_its_first_title(self):
+        import sqlite3
+        db = self.home / ".cache" / "superfind" / "search.db"
+        for n, title in enumerate(("\uf113nerdicon notes", "____ separator line", "ᏣᎳᎩ language notes", "ᲐᲑᲒ test")):
+            for old in self.projects.glob("*.jsonl"):
+                old.unlink()
+            self.session(f"s{n}", user("hello there"), tool("Bash"), claude("ok"), title=title)
+            self.superfind("index")
+            connection = sqlite3.connect(db)
+            before = connection.execute("SELECT rowid, path FROM docs").fetchall()
+            connection.close()
+            result = self.run_superfind("search", "zzqq")
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""), title)
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("SELECT rowid, path FROM docs").fetchall(), before, title)
+            connection.close()
+
+    def test_a_codex_block_that_is_one_whole_element_is_not_a_prompt(self):
+        self.codex_session(uid(1), codex_meta(),
+                           codex_user("<permissions instructions>\nFilesystem sandboxing: workspace-write.\n</permissions instructions>",
+                                      '<context source="ide">\nOpen file: auth.go\n</context>', "fix the login redirect"),
+                           codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(), codex_user('<image name="[Image #1]">', "</image>", "what is in this chart"),
+                           codex_reply("Sales by month."))
+        self.superfind("index")
+        self.assertEqual(sorted(self.titles()), ["fix the login redirect", "what is in this chart"])
+        cache = json.loads((self.home / ".cache" / "superfind" / "index.json").read_text())
+        self.assertEqual(sorted(e["session"]["words"] < 10 for e in cache["files"].values()), [True, True])
+
+    def test_a_prompt_that_is_only_markup_or_an_unclosed_custom_tag_is_kept(self):
+        self.session("a1", user("<div>"), tool("Bash"), claude("That is an opening div tag."))
+        self.session("b2", user("<my-element> is not rendering, why?"), tool("Bash"), claude("It is not registered."))
+        self.session("c3", user("<system-reminder>a wrapper that never closes"), claude("Noted."))
+        self.assertEqual(sorted(self.titles()), ["<div>", "<my-element> is not rendering, why?"])
+
+    def test_a_single_cjk_character_finds_the_sessions_that_start_with_it(self):
+        self.session("a1", user("日本語のテストを書いて"), tool("Bash"), claude("書きました。"), title="日本語のテスト")
+        self.session("b2", user("write the C extension"), tool("Bash"), claude("Written."), title="C extension")
+        self.assertEqual(self.titles("日"), ["日本語のテスト"])
+        self.assertEqual(self.titles("C"), ["C extension"])
+
+    def test_a_clipped_title_never_splits_an_emoji(self):
+        for n, emoji in enumerate(("👍🏽", "🇯🇵", "👨‍👩‍👧")):
+            self.session(f"s{n}", user("x" * 198 + emoji + " and then some more words"), tool("Bash"), claude("ok"))
+        self.assertEqual(sorted(self.titles()), sorted("x" * 198 + e + "…" for e in ("👍🏽", "🇯🇵", "👨‍👩‍👧")))
+        for old in self.projects.glob("*.jsonl"):
+            old.unlink()
+        self.session("a1", user("y" * 200), tool("Bash"), claude("ok"))
+        self.session("b2", user("z" * 201), tool("Bash"), claude("ok"))
+        self.assertEqual(sorted(self.titles()), ["y" * 200, "z" * 199 + "…"])
+
+    def test_odd_files_named_like_sessions_are_skipped_without_a_warning(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        os.mkfifo(self.projects / "fifo.jsonl")
+        (self.projects / "folder.jsonl").mkdir()
+        os.symlink("/dev/zero", self.projects / "zero.jsonl")
+        for _ in range(2):
+            result = subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "1 session indexed\n", ""))
+
+    def test_right_to_left_marks_are_shown_but_overrides_are_not(self):
+        path = self.session("a1", user("תקן את הבאג\u200f בבקשה \u202eesrever"), tool("Bash"),
+                            claude("תוקן\u200f! مرحبا\u061c"), title="Hebrew fix")
+        self.superfind("index")
+        preview = self.run_superfind("preview", str(path), "--recent").stdout
+        for mark in ("\u200f", "\u061c"):
+            self.assertIn(mark, preview)
+        self.assertNotIn("\u202e", preview)
+        self.assertEqual(self.titles("בבקשה"), ["Hebrew fix"])
+        self.session("b2", user("handle the keys"), tool("Bash"), claude("Done."), title="ro\u200ftate the signing keys")
+        self.session("c3", user("move the tables"), tool("Bash"), claude("I will mi\u200egrate them tonight."), title="Tables")
+        self.assertEqual(self.titles("rotate"), ["ro\u200ftate the signing keys"])
+        self.assertEqual(self.titles("migrate"), ["Tables"])
+
+    @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash"), "needs zsh and bash")
+    def test_the_shell_functions_work_when_copied_without_their_variables(self):
+        dump = {"zsh": "typeset -f superfind sfd _superfind_run", "bash": "declare -f superfind sfd _superfind_run _superfind_resume"}
+        for shell in ("zsh", "bash"):
+            setup = self.superfind("init", shell)
+            snapshot = self.home / f"snapshot.{shell}"
+            functions = subprocess.run([shell, "-c", f'eval "$1" 2>/dev/null; {dump[shell]}', shell, setup],
+                                       env=self.env, capture_output=True, text=True).stdout
+            self.assertNotIn(str(SUPERFIND) + "=", functions)
+            snapshot.write_text(functions)
+            for command in ("superfind --version", "sfd --version"):
+                result = subprocess.run([shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
+                                        "HOME": str(self.home)}, capture_output=True, text=True)
+                self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (shell, command, result.stderr))
+            moved = self.home / "bin"
+            moved.mkdir(exist_ok=True)
+            shutil.copy(SUPERFIND, moved / "superfind")
+            snapshot.write_text(functions.replace(str(Path(SUPERFIND).resolve()), "/gone/superfind"))
+            result = subprocess.run([shell, "-c", f"source {snapshot}; superfind --version"],
+                                    env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, (shell, result.stderr))
 
 
 if __name__ == "__main__":

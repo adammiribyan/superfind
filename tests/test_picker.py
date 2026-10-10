@@ -112,7 +112,8 @@ class PickerBehavior(unittest.TestCase):
     def test_typing_narrows_the_list_and_shows_the_matching_passage(self):
         self.three_sessions()
         self.open_picker()
-        self.keys("charged")
+        tmux("set-buffer", "-b", self.session_name, "charged")
+        tmux("paste-buffer", "-p", "-d", "-b", self.session_name, "-t", self.session_name)
         self.wait_for("1/3")
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
         self.assertIn("customers get charged twice", self.screen())
@@ -606,6 +607,50 @@ class PickerBehavior(unittest.TestCase):
         lock.close()
         self.wait_for("1/33")
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_damage_found_during_an_ask_does_not_crash_the_picker(self):
+        import sqlite3
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if "which" in sent["questions"] and "s0" in sent["questions"]["which"]["criteria"]:
+                    time.sleep(3)
+                answers = {q: {"choice": list(spec.get("criteria", {"x": 1}))[0], "noul": 0.9,
+                               "probabilities": {k: (0.9 if k == "s0" else 0.01) for k in spec.get("criteria", {})}}
+                           for q, spec in sent["questions"].items()}
+                body = json.dumps({"answers": answers}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.three_sessions()
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text("{}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.open_picker()
+        tmux("set-buffer", "-b", self.session_name, "charged")
+        tmux("paste-buffer", "-p", "-d", "-b", self.session_name, "-t", self.session_name)
+        self.wait_for("1/3")
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("UPDATE docs_data SET block = zeroblob(length(block)) WHERE id = 10")
+        db.commit()
+        db.close()
+        self.keys("C-r")
+        time.sleep(0.5)
+        status.write_text("{}")
+        os.utime(status, (time.time() + 5, time.time() + 5))
+        time.sleep(5)
+        self.assertFalse(Path(f"{self.out}.code").exists(), Path(f"{self.out}.stderr").read_text()[-500:])
 
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()

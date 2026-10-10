@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -31,8 +32,16 @@ const (
 
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
+	cut, clusters := 0, 0
+	for i := 0; i < len(s); clusters++ {
+		if clusters == n-1 {
+			cut = i
+		}
+		if clusters == n {
+			return s[:cut] + "…"
+		}
+		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
+		i += len(cluster)
 	}
 	return s
 }
@@ -49,7 +58,7 @@ func parse(f found) (*Session, string, bool, error) {
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
 		return nil, "", t.Incomplete, nil
 	}
-	body := agent.Printable(strings.Join(t.Messages, "\n"))
+	body := agent.Searchable(strings.Join(t.Messages, "\n"))
 	return &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
 		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
@@ -206,18 +215,13 @@ func intact(db *sql.DB) bool {
 	if _, done := checked.LoadOrStore(db, true); done {
 		return true
 	}
-	var path, title string
-	err := db.QueryRow("SELECT path, title FROM docs LIMIT 1").Scan(&path, &title)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true
-	}
-	word := wordPattern.FindString(strings.ToLower(title))
-	if err != nil || word == "" {
+	var docs int
+	if err := db.QueryRow("SELECT count(*) FROM docs").Scan(&docs); err != nil || docs == 0 {
 		return err == nil
 	}
-	var held int
-	err = db.QueryRow("SELECT count(*) FROM docs WHERE docs MATCH ? AND path = ?", `"`+word+`"`, path).Scan(&held)
-	return err == nil && held > 0
+	db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.terms USING fts5vocab(main, docs, 'row')")
+	var term string
+	return db.QueryRow("SELECT term FROM temp.terms LIMIT 1").Scan(&term) == nil
 }
 
 func searchCount() (int, error) {
@@ -412,7 +416,7 @@ func updateSearch(results map[string]parsed, gone []string, discarded bool) erro
 		if r.session != nil {
 			s := r.session
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
-				agent.Printable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
+				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
 			}
 		}
@@ -450,7 +454,7 @@ func MeaningfulWords(query string) []string {
 func ftsQuery(query string) string {
 	var parts []string
 	for _, w := range wordPattern.FindAllString(strings.ToLower(query), -1) {
-		if len([]rune(w)) == 1 {
+		if len(w) == 1 {
 			parts = append(parts, `"`+w+`"`)
 		} else {
 			parts = append(parts, `"`+w+`"*`)

@@ -550,10 +550,10 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		updated, load := m.loadPreview()
 		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
-		if key == "" || len(top) == 0 {
+		if key == "" || len(top) == 0 || updated.db == nil {
 			return updated, load
 		}
-		seq, db, query, ctx := msg.seq, m.db, msg.query, m.asks.ctx
+		seq, db, query, ctx := msg.seq, updated.db, msg.query, m.asks.ctx
 		return updated, tea.Batch(load, func() tea.Msg {
 			return explainDone{seq, ask.Explain(ctx, db, key, query, top)}
 		})

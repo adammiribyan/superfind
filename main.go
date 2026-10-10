@@ -120,15 +120,21 @@ Print superfind's version.
 
 var commandNames = []string{"init", "pick", "search", "ask", "preview", "command", "index", "label"}
 
-const zshSetup = `typeset -g _superfind_bin=%s
+const zshSetup = `_superfind_run() {
+  if [[ -x %[1]s ]]; then
+    %[1]s "$@"
+  else
+    command superfind "$@"
+  fi
+}
 
 superfind() {
   if (( $# )); then
-    "$_superfind_bin" "$@"
+    _superfind_run "$@"
     return
   fi
   local out
-  out=$("$_superfind_bin" pick) || return
+  out=$(_superfind_run pick) || return
   print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
   print -s -- "${out#*$'\n'}"
   eval "${out#*$'\n'}"
@@ -138,7 +144,7 @@ sfd() { superfind "$@"; }
 
 _superfind_widget() {
   local out
-  if out=$("$_superfind_bin" pick); then
+  if out=$(_superfind_run pick); then
     zle -I
     print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -151,7 +157,13 @@ zle -N _superfind_widget
 bindkey '^Xc' _superfind_widget
 `
 
-const bashSetup = `_superfind_bin=%s
+const bashSetup = `_superfind_run() {
+  if [[ -x %[1]s ]]; then
+    %[1]s "$@"
+  else
+    command superfind "$@"
+  fi
+}
 
 _superfind_resume() {
   printf 'Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
@@ -161,11 +173,11 @@ _superfind_resume() {
 
 superfind() {
   if (( $# )); then
-    "$_superfind_bin" "$@"
+    _superfind_run "$@"
     return
   fi
   local out
-  out=$("$_superfind_bin" pick) || return
+  out=$(_superfind_run pick) || return
   _superfind_resume "$out"
 }
 
@@ -173,7 +185,7 @@ sfd() { superfind "$@"; }
 
 _superfind_widget() {
   local out
-  out=$("$_superfind_bin" pick) && _superfind_resume "$out"
+  out=$(_superfind_run pick) && _superfind_resume "$out"
 }
 [[ $- == *i* ]] && bind -x '"\C-xc": _superfind_widget'
 `

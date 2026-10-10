@@ -81,6 +81,9 @@ func codexBlockPrompt(text string) string {
 	if strings.HasPrefix(text, answersOpen) {
 		return codexAnswers(text)
 	}
+	if wholeElement(text) || bareTag.MatchString(text) {
+		return ""
+	}
 	text = withoutWrappers(text)
 	switch {
 	case strings.HasPrefix(text, codexRequest), slices.ContainsFunc(codexContextHeadings, func(h string) bool { return strings.HasPrefix(text, h) }):
