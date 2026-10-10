@@ -5,8 +5,6 @@
   </picture>
 </p>
 
-<p align="center">Find any past AI coding session and resume it.</p>
-
 superfind reads your Claude Code, Codex, and Grok sessions and finds the one you want, by the words in it or by a description. Then it opens the session's folder and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh or bash.
 
 ![superfind searching sessions from three agents, asking for one by description, and resuming it](demo/superfind.gif)
@@ -97,17 +95,17 @@ For example, "where did we stop charging people twice" finds "Checkout button do
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so instead of trying Claude.
 
-Measured on 2026-10-09 on 21 test searches over the author's own sessions, each phrased differently from the session it should find, over two or three runs:
+Measured on 2026-10-10 on 21 test searches over the author's own sessions, each phrased differently from the session it should find, over three runs:
 
 | | Jev | Claude Haiku |
 |---|---|---|
-| Right session ranked first | 16–17 | 18–19 |
-| Right session in the top 3 | 19–20 | 19–20 |
-| Time to results, median | 1.4 s | 3.3–3.8 s |
-| Time to results, slowest | 1.7 s | 8.6 s |
-| Cost per search | $0.0036 | $0.0073 |
+| Right session ranked first | 13–14 | 13–14 |
+| Right session in the top 3 | 18 | 16–17 |
+| Time to results, median | 1.6 s | 5.4–5.7 s |
+| Time to results, slowest | 1.9 s | 10.3 s |
+| Cost per search (measured 2026-10-09) | $0.0036 | $0.0073 |
 
-Claude puts the right session first slightly more often. Jev is two to three times faster at the median, five times faster at the slowest, and half the price.
+The two put the right session first equally often. Jev puts it in the top 3 slightly more often, is about three and a half times faster at the median, and costs about half as much per search.
 
 With Jev, the preview also shows the passage that best matches your search for the top five results. It appears shortly after the results.
 
