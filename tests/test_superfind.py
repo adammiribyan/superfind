@@ -429,6 +429,63 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual([r.split("\t")[4] for r in self.superfind("search", "kubernetes").splitlines()], ["Cluster upgrade"])
         self.assertEqual(self.superfind("command", str(path)), "cd /tmp && claude --resume b2\n")
 
+    def freeze_cache(self):
+        cache = self.home / ".cache"
+        cache.mkdir(exist_ok=True)
+        frozen = [cache, *cache.rglob("*")]
+        for p in frozen:
+            p.chmod(0o500 if p.is_dir() else 0o400)
+        self.addCleanup(lambda: [p.chmod(0o700) for p in frozen if p.exists()])
+        return lambda: {p: p.read_bytes() for p in cache.rglob("*") if p.is_file()}
+
+    def test_a_cache_that_cannot_be_written_is_still_searched_and_left_alone(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.superfind("index")
+        contents = self.freeze_cache()
+        before = contents()
+        result = self.run_superfind("search", "kubernetes")
+        self.assertEqual((result.returncode, result.stdout.split("\t")[4], result.stderr), (0, "Cluster upgrade", ""))
+        self.session("b2", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        result = self.run_superfind("search", "--json", "kubernetes")
+        self.assertEqual((result.returncode, [json.loads(r)["title"] for r in result.stdout.splitlines()]), (0, ["Cluster upgrade"]))
+        self.assertRegex(result.stderr, r"^superfind search: results may miss what changed in 1 session since .+, "
+                                        r"because the index in .+ can't be updated from here\n$")
+        listed = self.run_superfind("search")
+        self.assertEqual([r.split("\t")[4] for r in listed.stdout.splitlines()], ["Invoice file names", "Cluster upgrade"])
+        shown = self.run_superfind("show", "b2")
+        self.assertEqual((shown.returncode, shown.stdout.splitlines()[0], shown.stderr), (0, "# Invoice file names", ""))
+        self.env["TYPESAFE_API_KEY"] = "unused"
+        for command in ("index", "label"):
+            refused = self.run_superfind(command)
+            self.assertEqual((refused.returncode, refused.stdout), (1, ""), command)
+            self.assertRegex(refused.stderr, rf"^superfind {command}: .+ can't be written from here, so nothing was saved\n$")
+        self.assertEqual(contents(), before)
+
+    def test_a_cache_that_cannot_be_written_still_reads_what_its_last_writer_left_in_the_log(self):
+        import sqlite3
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.superfind("index")
+        holder = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        holder.execute("SELECT count(*) FROM docs").fetchone()
+        self.session("b2", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        self.superfind("index")
+        self.assertTrue((self.home / ".cache" / "superfind" / "search.db-wal").stat().st_size > 0)
+        contents = self.freeze_cache()
+        before = contents()
+        result = self.run_superfind("search", "invoice")
+        after = contents()
+        holder.close()
+        self.assertEqual((result.returncode, result.stdout.split("\t")[4], result.stderr), (0, "Invoice file names", ""))
+        self.assertEqual(after, before)
+
+    def test_a_cache_that_cannot_be_written_and_has_no_index_says_how_to_fix_it(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.freeze_cache()
+        result = self.run_superfind("search", "kubernetes")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertRegex(result.stderr, r"^superfind search: there's no usable index in .+, and it can't be written from here\. "
+                                        r"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written\n$")
+
     def break_search_index(self):
         import sqlite3
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")

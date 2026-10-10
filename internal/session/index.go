@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
@@ -118,6 +119,24 @@ func writeAtomically(path string, data []byte) error {
 	return os.Rename(tmp.Name(), path)
 }
 
+func unwritable(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
+}
+
+type ReadOnly struct {
+	Changed int
+	Since   time.Time
+}
+
+func (r ReadOnly) Error() string {
+	noun := "sessions"
+	if r.Changed == 1 {
+		noun = "session"
+	}
+	return fmt.Sprintf("results may miss what changed in %d %s since %s, because the index in %s can't be updated from here",
+		r.Changed, noun, r.Since.Local().Format("Jan 2 15:04"), CacheDir())
+}
+
 func lockFile(name string) (func(), error) {
 	if err := makeCacheDir(); err != nil {
 		return nil, err
@@ -160,21 +179,35 @@ func OpenSearch() (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, suffix := range []string{"-wal", "-shm"} {
-		os.Chmod(path+suffix, 0o600)
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
-	if err != nil {
+	settings := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	readOnly := unwritable(err)
+	switch {
+	case readOnly:
+		if _, err = os.Stat(path); err != nil {
+			return nil, err
+		}
+		settings = "mode=ro&immutable=1"
+		if _, err := os.Stat(path + "-wal"); err == nil {
+			settings = "mode=ro&_pragma=busy_timeout(5000)"
+		}
+	case err != nil:
 		return nil, err
+	default:
+		f.Close()
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			os.Chmod(path+suffix, 0o600)
+		}
 	}
-	f.Close()
-	os.Chmod(path, 0o600)
-	location := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"}
+	location := url.URL{Scheme: "file", Path: path, RawQuery: settings}
 	db, err := sql.Open("sqlite", location.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if readOnly {
+		return db, nil
+	}
 	if _, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')`); err != nil {
 		db.Close()
 		return nil, err
@@ -182,7 +215,7 @@ func OpenSearch() (*sql.DB, error) {
 	return db, nil
 }
 
-func searchHolds(cached map[string]cacheEntry) bool {
+func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
 	want := 0
 	for _, e := range cached {
 		if e.Session != nil {
@@ -193,7 +226,9 @@ func searchHolds(cached map[string]cacheEntry) bool {
 	if err == nil {
 		return held == want
 	}
-	discardSearch()
+	if !readOnly {
+		discardSearch()
+	}
 	return false
 }
 
@@ -267,15 +302,26 @@ func Rebuild(announce func(stale int)) ([]Row, []error, error) { return index(an
 
 func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	unlock, err := lockFile("index.lock")
-	if err != nil {
+	readOnly := unwritable(err)
+	if err != nil && !readOnly {
 		return nil, nil, fmt.Errorf("locking the index: %w", err)
 	}
-	defer unlock()
+	if !readOnly {
+		defer unlock()
+	}
+	if rebuild && readOnly {
+		return nil, nil, fmt.Errorf("%w, and it can't be rebuilt from here. Run superfind index where %s can be written",
+			ErrDamaged, CacheDir())
+	}
 	if rebuild {
 		discardSearch()
 	}
 	old := loadCache()
-	if !searchHolds(old) {
+	if !searchHolds(old, readOnly) {
+		if readOnly {
+			return nil, nil, fmt.Errorf("there's no usable index in %s, and it can't be written from here. "+
+				"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written", CacheDir())
+		}
 		old = map[string]cacheEntry{}
 	}
 	var all []found
@@ -379,6 +425,13 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		if _, ok := fresh[p]; !ok {
 			gone = append(gone, p)
 		}
+	}
+	if readOnly {
+		since := time.Time{}
+		if info, err := os.Stat(CachePath("index.json")); err == nil {
+			since = info.ModTime()
+		}
+		return rows, problems, ReadOnly{len(stale) + len(gone), since}
 	}
 	discarded := len(old) == 0
 	if len(results) > 0 || len(gone) > 0 || discarded {
