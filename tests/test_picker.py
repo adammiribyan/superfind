@@ -926,6 +926,55 @@ class PickerBehavior(unittest.TestCase):
         self.keys("where did we stop double charges", "M-Enter")
         self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
 
+    def folder_sessions(self):
+        for name in ("app/sub", "shop"):
+            (self.home / name).mkdir(parents=True)
+        self.session("app", "Ledger migration", user("migrate the ledger", cwd=str(self.home / "app"), branch="main"),
+                     tool("Bash"), claude("Done."))
+        self.session("sub", "Invoice layout", user("wrap names", cwd=str(self.home / "app" / "sub"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("shop", "Checkout double charge", user("charge once", cwd=str(self.home / "shop"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("dotfiles", "Dotfiles cleanup", user("tidy", cwd=str(self.home), branch="main"), tool("Bash"),
+                     claude("Done."))
+        self.session("old", "Old ledger fix", user("fix the ledger", cwd=str(self.home / "app"), branch="fix"),
+                     tool("Bash"), claude("Done."))
+        os.utime(self.projects / "old.jsonl", (time.time() - 10 * 86400, time.time() - 10 * 86400))
+        self.env["PWD"] = str(self.home / "app")
+
+    def test_filters_in_the_picker_list_what_search_prints_in_the_same_order(self):
+        self.folder_sessions()
+        self.open_picker()
+        for query in ("in:here", "in:here branch:FIX", "branch:fix after:5d", "in:here ledger"):
+            printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, capture_output=True,
+                                     text=True, check=True).stdout
+            self.keys("C-u", query)
+            self.assertEqual(self.titles(), [row.split("\t")[4] for row in printed.splitlines()], query)
+        self.keys("C-u", "in:here")
+        self.assertEqual(self.titles(), ["Ledger migration", "Old ledger fix", "Invoice layout"])
+
+    def test_a_half_typed_filter_keeps_the_list_says_what_it_takes_and_cannot_ask(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.out}.asked\necho '{{\"result\": \"[0]\"}}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.three_sessions()
+        self.open_picker(width=200)
+        self.keys("ledger after:4")
+        self.wait_for("after: takes a day like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w.")
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.keys("C-r")
+        time.sleep(1)
+        self.assertFalse(Path(f"{self.out}.asked").exists())
+        self.assertIn("after: takes a day", self.screen())
+        self.keys(*["BSpace"] * 7, "in:")
+        self.assertIn("in: takes here, as in in:here.", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.keys(*["BSpace"] * 3, "after:4d")
+        self.assertNotIn("takes", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration"])
+
 
     def explaining_typesafe(self):
         received = []
