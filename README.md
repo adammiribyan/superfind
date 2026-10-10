@@ -273,32 +273,19 @@ A past session can contain text such as "ignore your previous instructions". `sh
 
 ### Resume in another pane
 
-`superfind command SESSION` prints a command that moves to the session's folder and resumes it, so a multiplexer can run it anywhere:
+`superfind command SESSION` prints a command that moves to the session's folder and resumes it, so a terminal multiplexer can run it in a new pane. Run these from inside the multiplexer:
 
 ```sh
 cmd=$(superfind command "$id")
 
 tmux new-window "$cmd"                            # tmux: a new window
-tmux split-window -h "$cmd"                       # or a split beside this pane
-zellij run -- sh -c "$cmd"                        # zellij
+tmux split-window -h "$cmd"                       # tmux: a split beside this pane
+zellij run -- sh -c "$cmd"                        # zellij: a new pane
 pane=$(herdr pane split --current --direction right --no-focus | jq -r .result.pane.pane_id) &&
-  herdr pane run "$pane" "$cmd"                   # herdr: typed into the new pane's shell
-rex new my-session -- sh -c "$cmd"                # Rex
+  herdr pane run "$pane" "$cmd"                   # herdr: a split, with the command typed into its shell
 ```
 
-In Ghostty on macOS, AppleScript opens a new tab that runs the command in your shell:
-
-```sh
-osascript - "$cmd" <<'EOF'
-on run argv
-  tell application "Ghostty"
-    set cfg to new surface configuration
-    set initial input of cfg to (item 1 of argv) & linefeed
-    new tab in front window with configuration cfg
-  end tell
-end run
-EOF
-```
+These were tested with tmux 3.6, zellij 0.41, and herdr 0.9. [Rex](https://www.superlogical.com/rex/docs/) can run a command in a new session in a folder too; see its docs.
 
 ### For an agent's instructions
 
