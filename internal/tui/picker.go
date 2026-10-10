@@ -692,6 +692,8 @@ const (
 	sayWhere
 )
 
+var enterHints = map[enterAction]string{resumeIt: "resume", goToPane: "go to it", sayWhere: "see where"}
+
 func onEnter(cached, fresh *open.State, inTmux bool) (enterAction, *open.State) {
 	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
 		kept := *fresh
@@ -825,11 +827,10 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) hints() [][2]string {
-	enter := "resume"
+	enter := enterHints[resumeIt]
 	if r := m.focused(); r != nil {
-		if action, _ := onEnter(r.Open, r.Open, m.inTmux); action == goToPane {
-			enter = "go to it"
-		}
+		action, _ := onEnter(r.Open, r.Open, m.inTmux)
+		enter = enterHints[action]
 	}
 	switch {
 	case m.phase() == asking:

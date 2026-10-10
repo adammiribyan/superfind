@@ -292,21 +292,25 @@ func TestEnterGoesToTheTmuxPaneOnlyWhenTheSessionIsOpenInOneAndSuperfindRunsInTm
 	}
 }
 
-func TestTheEnterHintSaysGoToItForASessionOpenInATmuxPane(t *testing.T) {
-	for _, tmux := range []string{"/private/tmp/tmux-501/default,1,0", ""} {
-		t.Setenv("TMUX", tmux)
+func TestTheEnterHintSaysWhatEnterDoesOnTheFocusedSession(t *testing.T) {
+	pane := &open.Pane{ID: "%3", Session: "work", Window: 1}
+	cases := []struct {
+		tmux string
+		open *open.State
+		want string
+	}{
+		{"/private/tmp/tmux-501/default,1,0", &open.State{PID: 4242, Tmux: pane}, "go to it"},
+		{"", &open.State{PID: 4242, Tmux: pane}, "see where"},
+		{"/private/tmp/tmux-501/default,1,0", &open.State{PID: 4242}, "see where"},
+		{"", &open.State{PID: 4242}, "see where"},
+		{"/private/tmp/tmux-501/default,1,0", nil, "resume"},
+	}
+	for _, c := range cases {
+		t.Setenv("TMUX", c.tmux)
 		m := testPicker(t)
-		m.shown[0].Open = &open.State{PID: 4242, Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
-		want := "go to it"
-		if tmux == "" {
-			want = "resume"
-		}
-		if got := m.hints()[0]; got != [2]string{"enter", want} {
-			t.Errorf("TMUX=%q: first hint %q, want enter %s", tmux, got, want)
-		}
-		m.shown[0].Open = &open.State{PID: 4242}
-		if got := m.hints()[0]; got != [2]string{"enter", "resume"} {
-			t.Errorf("TMUX=%q, open without a pane: first hint %q, want enter resume", tmux, got)
+		m.shown[0].Open = c.open
+		if got := m.hints()[0]; got != [2]string{"enter", c.want} {
+			t.Errorf("TMUX=%q, open %+v: first hint %q, want enter %s", c.tmux, c.open, got, c.want)
 		}
 	}
 }
