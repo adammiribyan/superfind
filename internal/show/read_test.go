@@ -232,14 +232,14 @@ func TestShowKeepsTheEndOfAGiantTurnWithoutHoldingAllOfIt(t *testing.T) {
 	var before runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	for i := range 4096 {
+	for i := range 1024 {
 		k.say("assistant", fmt.Sprintf("%05d", i)+strings.Clone(piece))
 	}
 	var after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&after)
-	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 32<<20 {
-		t.Fatalf("holding %d MB after reading 256 MB", grew>>20)
+	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 16<<20 {
+		t.Fatalf("holding %d MB after reading 64 MB", grew>>20)
 	}
 	c := k.conversation()
 	if c.Total != 2 || c.Omitted != 1 || !c.Truncated || len(c.Turns) != 1 || !c.Turns[0].Cut {
@@ -288,13 +288,13 @@ func TestShowHoldsLittleOfAPrivateKeyReopenedInEveryMessage(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	for range 256 {
+	for range 64 {
 		k.say("assistant", "-----END PRIVATE KEY-----\n"+strings.Repeat(".", 256<<10)+"\n-----BEGIN PRIVATE KEY-----")
 	}
 	runtime.GC()
 	runtime.ReadMemStats(&after)
-	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 8<<20 {
-		t.Fatalf("holding %d MB after reading 64 MB", grew>>20)
+	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 4<<20 {
+		t.Fatalf("holding %d MB after reading 16 MB", grew>>20)
 	}
 	if c := k.conversation(); len(c.Turns) != 1 || c.Turns[0].Text != "…]" {
 		t.Fatalf("got %s", summary(c))

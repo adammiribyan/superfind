@@ -22,10 +22,10 @@ func (g *group) cleaned() string {
 }
 
 type turn struct {
-	role   string
-	groups []group
-	open   bool
-	cut    bool
+	role    string
+	groups  []group
+	open    bool
+	dropped bool
 }
 
 func openKeyAt(text string) int {
@@ -58,9 +58,11 @@ func (t *turn) add(text string) {
 		t.groups = t.groups[:len(t.groups)-1]
 	}
 	open := openKeyAt(text)
-	if t.open = open >= 0; t.open {
+	t.open = open >= 0
+	if t.open {
 		var closed string
-		if closed, text = closeKeys(text, open); closed != "" {
+		closed, text = closeKeys(text, open)
+		if closed != "" {
 			t.groups = append(t.groups, group{text: closed})
 		}
 	}
@@ -68,7 +70,7 @@ func (t *turn) add(text string) {
 }
 
 func (t *turn) measure(limit int) int {
-	if t.cut {
+	if t.dropped {
 		return limit + 1
 	}
 	n := 0
@@ -84,15 +86,15 @@ func (t *turn) trimFront(limit int) int {
 		if i < len(t.groups)-1 || !t.open {
 			n += len(t.groups[i].cleaned())
 		}
-		if n > limit && i > 0 {
-			t.groups = slices.Delete(t.groups, 0, i)
-			t.cut = true
-		}
 		if n > limit {
+			if i > 0 {
+				t.groups = slices.Delete(t.groups, 0, i)
+				t.dropped = true
+			}
 			return limit + 1
 		}
 	}
-	if t.cut {
+	if t.dropped {
 		return limit + 1
 	}
 	return n
@@ -124,7 +126,8 @@ func (k *keeper) say(role, text string) {
 			k.turns = slices.Delete(k.turns, 0, len(k.turns)-k.opt.Tail)
 		}
 	}
-	if k.since += len(text); k.opt.MaxBytes > 0 && k.since >= k.every {
+	k.since += len(text)
+	if k.opt.MaxBytes > 0 && k.since >= k.every {
 		k.trim()
 		k.since = 0
 	}
