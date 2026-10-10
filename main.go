@@ -42,12 +42,20 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           takes the same is: and agent: filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
+  superfind show SESSION [--json] [--tail N] [--max-bytes N]
+                          print a session's conversation as plain text, for scripts and agents
   superfind command SESSION
                           print the shell command that resumes a session
   superfind index         build or refresh the index
   superfind label         mark sessions waiting on you (needs a TypeSafe key)
   superfind help COMMAND  explain one command
   superfind --version
+
+SESSION is a session id, a unique start of one (8 or more characters), or a path that
+superfind search prints first.
+
+Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cancelled;
+2 a usage mistake, or an id that matches more than one session; 130 interrupted.
 `
 
 var helps = map[string]string{
@@ -88,7 +96,8 @@ without one. Takes the same is: and agent: filters as search, and prints the sam
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
 Print where a session left off: your last real request and the end of the reply.
-SESSION is a path that superfind search prints first.
+SESSION is a session id, a unique start of one (8 or more characters), or a path that
+superfind search prints first.
 
   --width N       wrap to N columns (default 80)
   --recent        print the recent conversation instead
@@ -98,7 +107,24 @@ SESSION is a path that superfind search prints first.
 
 Print the shell command that resumes a session: cd into its folder, or the nearest parent
 that still exists, then run its agent's resume command.
-SESSION is a path that superfind search prints first.
+SESSION is a session id, a unique start of one (8 or more characters), or a path that
+superfind search prints first.
+`,
+	"show": `superfind show SESSION [--json] [--tail N] [--max-bytes N]
+
+Print a session's conversation for scripts and agents: what you asked and what the agent
+answered, without color or wrapping. Tool calls, tool output, and system text are left out,
+messages in a row from one speaker are joined into one turn, and lines that can't be read are
+skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
+anywhere, but an agent that reads this passes it to its own model provider.
+
+SESSION is a session id, a unique start of one (8 or more characters), or a path that
+superfind search prints first.
+
+  --json          print one JSON object: the session's fields and its turns
+  --tail N        print only the last N turns
+  --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
+                  0 for no limit). The output says how many earlier turns it left out.
 `,
 	"index": `superfind index
 
@@ -118,7 +144,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "search", "ask", "preview", "command", "index", "label"}
+var commandNames = []string{"init", "pick", "search", "ask", "preview", "show", "command", "index", "label"}
 
 const zshSetup = `_superfind_run() {
   if [[ -x %[1]s ]]; then
@@ -450,9 +476,9 @@ func run(args []string) {
 			}
 		}
 		if target == "" {
-			usageError("superfind preview: which session? Pass a path that superfind search prints first.")
+			usageError("superfind preview: which session? Pass its id, or a path that superfind search prints first.")
 		}
-		r, indexed, rows := sessionAt("preview", target)
+		r, indexed, rows := findSession("preview", target)
 		req.Agent, req.Path = r.Agent, r.Path
 		var header []string
 		if indexed {
@@ -469,11 +495,13 @@ func run(args []string) {
 		if len(args) < 2 {
 			usageError("superfind command: which session?")
 		}
-		r, indexed, _ := sessionAt("command", args[1])
+		r, indexed, _ := findSession("command", args[1])
 		if !indexed {
 			fail("superfind command: not an indexed session: " + args[1])
 		}
 		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
+	case "show":
+		runShow(args[1:])
 	case "pick":
 		chosen, err := tui.Pick()
 		if err != nil {

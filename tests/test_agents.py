@@ -1,0 +1,189 @@
+import json
+import shutil
+import subprocess
+import unittest
+
+from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, GROK_OPENER, GROK_SYSTEM, SuperfindBehavior, claude, codex_meta, codex_reply,
+                            codex_user, grok_reply, grok_user, uid, user)
+
+
+KEY = "sk-ant-api03-" + "Q" * 40
+
+
+class ScriptsAndAgents(SuperfindBehavior):
+    def setUp(self):
+        super().setUp()
+        self.env["SUPERFIND_SECONDARY"] = "\x1b[2m"
+
+    def checkout(self):
+        return self.session(uid(1), user("the checkout double-charges on slow networks", cwd="/work/billing"),
+                            claude("Use an idempotency key derived from the cart id."),
+                            claude("Stripe keeps it for 24 hours."),
+                            user("ship it", cwd="/work/billing"), claude("Shipped."),
+                            title="Checkout double-charges")
+
+    def show(self, *args):
+        result = self.run_superfind("show", *args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_show_prints_the_conversation_as_plain_text(self):
+        self.checkout()
+        out = self.show(uid(1))
+        self.assertNotIn("\x1b", out)
+        self.assertEqual(out, f"# Checkout double-charges\nclaude · /work/billing · {uid(1)}\n\n"
+                              "## user\n\nthe checkout double-charges on slow networks\n\n"
+                              "## claude\n\nUse an idempotency key derived from the cart id.\n\nStripe keeps it for 24 hours.\n\n"
+                              "## user\n\nship it\n\n## claude\n\nShipped.\n")
+
+    def test_show_json_gives_the_session_fields_and_its_turns(self):
+        path = self.checkout()
+        shown = json.loads(self.show(uid(1), "--json"))
+        self.assertEqual({k: shown[k] for k in ("schema", "agent", "id", "path", "cwd", "title", "prompts", "status")},
+                         {"schema": 1, "agent": "claude", "id": uid(1), "path": str(path), "cwd": "/work/billing",
+                          "title": "Checkout double-charges", "prompts": 2, "status": ""})
+        self.assertEqual(shown["resume"], self.superfind("command", str(path)).strip())
+        self.assertEqual([t["role"] for t in shown["turns"]], ["user", "assistant", "user", "assistant"])
+        self.assertEqual(shown["turns"][1]["text"], "Use an idempotency key derived from the cart id.\n\nStripe keeps it for 24 hours.")
+        self.assertEqual((shown["turns_total"], shown["omitted_turns"], shown["truncated"]), (4, 0, False))
+
+    def test_show_reads_codex_and_grok_sessions_too(self):
+        self.codex_session(uid(2), codex_meta(cwd="/work/api"), codex_user(CODEX_ENVIRONMENT),
+                           codex_user("move tokens to cookies"), codex_reply("SameSite=Lax it is."))
+        self.grok_session(uid(3), "/work/web", GROK_SYSTEM, GROK_OPENER, grok_user("why is LCP slow"),
+                          grok_reply("The hero image is 3 MB."), title="Landing page LCP")
+        self.assertIn("## codex\n\nSameSite=Lax it is.", self.show(uid(2)))
+        self.assertIn("## grok\n\nThe hero image is 3 MB.", self.show(uid(3)))
+
+    def test_show_tail_keeps_the_last_turns_and_says_how_many_it_left_out(self):
+        self.checkout()
+        out = self.show(uid(1), "--tail", "2")
+        self.assertIn("\n… 2 earlier turns not shown\n", out)
+        self.assertNotIn("double-charges on slow", out)
+        shown = json.loads(self.show(uid(1), "--tail", "1", "--json"))
+        self.assertEqual(([t["text"] for t in shown["turns"]], shown["omitted_turns"], shown["truncated"]), (["Shipped."], 3, False))
+
+    def test_show_max_bytes_keeps_the_most_recent_turns_that_fit_and_marks_the_cut(self):
+        self.checkout()
+        shown = json.loads(self.show(uid(1), "--max-bytes", "20", "--json"))
+        self.assertEqual(([t["text"] for t in shown["turns"]], shown["omitted_turns"], shown["truncated"]),
+                         (["ship it", "Shipped."], 2, True))
+        self.assertIn("… 2 earlier turns not shown", self.show(uid(1), "--max-bytes", "20"))
+
+    def test_show_caps_long_sessions_by_default_and_zero_lifts_the_cap(self):
+        self.session(uid(4), user("start", cwd="/work/big"), claude("x" * 70000), user("again", cwd="/work/big"),
+                     claude("done"), title="Big session")
+        capped = json.loads(self.show(uid(4), "--json"))
+        self.assertTrue(capped["truncated"])
+        self.assertLessEqual(sum(len(t["text"].encode()) for t in capped["turns"]), 60000 + len("…".encode()))
+        whole = json.loads(self.show(uid(4), "--json", "--max-bytes", "0"))
+        self.assertEqual((len(whole["turns"]), whole["truncated"]), (4, False))
+
+    def test_show_masks_keys_and_passwords_in_text_and_json(self):
+        self.session(uid(5), user(f"use {KEY} for now", cwd="/work/ai"),
+                     claude("Set DATABASE_URL=postgres://app:hunter2hunter2@db:5432/app and password: correcthorsebattery"),
+                     title=f"Rotate {KEY}")
+        text = self.show(uid(5))
+        shown = json.loads(self.show(uid(5), "--json"))
+        for out in (text, json.dumps(shown)):
+            self.assertNotIn(KEY, out)
+            self.assertNotIn("hunter2hunter2", out)
+            self.assertNotIn("correcthorsebattery", out)
+        self.assertEqual(shown["turns"][0]["text"], "use [masked Anthropic key] for now")
+        self.assertEqual(shown["title"], "Rotate [masked Anthropic key]")
+        self.assertIn("postgres://app:[masked password in a URL]@db:5432/app", text)
+        self.assertIn("password: [masked secret]", text)
+
+    def test_show_leaves_text_that_only_looks_like_a_secret(self):
+        said = "we tried sk-learn, the password field, and AKIAEXAMPLE as a name; see https://example.com/a@b"
+        self.session(uid(6), user(said, cwd="/work/ml"), claude("ok"), title="Plain words")
+        self.assertIn(said, self.show(uid(6)))
+
+    def test_show_sends_nothing_anywhere(self):
+        self.checkout()
+        requests = self.record_typesafe(answer=lambda questions: [])
+        log = self.logging_claude()
+        self.show(uid(1))
+        self.show(uid(1), "--json")
+        self.assertEqual(requests, [])
+        self.assertFalse(log.exists())
+
+    def test_a_unique_id_prefix_finds_the_session_in_show_command_and_preview(self):
+        path = self.checkout()
+        prefix = uid(1)[:8]
+        self.assertIn("# Checkout double-charges", self.show(prefix))
+        self.assertEqual(self.superfind("command", prefix), self.superfind("command", str(path)))
+        self.assertEqual(self.superfind("preview", prefix), self.superfind("preview", str(path)))
+
+    def test_an_ambiguous_prefix_exits_2_and_lists_every_match(self):
+        first = self.session("019a3100-0000-7000-8000-000000000001", user("one", cwd="/w"), claude("ok"), title="One")
+        second = self.session("019a3100-0000-7000-8000-000000000002", user("two", cwd="/w"), claude("ok"), title="Two")
+        for command in ("show", "command", "preview"):
+            result = self.run_superfind(command, "019a3100")
+            self.assertEqual(result.returncode, 2, command)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("019a3100 matches 2 sessions; give more of the id", result.stderr)
+            self.assertIn(str(first), result.stderr)
+            self.assertIn(str(second), result.stderr)
+        self.assertIn("# Two", self.show("019a3100-0000-7000-8000-000000000002"))
+
+    def test_an_id_copied_into_two_homes_asks_for_a_path(self):
+        path = self.checkout()
+        copy = self.home / ".claude-work" / "projects" / "-work-billing"
+        copy.mkdir(parents=True)
+        shutil.copy(path, copy)
+        result = self.run_superfind("show", uid(1))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("copies of it live in more than one place; give one of these paths", result.stderr)
+        self.assertIn("# Checkout double-charges", self.show(str(copy / path.name)))
+
+    def test_an_unknown_id_says_so(self):
+        self.checkout()
+        result = self.run_superfind("show", "deadbeef-0000")
+        self.assertEqual((result.returncode, result.stderr), (1, "superfind show: no session with id deadbeef-0000\n"))
+        result = self.run_superfind("command", "deadbeef")
+        self.assertEqual((result.returncode, result.stderr), (1, "superfind command: no session with id deadbeef\n"))
+
+    def test_an_id_shorter_than_eight_characters_is_a_usage_mistake(self):
+        self.checkout()
+        result = self.run_superfind("show", uid(1)[:7])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("give at least 8 characters", result.stderr)
+
+    def test_show_still_takes_the_path_search_prints(self):
+        path = self.checkout()
+        self.superfind("index")
+        first = self.superfind("search", "idempotency").split("\t")[0]
+        self.assertEqual(first, str(path))
+        self.assertEqual(self.show(first), self.show(uid(1)))
+
+    def test_a_file_name_given_from_its_folder_is_a_path_not_an_id(self):
+        path = self.checkout()
+        result = subprocess.run([str(SUPERFIND), "show", path.name], env=self.env, cwd=path.parent, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("# Checkout double-charges", result.stdout)
+
+    def test_show_rejects_bad_options_with_exit_2(self):
+        self.checkout()
+        for args in (["--tail", "0", uid(1)], ["--tail", "x", uid(1)], ["--max-bytes", "-1", uid(1)], ["--max-bytes"],
+                     ["--wide", uid(1)], [uid(1), uid(1)], []):
+            result = self.run_superfind("show", *args)
+            self.assertEqual(result.returncode, 2, args)
+            self.assertIn("superfind show:", result.stderr)
+
+    def test_help_explains_show_ids_and_exit_codes(self):
+        self.assertIn("--max-bytes N", self.superfind("help", "show"))
+        self.assertIn("--max-bytes N", self.superfind("show", "--help"))
+        usage = self.superfind("--help")
+        self.assertIn("superfind show SESSION", usage)
+        self.assertIn("Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cancelled;", usage)
+        self.assertIn("SESSION is a session id", self.superfind("help", "command"))
+
+
+def load_tests(loader, tests, pattern):
+    own = sorted(name for name in vars(ScriptsAndAgents) if name.startswith("test_"))
+    return unittest.TestSuite(ScriptsAndAgents(name) for name in own)
+
+
+if __name__ == "__main__":
+    unittest.main()
