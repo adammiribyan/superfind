@@ -97,7 +97,7 @@ For example, "where did we stop charging people twice" finds "Checkout button do
 
 Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so instead of trying Claude.
 
-Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
+Measured on 2026-10-09 on 21 test searches over the author's own sessions, each phrased differently from the session it should find, over two or three runs:
 
 | | Jev | Claude Haiku |
 |---|---|---|
