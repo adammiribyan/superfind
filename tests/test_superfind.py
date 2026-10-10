@@ -1573,6 +1573,18 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT rowid, path FROM docs").fetchall(), before, title)
             connection.close()
 
+    def test_a_codex_block_that_is_one_whole_element_is_not_a_prompt(self):
+        self.codex_session(uid(1), codex_meta(),
+                           codex_user("<permissions instructions>\nFilesystem sandboxing: workspace-write.\n</permissions instructions>",
+                                      '<context source="ide">\nOpen file: auth.go\n</context>', "fix the login redirect"),
+                           codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(), codex_user('<image name="[Image #1]">', "</image>", "what is in this chart"),
+                           codex_reply("Sales by month."))
+        self.superfind("index")
+        self.assertEqual(sorted(self.titles()), ["fix the login redirect", "what is in this chart"])
+        cache = json.loads((self.home / ".cache" / "superfind" / "index.json").read_text())
+        self.assertEqual(sorted(e["session"]["words"] < 10 for e in cache["files"].values()), [True, True])
+
 
 if __name__ == "__main__":
     unittest.main()

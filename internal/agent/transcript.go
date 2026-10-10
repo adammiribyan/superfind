@@ -37,6 +37,15 @@ var (
 	bareTag    = regexp.MustCompile(`^</?[^<>]*>$`)
 )
 
+func wholeElement(text string) bool {
+	m := leadingTag.FindStringSubmatch(text)
+	if m == nil {
+		return false
+	}
+	opener := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(leadingTag.FindString(text), "<"), ">"))
+	return strings.HasSuffix(text, "</"+m[1]+">") || strings.HasSuffix(text, "</"+opener+">")
+}
+
 func withoutWrappers(text string) string {
 	for {
 		text = strings.TrimSpace(text)
