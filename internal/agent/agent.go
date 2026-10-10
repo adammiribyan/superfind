@@ -106,7 +106,7 @@ func (a *Agent) Sessions(home string) ([]string, []error) {
 		for _, name := range names {
 			path := filepath.Join(dir, name)
 			if len(parts) == 1 {
-				if _, err := os.Lstat(path); err == nil {
+				if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 					paths = append(paths, path)
 				}
 			} else if info, err := os.Stat(path); err == nil && info.IsDir() {

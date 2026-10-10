@@ -1607,6 +1607,15 @@ class SuperfindBehavior(unittest.TestCase):
         self.session("b2", user("z" * 201), tool("Bash"), claude("ok"))
         self.assertEqual(sorted(self.titles()), ["y" * 200, "z" * 199 + "…"])
 
+    def test_odd_files_named_like_sessions_are_skipped_without_a_warning(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        os.mkfifo(self.projects / "fifo.jsonl")
+        (self.projects / "folder.jsonl").mkdir()
+        os.symlink("/dev/zero", self.projects / "zero.jsonl")
+        for _ in range(2):
+            result = subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "1 session indexed\n", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
