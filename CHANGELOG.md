@@ -18,7 +18,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
-- Codex and Grok sessions appear beside Claude Code sessions, and each resumes with the agent that made it (`codex resume` or `grok --resume`). Codex archives, Codex subagent and review threads, and Grok subagent runs are left out.
+- Codex and Grok sessions appear beside Claude Code sessions, and each resumes with the agent that made it (`codex resume` or `grok --resume`). Codex archives, Codex threads started by another Codex thread (such as subagents and reviews), and Grok subagent runs are left out; `codex exec` runs are listed.
 - `agent:claude`, `agent:codex`, and `agent:grok` filter the list. Rows name their agent when sessions come from more than one.
 - `NO_COLOR` turns off every color in the picker and the command output, keeping bold, dim, and reverse video.
 - The README reports label accuracy on hand-labeled Codex and Grok sessions.
