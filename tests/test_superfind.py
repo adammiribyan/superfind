@@ -1591,6 +1591,12 @@ class SuperfindBehavior(unittest.TestCase):
         self.session("c3", user("<system-reminder>a wrapper that never closes"), claude("Noted."))
         self.assertEqual(sorted(self.titles()), ["<div>", "<my-element> is not rendering, why?"])
 
+    def test_a_single_cjk_character_finds_the_sessions_that_start_with_it(self):
+        self.session("a1", user("日本語のテストを書いて"), tool("Bash"), claude("書きました。"), title="日本語のテスト")
+        self.session("b2", user("write the C extension"), tool("Bash"), claude("Written."), title="C extension")
+        self.assertEqual(self.titles("日"), ["日本語のテスト"])
+        self.assertEqual(self.titles("C"), ["C extension"])
+
 
 if __name__ == "__main__":
     unittest.main()
