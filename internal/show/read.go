@@ -28,32 +28,50 @@ type turn struct {
 	cut    bool
 }
 
-func keyOpen(text string) bool {
+func openKeyAt(text string) int {
 	if !strings.Contains(text, "PRIVATE KEY-----") {
-		return false
+		return -1
 	}
 	found := privateKey.FindAllStringSubmatchIndex(text, -1)
-	return len(found) > 0 && found[len(found)-1][2] == found[len(found)-1][3]
+	if last := len(found) - 1; last >= 0 && found[last][2] == found[last][3] {
+		return found[last][0]
+	}
+	return -1
+}
+
+func closeKeys(text string, open int) (string, string) {
+	closed := privateKey.ReplaceAllString(text[:open], maskedAs("private key"))
+	split := strings.LastIndexByte(closed, '\n') + 1
+	return closed[:split], closed[split:] + text[open:]
 }
 
 func (t *turn) add(text string) {
 	text = agent.Printable(text)
-	switch {
-	case !t.open:
-		t.groups = append(t.groups, group{text: text})
-	case privateKeyEnd.MatchString(text):
-		t.groups[len(t.groups)-1].text += "\n\n" + text
-	default:
-		return
+	if len(t.groups) > 0 {
+		text = "\n\n" + text
 	}
-	t.open = keyOpen(t.groups[len(t.groups)-1].text)
+	if t.open {
+		if !privateKeyEnd.MatchString(text) {
+			return
+		}
+		text = t.groups[len(t.groups)-1].text + text
+		t.groups = t.groups[:len(t.groups)-1]
+	}
+	open := openKeyAt(text)
+	if t.open = open >= 0; t.open {
+		var closed string
+		if closed, text = closeKeys(text, open); closed != "" {
+			t.groups = append(t.groups, group{text: closed})
+		}
+	}
+	t.groups = append(t.groups, group{text: text})
 }
 
 func (t *turn) measure(limit int) int {
 	if t.cut {
 		return limit + 1
 	}
-	n := 2 * (len(t.groups) - 1)
+	n := 0
 	for i := len(t.groups) - 1; i >= 0 && n <= limit; i-- {
 		n += len(t.groups[i].cleaned())
 	}
@@ -63,15 +81,14 @@ func (t *turn) measure(limit int) int {
 func (t *turn) trimFront(limit int) int {
 	n := 0
 	for i := len(t.groups) - 1; i >= 0; i-- {
-		if i < len(t.groups)-1 {
-			n += 2
-		}
 		if i < len(t.groups)-1 || !t.open {
 			n += len(t.groups[i].cleaned())
 		}
-		if n >= limit && i > 0 {
+		if n > limit && i > 0 {
 			t.groups = slices.Delete(t.groups, 0, i)
 			t.cut = true
+		}
+		if n > limit {
 			return limit + 1
 		}
 	}
@@ -82,11 +99,11 @@ func (t *turn) trimFront(limit int) int {
 }
 
 func (t *turn) text() string {
-	texts := make([]string, len(t.groups))
+	var b strings.Builder
 	for i := range t.groups {
-		texts[i] = t.groups[i].cleaned()
+		b.WriteString(t.groups[i].cleaned())
 	}
-	return strings.Join(texts, "\n\n")
+	return b.String()
 }
 
 type keeper struct {
@@ -103,7 +120,7 @@ func (k *keeper) say(role, text string) {
 		k.total++
 		k.turns = append(k.turns, &turn{role: role})
 		k.turns[n].add(text)
-		if k.opt.Tail > 0 && len(k.turns) >= 2*k.opt.Tail {
+		if k.opt.Tail > 0 && len(k.turns)-k.opt.Tail >= k.opt.Tail {
 			k.turns = slices.Delete(k.turns, 0, len(k.turns)-k.opt.Tail)
 		}
 	}
@@ -126,7 +143,7 @@ func (k *keeper) trim() {
 }
 
 func (k *keeper) conversation() Conversation {
-	if k.opt.Tail > 0 && len(k.turns) > k.opt.Tail {
+	if k.opt.Tail > 0 && len(k.turns)-k.opt.Tail > 0 {
 		k.turns = slices.Delete(k.turns, 0, len(k.turns)-k.opt.Tail)
 	}
 	c := Conversation{Total: k.total}

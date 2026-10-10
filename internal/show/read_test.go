@@ -3,6 +3,7 @@ package show
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"net/url"
 	"os"
@@ -227,7 +228,7 @@ func summary(c Conversation) string {
 func TestShowKeepsTheEndOfAGiantTurnWithoutHoldingAllOfIt(t *testing.T) {
 	k := &keeper{opt: Options{Tail: 10, MaxBytes: DefaultMaxBytes}, every: trimEvery}
 	k.say("user", "go")
-	piece := strings.Repeat("abcdefgh", 8<<10)
+	piece := strings.Repeat("abcdefg.", 8<<10)
 	var before runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
@@ -277,6 +278,42 @@ func TestShowKeepsTheMessageAfterAPrivateKeyThatEndsItsOwnMessage(t *testing.T) 
 	k.say("assistant", "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----")
 	k.say("assistant", "hello")
 	if c := k.conversation(); len(c.Turns) != 1 || c.Turns[0].Text != "[masked private key]\n\nhello" {
+		t.Fatalf("got %s", summary(c))
+	}
+}
+
+func TestShowHoldsLittleOfAPrivateKeyReopenedInEveryMessage(t *testing.T) {
+	k := &keeper{opt: Options{Tail: 1, MaxBytes: 1}, every: 1 << 20}
+	k.say("assistant", "-----BEGIN PRIVATE KEY-----")
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for range 256 {
+		k.say("assistant", "-----END PRIVATE KEY-----\n"+strings.Repeat(".", 256<<10)+"\n-----BEGIN PRIVATE KEY-----")
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	if grew := int64(after.HeapAlloc) - int64(before.HeapAlloc); grew > 8<<20 {
+		t.Fatalf("holding %d MB after reading 64 MB", grew>>20)
+	}
+	if c := k.conversation(); len(c.Turns) != 1 || c.Turns[0].Text != "…]" {
+		t.Fatalf("got %s", summary(c))
+	}
+	runtime.KeepAlive(k)
+}
+
+func TestShowTakesTheLargestTail(t *testing.T) {
+	c := pick(turns("one", "two"), Options{Tail: math.MaxInt, MaxBytes: DefaultMaxBytes})
+	if strings.Join(texts(c), ",") != "one,two" || c.Omitted != 0 || c.Truncated {
+		t.Fatalf("got %s", summary(c))
+	}
+}
+
+func TestShowKeepsATurnThatFitsExactlyAfterAMessageThatCleansToNothing(t *testing.T) {
+	k := &keeper{opt: Options{MaxBytes: 5}, every: 1}
+	k.say("assistant", "\x00")
+	k.say("assistant", "abc")
+	if c := k.conversation(); len(c.Turns) != 1 || c.Turns[0].Text != "\n\nabc" || c.Turns[0].Cut || c.Truncated {
 		t.Fatalf("got %s", summary(c))
 	}
 }

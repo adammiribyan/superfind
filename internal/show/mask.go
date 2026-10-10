@@ -78,13 +78,15 @@ func maskNamedSecrets(text string) string {
 	return out.String()
 }
 
+func maskedAs(kind string) string { return "[masked " + kind + "]" }
+
 func Mask(text string) string {
 	for _, p := range secretPatterns {
 		text = p.re.ReplaceAllStringFunc(text, func(found string) string {
 			if p.keep > 0 && !strings.ContainsAny(found[p.keep:], "0123456789") {
 				return found
 			}
-			masked := "[masked " + p.kind + "]"
+			masked := maskedAs(p.kind)
 			if p.keep < 0 {
 				return urlPassword.ReplaceAllString(found, "${1}"+masked+"@")
 			}
