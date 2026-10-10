@@ -4,6 +4,11 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ## [0.10.0] - Unreleased
 
+### Added
+
+- `superfind pick --run` resumes the chosen session itself instead of printing the command, for a terminal with no shell function to hand it to, such as one a desktop keybinding opens.
+- On Omarchy, `install.sh` binds Super-Shift-Ctrl-F to open superfind in a new terminal and resume the session you choose there, and skips the Ghostty keybind, which Hyprland would take first.
+
 ### Fixed
 
 - When two folders share one sessions folder through a link, as Omarchy's agent accounts do, each session is listed once. If `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME` points at one of them, sessions resume as that account. Before, each session showed twice, and one copy resumed as the other account.

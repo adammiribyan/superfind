@@ -46,9 +46,21 @@ cd superfind
 ./install.sh
 ```
 
-`install.sh` builds superfind, copies it to `~/.local/bin`, and adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the keybind above to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
+`install.sh` builds superfind, copies it to `~/.local/bin`, and adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the keybind above, except on Omarchy (below), to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
 
 `~/.local/bin` doesn't need to be on your PATH: the setup line defines `superfind` as a shell function that runs the binary by its full path, and passes along every command, such as `superfind ask`. Add it to your PATH only to run superfind from scripts or other shells.
+
+### On Omarchy
+
+On [Omarchy](https://omarchy.org), Hyprland takes Super keys before Ghostty sees them, so `install.sh` skips the Ghostty keybind. It adds **Super-Shift-Ctrl-F** to `~/.config/hypr/bindings.lua` instead (`bindings.conf` on Omarchy 3), next to Omarchy's Super-Shift-Ctrl-A agent key; run `hyprctl reload` to use it now. The key opens superfind in a new terminal and resumes the session you choose there. Like Omarchy's agent key, the window closes when the agent exits.
+
+With Homebrew or Go, add this line to `~/.config/hypr/bindings.lua` yourself. It runs `superfind` from the PATH Hyprland has; if superfind isn't on it, write the full path that `command -v superfind` prints:
+
+```lua
+o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui superfind pick --run")
+```
+
+Omarchy's terminal shell is bash, so to type `superfind` there you still need the `eval "$(superfind init bash)"` line in `~/.bashrc`.
 
 ### Check it works
 
@@ -61,6 +73,7 @@ Open the picker in any of these ways:
 - Run `superfind`, or `sfd` for short.
 - In zsh or bash, press **Ctrl-X**, then **c**.
 - In Ghostty, press **Cmd-Shift-O**.
+- On Omarchy, press **Super-Shift-Ctrl-F**.
 
 The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
 
@@ -152,6 +165,7 @@ superfind ask <words>        # print the sessions that best fit your description
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
 superfind command <session>  # print the command that resumes a session
 superfind pick               # open the picker, then print the chosen session's title and resume command
+superfind pick --run         # open the picker, then resume the chosen session in this terminal
 superfind index              # build or refresh the index
 superfind label              # mark sessions waiting on you (needs a TypeSafe key)
 superfind help <command>     # explain one command; --help works too
@@ -185,7 +199,7 @@ rm "$(go env GOPATH)/bin/superfind"                # go install, or $GOBIN/super
 rm ~/.local/bin/superfind                          # install.sh
 ```
 
-Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
+Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it, or the `Superfind` line from your Hyprland bindings on Omarchy. Then delete the index and your settings:
 
 ```sh
 rm -rf ~/.cache/superfind ~/.config/superfind      # and $XDG_CACHE_HOME/superfind if you set XDG_CACHE_HOME
