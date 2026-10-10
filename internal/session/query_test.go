@@ -93,6 +93,35 @@ func TestDaysStartAtLocalMidnightAndCountsSlideFromNow(t *testing.T) {
 	}
 }
 
+func TestADayWhoseMidnightIsSkippedStartsAtItsFirstHour(t *testing.T) {
+	santiago := inZone(t, "America/Santiago")
+	start := time.Date(2026, 9, 6, 4, 0, 0, 0, time.UTC)
+	cases := []struct {
+		now   time.Time
+		value string
+	}{
+		{time.Date(2026, 10, 10, 15, 0, 0, 0, santiago), "2026-09-06"},
+		{time.Date(2026, 9, 6, 15, 0, 0, 0, santiago), "today"},
+		{time.Date(2026, 9, 7, 15, 0, 0, 0, santiago), "yesterday"},
+	}
+	for _, c := range cases {
+		got := parseAt("after:"+c.value, c.now).After
+		if !got.Equal(start) || got.In(santiago).Format("2006-01-02 15:04 -07") != "2026-09-06 01:00 -03" {
+			t.Errorf("%s at %s: %s, want 2026-09-06 01:00 -03", c.value, c.now, got.In(santiago))
+		}
+	}
+}
+
+func TestDatesFarAheadStillCompareAsDates(t *testing.T) {
+	rows := []Row{{Path: "now", Session: Session{Mtime: float64(time.Now().Unix())}}}
+	if got := pathsOf(Parse("after:2300-01-01").Rows(rows, false)); got != nil {
+		t.Errorf("after:2300-01-01 kept %v", got)
+	}
+	if got := pathsOf(Parse("before:2300-01-01").Rows(rows, false)); !slices.Equal(got, []string{"now"}) {
+		t.Errorf("before:2300-01-01 kept %v", got)
+	}
+}
+
 func TestSeveralBoundsAllHold(t *testing.T) {
 	berlin := inZone(t, "Europe/Berlin")
 	now := time.Date(2026, 10, 10, 15, 0, 0, 0, berlin)

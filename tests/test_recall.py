@@ -143,6 +143,8 @@ class Recall(SuperfindBehavior):
         self.assertEqual(self.ids("before:2026-10-10", tz="UTC"), ["early", "late"])
         self.assertEqual(self.ids("before:2026-10-10", tz="Europe/Berlin"), ["early"])
         self.assertEqual(self.ids("after:2026-10-10", "before:2026-10-09"), [])
+        self.assertEqual(self.ids("after:2300-01-01"), [])
+        self.assertEqual(self.ids("before:2300-01-01"), ["early", "late"])
 
     def test_after_and_before_take_today_yesterday_and_a_time_ago(self):
         now = time.time()

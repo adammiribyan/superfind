@@ -106,17 +106,29 @@ func moment(value string, now time.Time) (time.Time, bool) {
 	value = strings.ToLower(value)
 	switch value {
 	case "today":
-		return time.Date(y, m, d, 0, 0, 0, 0, time.Local), true
+		return startOfDay(y, m, d), true
 	case "yesterday":
-		return time.Date(y, m, d-1, 0, 0, 0, 0, time.Local), true
+		return startOfDay(y, m, d-1), true
 	}
 	if found := ago.FindStringSubmatch(value); found != nil {
 		n, _ := strconv.Atoi(found[1])
 		unit := map[string]time.Duration{"h": time.Hour, "d": 24 * time.Hour, "w": 7 * 24 * time.Hour}[found[2]]
 		return now.Add(-time.Duration(n) * unit), true
 	}
-	t, err := time.ParseInLocation("2006-01-02", value, time.Local)
-	return t, err == nil
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return startOfDay(t.Date()), true
+}
+
+func startOfDay(y int, m time.Month, d int) time.Time {
+	y, m, d = time.Date(y, m, d, 12, 0, 0, 0, time.UTC).Date()
+	t := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+	for t.Day() != d {
+		t = t.Add(time.Hour)
+	}
+	return t
 }
 
 func (q Query) Rows(rows []Row, everyKind bool) []Row {
@@ -150,7 +162,7 @@ func (q Query) keeps(r Row, everyKind bool) bool {
 	return true
 }
 
-func seconds(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
+func seconds(t time.Time) float64 { return float64(t.Unix()) + float64(t.Nanosecond())/1e9 }
 
 func hereMatcher() func(string) bool {
 	seen := map[string][]string{}
