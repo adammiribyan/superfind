@@ -5,21 +5,52 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: test-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 jobs:
-  test:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - id: files
+        name: Does this change touch anything but docs?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > files
+          echo "$(wc -l < files) files changed"
+          code=$(grep -v -E '^(README[^/]*|CHANGELOG[^/]*|CONTRIBUTING[^/]*|assets/.*|docs/.*|[^/]*\.md|.*/[^/]*\.md)$' files || true)
+          if [ -s files ] && [ -z "$code" ]; then
+            echo "docs only: skipping the Go and behavior jobs"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "code changes:"; echo "$code" | head -20
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install tmux and zsh
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh; else brew install tmux; fi
       - name: Format
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: Vet
@@ -28,9 +59,80 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - name: Unit tests under the race detector
         run: go test -race ./...
+
+  behavior:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, build: plain, shard: 1, shards: 1, processes: 4 }
+          - { os: ubuntu-latest, build: race, shard: 1, shards: 3, processes: 4 }
+          - { os: ubuntu-latest, build: race, shard: 2, shards: 3, processes: 4 }
+          - { os: ubuntu-latest, build: race, shard: 3, shards: 3, processes: 4 }
+          - { os: macos-latest, build: plain, shard: 1, shards: 1, processes: 3 }
+          - { os: macos-latest, build: race, shard: 1, shards: 3, processes: 3 }
+          - { os: macos-latest, build: race, shard: 2, shards: 3, processes: 3 }
+          - { os: macos-latest, build: race, shard: 3, shards: 3, processes: 3 }
+    name: behavior (${{ matrix.os }}, ${{ matrix.build }}, ${{ matrix.shard }}/${{ matrix.shards }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install tmux and zsh
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh; else brew install tmux; fi
       - name: Build
-        run: go build -o bin/superfind .
-      - name: Behavior tests
-        run: python3 -m unittest discover -s tests -v
-      - name: Behavior tests under the race detector
-        run: go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race python3 -m unittest discover -s tests
+        run: |
+          if [ "${{ matrix.build }}" = race ]; then go build -race -o bin/superfind .; else go build -o bin/superfind .; fi
+      - name: Behavior tests, ${{ matrix.build }} build, shard ${{ matrix.shard }} of ${{ matrix.shards }}
+        run: python3 .github/workflows/behavior.py run ${{ matrix.shard }} ${{ matrix.shards }} ${{ matrix.processes }} counts.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: counts-${{ matrix.os }}-${{ matrix.build }}-${{ matrix.shard }}
+          path: counts.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  test:
+    needs: [changes, lint, behavior]
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Docs-only changes need no tests
+        if: needs.changes.result == 'success' && needs.changes.outputs.code == 'false'
+        run: echo "docs only; the Go and behavior jobs were skipped"
+      - name: Every job passed
+        if: needs.changes.outputs.code != 'false'
+        run: |
+          echo "changes=${{ needs.changes.result }} lint=${{ needs.lint.result }} behavior=${{ needs.behavior.result }}"
+          test "${{ needs.changes.result }}" = success
+          test "${{ needs.lint.result }}" = success
+          test "${{ needs.behavior.result }}" = success
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.code != 'false'
+      - uses: actions/download-artifact@v4
+        if: needs.changes.outputs.code != 'false'
+        with:
+          pattern: counts-${{ matrix.os }}-plain-*
+          path: counts/plain
+      - uses: actions/download-artifact@v4
+        if: needs.changes.outputs.code != 'false'
+        with:
+          pattern: counts-${{ matrix.os }}-race-*
+          path: counts/race
+      - name: Every behavior test ran once on ${{ matrix.os }}, in each build
+        if: needs.changes.outputs.code != 'false'
+        run: |
+          echo "plain build:"; python3 .github/workflows/behavior.py total counts/plain
+          echo "race build:"; python3 .github/workflows/behavior.py total counts/race
