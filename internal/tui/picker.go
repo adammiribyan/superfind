@@ -227,8 +227,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	if len(rows) == 0 && problem == "" {
 		m.problem = "Indexing your sessions…"
 	}
-	m.message = m.problem
-	m.shown = m.all
+	m.filter()
 	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
 	}
@@ -331,16 +330,18 @@ func (m *picker) filter() {
 	query := m.input.Value()
 	m.message = m.problem
 	switch {
-	case strings.TrimSpace(query) == "":
-		m.shown = m.all
-	case m.db == nil:
-		m.shown = m.all
+	case strings.TrimSpace(query) == "", m.db == nil:
+		_, m.shown = session.Narrow(query, m.all)
+		if len(m.shown) == 0 && len(m.all) > 0 && m.problem == "" && strings.TrimSpace(query) == "" {
+			m.message = "Only sessions other programs started. Type is:agent to see them."
+		}
 	default:
 		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
 		words, _ := session.Narrow(query, nil)
 		if errors.Is(err, session.ErrDamaged) {
-			m.db, m.shown, m.reindex = nil, m.all, true
+			m.db, m.reindex = nil, true
+			_, m.shown = session.Narrow(query, m.all)
 		}
 		switch {
 		case err != nil:

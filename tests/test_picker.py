@@ -228,6 +228,26 @@ class PickerBehavior(unittest.TestCase):
                                         ["Ledger migration", "payments-reco…", "2d"]])
         self.assertEqual({len(l) for l in self.row_lines()}, {len(self.row_lines()[0])})
 
+    def test_sessions_another_program_started_appear_only_with_is_agent(self):
+        self.three_sessions()
+        self.session("sdk", "Nightly eval run", line(type="user", cwd="/tmp", entrypoint="sdk-cli",
+                                                     message={"role": "user", "content": "score the ledger answers"}),
+                     tool("Bash"), claude("Scored 40 answers."))
+        self.open_picker()
+        self.assertEqual(sorted(self.titles()), ["Checkout double charge", "Invoice layout", "Ledger migration"])
+        self.keys("is:agent")
+        self.assertEqual(self.titles(), ["Nightly eval run"])
+
+    def test_a_picker_holding_only_sessions_another_program_started_says_how_to_see_them(self):
+        self.session("sdk", "Nightly eval run", line(type="user", cwd="/tmp", entrypoint="sdk-cli",
+                                                     message={"role": "user", "content": "score the ledger answers"}),
+                     tool("Bash"), claude("Scored 40 answers."))
+        self.open_picker()
+        self.wait_for("Only sessions other programs started. Type is:agent to see them.")
+        self.keys("is:agent")
+        self.assertEqual(self.titles(), ["Nightly eval run"])
+        self.assertNotIn("Only sessions other programs started", self.screen())
+
     def test_typing_narrows_the_list_and_shows_the_matching_passage(self):
         self.three_sessions()
         self.open_picker()
