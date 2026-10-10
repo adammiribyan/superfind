@@ -67,7 +67,7 @@ func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 		out[i] = r
 	}
 	for i, r := range out {
-		if state, ok := held[open.Key{Agent: r.Agent.ID, ID: r.Session.ID}]; ok {
+		if state, ok := held[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
 			out[i].Open = &state
 		}
 	}

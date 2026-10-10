@@ -33,6 +33,8 @@ type State struct {
 
 type Key struct{ Agent, ID string }
 
+func KeyOf(agent, id string) Key { return Key{agent, strings.ToLower(id)} }
+
 type claim struct {
 	key   Key
 	state State
@@ -41,13 +43,13 @@ type claim struct {
 
 type evidence struct {
 	registry func(home string) []claim
-	resume   []string
+	resumed  func(args []string) string
 }
 
 var evidenceFor = map[string]evidence{
-	"claude": {registry: claudeClaims, resume: []string{"--resume", "-r"}},
-	"codex":  {resume: []string{"resume"}},
-	"grok":   {registry: grokClaims, resume: []string{"--resume", "-r", "resume"}},
+	"claude": {registry: claudeClaims, resumed: flagResumed},
+	"codex":  {resumed: codexResumed},
+	"grok":   {registry: grokClaims, resumed: grokResumed},
 }
 
 const (
@@ -88,8 +90,8 @@ func Find(places []agent.Place) map[Key]State {
 			if !strings.HasPrefix(p.Name, name) {
 				continue
 			}
-			if id := resumedID(proc.Args(p.PID), evidenceFor[name].resume); id != "" {
-				claims = append(claims, claim{Key{name, id}, State{PID: p.PID}, p.TTY})
+			if id := resumedID(name, proc.Args(p.PID)); id != "" {
+				claims = append(claims, claim{KeyOf(name, id), State{PID: p.PID}, p.TTY})
 			}
 		}
 	}
@@ -141,7 +143,7 @@ func claudeClaim(raw []byte, pid int) (claim, bool) {
 	if !ok {
 		return claim{}, false
 	}
-	return claim{Key{"claude", f.SessionID}, State{PID: f.PID, Status: statusOf(f.Status)}, p.TTY}, true
+	return claim{KeyOf("claude", f.SessionID), State{PID: f.PID, Status: statusOf(f.Status)}, p.TTY}, true
 }
 
 func readRegistry(path string) ([]byte, bool) {
@@ -165,7 +167,7 @@ func grokClaims(home string) []claim {
 	var out []claim
 	for _, a := range grokEntries(raw) {
 		if p, ok := running(a.pid, a.opened); ok {
-			out = append(out, claim{Key{"grok", a.id}, State{PID: a.pid}, p.TTY})
+			out = append(out, claim{KeyOf("grok", a.id), State{PID: a.pid}, p.TTY})
 		}
 	}
 	return out
@@ -226,26 +228,68 @@ func statusOf(s string) string {
 
 var uuidShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-func resumedID(args []string, resume []string) string {
-	if slices.Contains(args, "--fork-session") || slices.Contains(args, "fork") {
+var codexValueFlags = map[string]bool{
+	"-c": true, "--config": true, "-m": true, "--model": true, "-p": true, "--profile": true,
+	"--enable": true, "--disable": true, "-i": true, "--image": true, "-C": true, "--cd": true,
+	"-s": true, "--sandbox": true, "-a": true, "--ask-for-approval": true,
+}
+
+func resumedID(name string, args []string) string {
+	if len(args) == 0 || slices.Contains(args, "--fork-session") || slices.Contains(args, "fork") {
 		return ""
 	}
+	return strings.ToLower(evidenceFor[name].resumed(args[1:]))
+}
+
+func flagResumed(args []string) string {
 	for i, a := range args {
-		for _, word := range resume {
-			if value, ok := strings.CutPrefix(a, word+"="); ok && strings.HasPrefix(word, "-") {
-				return firstID(append([]string{value}, args[i+1:]...))
+		if a == "--" {
+			return ""
+		}
+		for _, flag := range []string{"--resume", "-r"} {
+			if value, ok := strings.CutPrefix(a, flag+"="); ok {
+				return idOf(value)
 			}
-			if a == word {
-				return firstID(args[i+1:])
+			if a == flag && i+1 < len(args) {
+				return idOf(args[i+1])
 			}
 		}
 	}
 	return ""
 }
 
-func firstID(args []string) string {
-	if i := slices.IndexFunc(args, uuidShape.MatchString); i >= 0 {
-		return args[i]
+func grokResumed(args []string) string {
+	if id := flagResumed(args); id != "" {
+		return id
+	}
+	if i := slices.Index(args, "resume"); i >= 0 && i+1 < len(args) {
+		return idOf(args[i+1])
+	}
+	return ""
+}
+
+func codexResumed(args []string) string {
+	var positional []string
+	for i := 0; i < len(args) && args[i] != "--"; i++ {
+		switch {
+		case codexValueFlags[args[i]]:
+			i++
+		case !strings.HasPrefix(args[i], "-"):
+			positional = append(positional, args[i])
+		}
+	}
+	if len(positional) == 0 || positional[0] != "resume" {
+		return ""
+	}
+	if i := slices.IndexFunc(positional[1:], uuidShape.MatchString); i >= 0 {
+		return positional[1+i]
+	}
+	return ""
+}
+
+func idOf(arg string) string {
+	if uuidShape.MatchString(arg) {
+		return arg
 	}
 	return ""
 }

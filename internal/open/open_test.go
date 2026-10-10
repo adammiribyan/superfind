@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -80,6 +81,7 @@ func TestAClaudePidFileClaimsItsSessionOnlyWhileItsProcessRuns(t *testing.T) {
 		{"no start time", []byte(fmt.Sprintf(`{"pid":%d,"sessionId":%q,"status":"busy"}`, me, sessionID)), me, State{}, false},
 		{"pid zero", pidJSON(0, sessionID, start, "busy"), 0, State{}, false},
 		{"not json", []byte(`{"pid":`), me, State{}, false},
+		{"uppercase session", pidJSON(me, strings.ToUpper(sessionID), start, "idle"), me, State{PID: me, Status: "idle"}, true},
 	}
 	for _, c := range cases {
 		got, ok := claudeClaim(c.raw, c.pid)
@@ -119,11 +121,11 @@ func TestGrokEntriesAcceptEveryOpenedAtShape(t *testing.T) {
 }
 
 func TestTheResumedSessionIsReadFromEachAgentsArguments(t *testing.T) {
-	codex, claude, grok := evidenceFor["codex"].resume, evidenceFor["claude"].resume, evidenceFor["grok"].resume
+	const codex, claude, grok = "codex", "claude", "grok"
 	cases := []struct {
-		args   []string
-		resume []string
-		want   string
+		args  []string
+		agent string
+		want  string
 	}{
 		{[]string{"codex", "resume", sessionID}, codex, sessionID},
 		{[]string{"/opt/bin/codex", "resume", "-m", "o3", sessionID}, codex, sessionID},
@@ -141,9 +143,16 @@ func TestTheResumedSessionIsReadFromEachAgentsArguments(t *testing.T) {
 		{[]string{"grok", "--resume", sessionID}, grok, sessionID},
 		{[]string{"grok", "-r=" + sessionID}, grok, sessionID},
 		{[]string{"grok", "resume", sessionID}, grok, sessionID},
+		{[]string{"claude", "--resume=my-title", sessionID}, claude, ""},
+		{[]string{"claude", "--resume", "my-title", "-p", sessionID}, claude, ""},
+		{[]string{"codex", "resume", "-m", "o3", strings.ToUpper(sessionID)}, codex, sessionID},
+		{[]string{"codex", "-c", "x=y", "resume", sessionID}, codex, sessionID},
+		{[]string{"codex", "resume", "--", sessionID}, codex, ""},
+		{[]string{"codex", "-c", sessionID, "resume", "--last"}, codex, ""},
+		{[]string{"grok", "resume", "my-title", sessionID}, grok, ""},
 	}
 	for _, c := range cases {
-		if got := resumedID(c.args, c.resume); got != c.want {
+		if got := resumedID(c.agent, c.args); got != c.want {
 			t.Errorf("resumedID(%q) = %q, want %q", c.args, got, c.want)
 		}
 	}

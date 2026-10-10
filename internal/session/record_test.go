@@ -208,3 +208,12 @@ func TestAnnotatingAgainForgetsAProcessThatExited(t *testing.T) {
 		t.Fatalf("after the process exited: open = %+v", rows[0].Open)
 	}
 }
+
+func TestAnUppercaseSessionIDMatchesTheProcessHoldingIt(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	rows := []Row{{Session: Session{ID: "0F6CAB12-3A4B-4C5D-8E9F-001122334455", Cwd: "/w"}, Agent: agent.Named("grok"), Path: "/p"}}
+	held := map[open.Key]open.State{{Agent: "grok", ID: "0f6cab12-3a4b-4c5d-8e9f-001122334455"}: {PID: 7}}
+	if got := Annotate(rows, held)[0].Open; got == nil || *got != (open.State{PID: 7}) {
+		t.Fatalf("open = %+v", got)
+	}
+}
