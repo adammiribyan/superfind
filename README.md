@@ -82,7 +82,19 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 | Esc | Close the picker without resuming anything. While ask runs or shows its results, Esc goes back to search instead. |
 | Ctrl-C | Close the picker without resuming anything. |
 
-Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words. Sessions that another program started are left out unless you add `is:agent` (see [Sessions it finds](#sessions-it-finds)).
+Add filters to narrow the list. They work with or without other words, and the same filters work in `search`, `ask`, and `last`:
+
+| Filter | Shows |
+|---|---|
+| `in:here` | Sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. Your home folder and the root folder contain only the sessions started right there. |
+| `branch:main` | Sessions that ended on that branch. Letter case doesn't matter. |
+| `after:2026-10-09` | Sessions last active on or after that day, in your time zone. |
+| `before:2026-10-09` | Sessions last active before that day. `after:2026-10-09 before:2026-10-10` is that one day. |
+| `agent:codex` | One agent's sessions. `agent:claude` and `agent:grok` work the same way. |
+| `is:waiting` | With a TypeSafe key, sessions with that mark; `is:unfinished` works the same way (see [Waiting on you](#waiting-on-you)). |
+| `is:agent` | Only sessions that another program started, which are left out otherwise (see [Sessions it finds](#sessions-it-finds)). |
+
+`after:` and `before:` also take `today`, `yesterday`, or a time ago counted back from now: `12h`, `3d`, or `2w`. Two values of `branch:`, `agent:`, or `is:` show sessions that match either. Different filters must all match, so `in:here branch:main after:yesterday` lists this folder's sessions on `main` that were active since yesterday began. A filter that superfind can't read, such as `after:2026-1` while you type, is left out, and the line under the search box says what it takes.
 
 Each row shows a session's title, then its project, its agent when your sessions come from more than one, and how long ago it was active, each in its own column. A label such as **waiting on you** follows the title. In a narrow window the agent column goes first, then the project column. Sessions from the folder you're in, or from a folder that contains it, come first and leave the project blank. Your home folder and the root folder count only for sessions started right there. Everything else follows, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
@@ -92,11 +104,17 @@ When you resume, superfind prints `Resuming` and the session's title, and the ag
 
 A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
 
+### Resume the last session here
+
+`superfind last`, or `sfd last`, resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker and no keys. It does what Enter does: it prints `Resuming` and the title, `cd`s into the session's folder, and runs its agent's resume command. Filters narrow the choice: `sfd last agent:codex` resumes the newest Codex session here, and `sfd last branch:main` the newest one on `main`. Very short sessions count only when nothing else is here, and sessions that another program started count only with `is:agent`.
+
+Without the shell setup, or when its output goes to a pipe or a file, `superfind last` prints the session's title and the command that resumes it, as `superfind pick` does, and resumes nothing. When no session fits, it says so and exits 1.
+
 superfind takes its colors from your terminal. If your terminal doesn't report them, the selected row is shown in reverse video instead of tinted. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video.
 
 ## Ask for the session you remember
 
-Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the box is titled "Sessions by description", and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again or pressing Esc goes back to search.
+Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the box is titled "Sessions by description", and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again or pressing Esc goes back to search.
 
 For example, "where did we stop charging people twice" finds "Double charge on slow checkouts", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
@@ -158,6 +176,7 @@ superfind ask <words>        # print the sessions that best fit your description
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
 superfind show <session>     # print a session's conversation (--json, --tail N, --max-bytes N)
 superfind command <session>  # print the command that resumes a session
+superfind last               # resume the newest session in this folder (--json, filters)
 superfind pick               # open the picker, then print the chosen session's title and resume command
 superfind index              # build or refresh the index
 superfind label              # mark sessions waiting on you (needs a TypeSafe key)
@@ -178,7 +197,12 @@ superfind search --json idempotency   # find sessions by their words, as JSON
 superfind show "$id"                  # read one: what was asked and what the agent answered
 superfind show "$id" --json --tail 6
 superfind command "$id"               # the command that resumes it
+superfind last --json                 # the newest session in this folder, as JSON
 ```
+
+`search`, `ask`, and `last` take the filters in the [Use](#use) section, such as `in:here`, `branch:main`, and `after:yesterday`. A filter that superfind can't read is a usage mistake: the command prints what the filter takes and exits 2, and `ask` sends nothing anywhere.
+
+`superfind last` in a script or an agent's shell prints the session's title on one line and the command that resumes it on the next, and resumes nothing; the shell setup resumes only when both its input and its output are a terminal. `superfind last --json` prints that one session as a JSON object, in the format below. It considers the same sessions as `superfind last` without `--json`, so sessions that another program started count only with `is:agent`.
 
 ### Search results as JSON
 
@@ -273,8 +297,8 @@ A past session can contain text such as "ignore your previous instructions". `sh
 | Code | Means |
 |---|---|
 | 0 | Done. Also when a search finds nothing, and when some sessions couldn't be read: they're named on stderr, and the rest are used. |
-| 1 | It failed, for example no session with an id 8 or more characters long, a session that couldn't be read, or a failed ask. Also when you close the picker without choosing. |
-| 2 | A usage mistake, including an unknown id shorter than 8 characters, or a start of an id that matches more than one session. |
+| 1 | It failed, for example no session with an id 8 or more characters long, a session that couldn't be read, or a failed ask. Also when you close the picker without choosing, and when `last` finds no session here. |
+| 2 | A usage mistake, including an unknown id shorter than 8 characters, a start of an id that matches more than one session, or a filter superfind can't read. |
 | 130 | `ask` was interrupted while ranking. |
 
 ### Resume in another pane

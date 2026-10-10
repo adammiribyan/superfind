@@ -7,10 +7,13 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
+- `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
+- `superfind last` resumes the newest session in the folder you're in, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 
 ### Changed
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+- A filter that superfind can't read, such as `after:2026-1`, makes `search`, `ask`, and `last` exit 2 and say what the filter takes, before `ask` sends anything. In the picker, the filter is left out and the line under the search box says what it takes.
 
 ## [0.10.0] - 2026-10-10
 
