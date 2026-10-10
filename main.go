@@ -253,9 +253,18 @@ func field(s string) string {
 	}, s)
 }
 
+func handoff(r session.Row) string {
+	if r.Open != nil && r.Open.Tmux != nil {
+		return handoffTitle(r) + "\ntmux switch-client -t " + agent.ShellQuote(r.Open.Tmux.ID) + "\n"
+	}
+	return handoffTitle(r) + "\n" + agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID) + "\n"
+}
+
 func handoffTitle(r session.Row) string {
 	title := render.Flat(r.Session.Title)
 	switch {
+	case r.Open != nil && r.Open.Tmux != nil:
+		title += render.Reset + render.Dim + fmt.Sprintf(" · in tmux session %s, window %d", render.Flat(r.Open.Tmux.Session), r.Open.Tmux.Window)
 	case r.Open != nil:
 		title += render.Reset + render.Dim + " · already open in another window"
 	case r.Session.Active():
@@ -657,8 +666,7 @@ func run(args []string) {
 			exit(1)
 			return
 		}
-		fmt.Fprintln(stdout, handoffTitle(*chosen))
-		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
+		fmt.Fprint(stdout, handoff(*chosen))
 	default:
 		unknownCommand(args[0])
 	}
