@@ -1064,5 +1064,93 @@ class PickerWithoutColor(PtyPicker):
         self.assertNotIn(b"\x1b]11;?", first)
         self.assertEqual(colors_in(first), [])
 
+@unittest.skipUnless(shutil.which("tmux"), "an open session's pane is read from tmux")
+class EnterOnAnOpenSession(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        base = "/private/tmp/claude-501" if os.path.isdir("/private/tmp/claude-501") else "/tmp"
+        self.sockets = tempfile.mkdtemp(dir=base, prefix="sfd")
+        self.addCleanup(shutil.rmtree, self.sockets, True)
+        self.tmux_env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+        self.tmux_env["TMUX_TMPDIR"] = self.sockets
+        self.out = self.home / "out"
+        projects = self.home / ".claude" / "projects" / "-tmp"
+        projects.mkdir(parents=True)
+        transcript = projects / f"{uid(1)}.jsonl"
+        transcript.write_text("\n".join([user("migrate the ledger tables"), tool("Bash"), claude("Migrated."),
+                                           line(type="ai-title", aiTitle="Ledger migration")]) + "\n")
+        os.utime(transcript, (time.time() - 86400, time.time() - 86400))
+
+    def tmux(self, *args):
+        return subprocess.run(["tmux", *args], capture_output=True, text=True, env=self.tmux_env, check=True).stdout
+
+    def open_elsewhere(self):
+        self.tmux("new-session", "-d", "-s", "work", "-x", "140", "-y", "32", "exec sleep 300")
+        self.addCleanup(subprocess.run, ["tmux", "kill-server"], capture_output=True, env=self.tmux_env)
+        self.tmux("new-window", "-d", "-t", "work:1", "exec sleep 300")
+        pid, pane = self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}\t#{pane_id}").strip().split("\t")
+        socket, server = self.tmux("display-message", "-p", "-t", "work:0", "#{socket_path}\t#{pid}").strip().split("\t")
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        (sessions / f"{pid}.json").write_text(json.dumps(
+            {"pid": int(pid), "sessionId": uid(1), "cwd": "/tmp", "startedAt": int(time.time() * 1000), "status": "idle"}))
+        return pane, f"{socket},{server},0"
+
+    def pick(self, inside):
+        env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "TYPESAFE_API_KEY": "", "NO_COLOR": "1",
+               "PATH": os.path.dirname(shutil.which("tmux")) + ":/usr/bin:/bin", "TERM": "xterm-256color",
+               "TMUX_TMPDIR": self.sockets}
+        if inside:
+            env["TMUX"] = inside
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        assignments = " ".join(f"{k}='{v}'" for k, v in env.items())
+        command = f"env -i {assignments} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code; sleep 60"
+        self.tmux("respawn-pane", "-k", "-t", "work:0", command)
+        self.wait_for("Claude sessions")
+        self.keys("Ledger migration")
+        self.wait_for("Migrated.")
+
+    def screen(self):
+        return self.tmux("capture-pane", "-p", "-t", "work:0")
+
+    def wait_for(self, text, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if text in self.screen():
+                return
+            time.sleep(0.1)
+        self.fail(f"never saw {text!r} on screen:\n{self.screen()}")
+
+    def keys(self, *keys):
+        self.tmux("send-keys", "-t", "work:0", *keys)
+        time.sleep(0.4)
+
+    def result(self, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline and not Path(f"{self.out}.code").exists():
+            time.sleep(0.1)
+        return int(Path(f"{self.out}.code").read_text()), Path(f"{self.out}.stdout").read_text()
+
+    def test_enter_inside_tmux_hands_the_shell_a_switch_to_the_agents_pane(self):
+        pane, inside = self.open_elsewhere()
+        self.pick(inside)
+        self.keys("Enter")
+        code, out = self.result()
+        title, command = out.splitlines()
+        self.assertEqual((code, command), (0, f"tmux switch-client -t {pane}"))
+        self.assertTrue(title.startswith("Ledger migration"), title)
+        self.assertIn(" · in tmux session work, window 1", title)
+
+    def test_enter_outside_tmux_says_where_the_session_is_open_and_keeps_the_picker_open(self):
+        self.open_elsewhere()
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for("Already open in tmux session “work”, window 1.")
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+
 if __name__ == "__main__":
     unittest.main()
