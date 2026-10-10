@@ -39,7 +39,7 @@ func TestUnknownIsAndAgentValuesAreStillDroppedQuietly(t *testing.T) {
 
 func TestAFilterThatCannotBeReadSaysWhatItTakesAndIsNotSearched(t *testing.T) {
 	inZone(t, "Europe/Berlin")
-	when := ": takes a day like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w."
+	when := ": takes a day like 2026-10-09, today, yesterday, 12h, 3d, or 2w."
 	cases := map[string]string{
 		"in:":              "in: takes here, as in in:here.",
 		"in:there":         "in: takes here, as in in:here.",

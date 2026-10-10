@@ -998,9 +998,9 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").chmod(0o755)
         self.env["PATH"] = f"{stub}:/usr/bin:/bin"
         self.three_sessions()
-        self.open_picker(width=200)
+        self.open_picker()
         self.keys("ledger after:4")
-        self.wait_for("after: takes a day like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w.")
+        self.wait_for("after: takes a day like 2026-10-09, today, yesterday, 12h, 3d, or 2w.")
         self.assertEqual(self.titles(), ["Ledger migration"])
         self.keys("C-r")
         time.sleep(1)

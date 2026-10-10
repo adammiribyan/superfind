@@ -90,8 +90,8 @@ The shell setup from superfind init runs that command for you.
 
 Resume the newest session started in this folder, a folder inside it, or a folder that holds
 it, with no keys to press. Your home folder and / count only for sessions started right there.
-A session that was only a quick question counts only when nothing else fits, and sessions
-another program started are left out unless you add is:agent.
+Very short sessions count only when nothing else fits, and sessions another program started
+are left out unless you add is:agent.
 
 With the shell setup from superfind init, superfind last cds into the session's folder and
 resumes it, as choosing it in the picker does. Anywhere else, such as a script or an agent's

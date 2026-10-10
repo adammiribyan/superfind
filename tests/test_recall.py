@@ -8,7 +8,7 @@ import unittest
 from test_superfind import (ANSI, SUPERFIND, SuperfindBehavior, claude, codex_call, codex_meta, codex_output, codex_reply,
                             codex_user, line, tool, uid, user)
 
-WHEN = "takes a day like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w."
+WHEN = "takes a day like 2026-10-09, today, yesterday, 12h, 3d, or 2w."
 MALFORMED = {
     "after:3days": "after: " + WHEN,
     "before:2026-1": "before: " + WHEN,
