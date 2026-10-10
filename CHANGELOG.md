@@ -2,6 +2,19 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+## [Unreleased]
+
+### Added
+
+- Shift-Up and Shift-Down page through the preview, as Alt-Up and Alt-Down do. They work in terminals where Option doesn't act as Alt, which is the default in macOS Terminal.
+
+### Changed
+
+- In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3.
+- When the preview is too short for your last request and the end of the reply, it keeps the start of your request and cuts the reply from its start. Before, a short preview showed only the end of the reply.
+- Under the list, the preview now appears only when it has room for 6 lines of conversation. At 80×24 the list shows 5 sessions and the preview 6 lines, instead of 8 sessions and 3 lines.
+- When the footer is too narrow for every key, it leaves out "tab view" first, then "ctrl-u clear search", then "ctrl-r ask". A message too wide for the list keeps its first sentence instead of being cut mid-word.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added

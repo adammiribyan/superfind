@@ -71,7 +71,7 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 | Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
-| Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
+| Ctrl-/ | Hide or show the preview. Shift-Up and Shift-Down page through it, and so do Alt-Up and Alt-Down. |
 | Ctrl-U | Clear the search. |
 | Esc | Close the picker without resuming anything. While ask runs or shows its results, Esc goes back to search instead. |
 | Ctrl-C | Close the picker without resuming anything. |
@@ -80,7 +80,9 @@ Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions,
 
 Each row shows a session's title, then its project, its agent when your sessions come from more than one, and how long ago it was active, each in its own column. A label such as **waiting on you** follows the title. In a narrow window the agent column goes first, then the project column. Sessions from the folder you're in, or from a folder that contains it, come first and leave the project blank. Your home folder and the root folder count only for sessions started right there. Everything else follows, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
-The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
+The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched. When the preview is too short for both, it keeps the start of your request and cuts the reply from its start.
+
+In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. In a window narrower than 100 columns, the preview goes under the list when there is room for 5 sessions and 6 lines of conversation, and is left out otherwise.
 
 When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/store && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 
