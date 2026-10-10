@@ -13,7 +13,17 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
-There are two ways to install. Install with Homebrew or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
+There are three ways to install. The install script is the shortest: it downloads a release and does the setup for you. You can also install with Homebrew or Go and do the setup yourself, or build [from source](#from-source).
+
+### With the install script
+
+```sh
+curl -fsSL https://superfind.dev/install | sh
+```
+
+This downloads the latest release for your Mac or Linux machine, checks it against the release's `checksums.txt`, copies it to `~/.local/bin`, and adds the [setup line](#with-homebrew-or-go) to your shell's startup file. If Ghostty is installed, it also adds the Cmd-Shift-O keybind to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. It needs no Go and no sudo. Running it again installs the latest release but never adds a line twice. To install a particular release, run `curl -fsSL https://superfind.dev/install | SUPERFIND_VERSION=0.10.0 sh`.
+
+`~/.local/bin` doesn't need to be on your PATH: the setup line defines `superfind` as a shell function that runs the binary by its full path, and passes along every command, such as `superfind ask`. Add it to your PATH only to run superfind from scripts or other shells.
 
 ### With Homebrew or Go
 
@@ -38,17 +48,13 @@ keybind = super+shift+o=text:\x18c
 
 ### From source
 
-Use this instead of the steps above; it does all of them.
-
 ```sh
 git clone https://github.com/adammiribyan/superfind.git
 cd superfind
 ./install.sh
 ```
 
-`install.sh` builds superfind, copies it to `~/.local/bin`, and adds the setup line to the startup file named above for your shell. If Ghostty is installed, it also adds the keybind above to your Ghostty config (`$XDG_CONFIG_HOME/ghostty/config`, usually `~/.config/ghostty/config`, or the macOS path when only that one exists), creating the file if needed. Running it again rebuilds superfind but never adds a line twice.
-
-`~/.local/bin` doesn't need to be on your PATH: the setup line defines `superfind` as a shell function that runs the binary by its full path, and passes along every command, such as `superfind ask`. Add it to your PATH only to run superfind from scripts or other shells.
+Run from a clone, `install.sh` builds superfind from that clone with Go instead of downloading a release, then does the same setup as the install script. Running it again rebuilds superfind but never adds a line twice.
 
 ### Check it works
 
@@ -319,7 +325,7 @@ Remove the binary the way you installed it:
 ```sh
 brew uninstall --cask adammiribyan/tap/superfind   # Homebrew
 rm "$(go env GOPATH)/bin/superfind"                # go install, or $GOBIN/superfind if you set GOBIN
-rm ~/.local/bin/superfind                          # install.sh
+rm ~/.local/bin/superfind                          # the install script, or install.sh
 ```
 
 Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:

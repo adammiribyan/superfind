@@ -2,6 +2,16 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+## [Unreleased]
+
+### Added
+
+- `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
+
+### Changed
+
+- `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added
@@ -231,7 +241,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
-[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/adammiribyan/superfind/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/adammiribyan/superfind/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/adammiribyan/superfind/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/adammiribyan/superfind/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/adammiribyan/superfind/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/adammiribyan/superfind/compare/v0.7.2...v0.7.3
