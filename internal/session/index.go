@@ -17,6 +17,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -31,8 +32,16 @@ const (
 
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if r := []rune(s); len(r) > n {
-		return string(r[:n-1]) + "…"
+	cut, clusters := 0, 0
+	for i := 0; i < len(s); clusters++ {
+		if clusters == n-1 {
+			cut = i
+		}
+		if clusters == n {
+			return s[:cut] + "…"
+		}
+		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
+		i += len(cluster)
 	}
 	return s
 }

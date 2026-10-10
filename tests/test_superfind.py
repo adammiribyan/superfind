@@ -1597,6 +1597,16 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("日"), ["日本語のテスト"])
         self.assertEqual(self.titles("C"), ["C extension"])
 
+    def test_a_clipped_title_never_splits_an_emoji(self):
+        for n, emoji in enumerate(("👍🏽", "🇯🇵", "👨‍👩‍👧")):
+            self.session(f"s{n}", user("x" * 198 + emoji + " and then some more words"), tool("Bash"), claude("ok"))
+        self.assertEqual(sorted(self.titles()), sorted("x" * 198 + e + "…" for e in ("👍🏽", "🇯🇵", "👨‍👩‍👧")))
+        for old in self.projects.glob("*.jsonl"):
+            old.unlink()
+        self.session("a1", user("y" * 200), tool("Bash"), claude("ok"))
+        self.session("b2", user("z" * 201), tool("Bash"), claude("ok"))
+        self.assertEqual(sorted(self.titles()), ["y" * 200, "z" * 199 + "…"])
+
 
 if __name__ == "__main__":
     unittest.main()
