@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -15,6 +16,7 @@ const DefaultMaxBytes = 60000
 type Turn struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+	Cut  bool   `json:"cut,omitempty"`
 }
 
 type Options struct {
@@ -31,6 +33,15 @@ type Conversation struct {
 
 func Clean(s string) string { return Mask(agent.Printable(s)) }
 
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || (r >= 0x7f && r < 0xa0) || agent.Bidi(r) {
+			return '?'
+		}
+		return r
+	}, agent.Printable(s))
+}
+
 func Select(turns []agent.Turn, opt Options) Conversation {
 	c := Conversation{Total: len(turns)}
 	start := 0
@@ -39,7 +50,7 @@ func Select(turns []agent.Turn, opt Options) Conversation {
 	}
 	kept := make([]Turn, 0, len(turns)-start)
 	for _, t := range turns[start:] {
-		kept = append(kept, Turn{t.Role, Clean(t.Text)})
+		kept = append(kept, Turn{Role: t.Role, Text: Clean(t.Text)})
 	}
 	if opt.MaxBytes > 0 {
 		used, first := 0, len(kept)
@@ -50,6 +61,7 @@ func Select(turns []agent.Turn, opt Options) Conversation {
 		if first == len(kept) && first > 0 {
 			first--
 			kept[first].Text = "…" + lastBytes(kept[first].Text, opt.MaxBytes)
+			kept[first].Cut = true
 			c.Truncated = true
 		}
 		if first > 0 {
@@ -81,7 +93,7 @@ func speaker(role string, r session.Record) string {
 }
 
 func WriteText(w io.Writer, r session.Record, c Conversation) error {
-	fmt.Fprintf(w, "# %s\n%s · %s · %s\n", r.Title, r.Agent, r.Cwd, r.ID)
+	fmt.Fprintf(w, "# %s\n%s · %s · %s\n", oneLine(r.Title), oneLine(r.Agent), oneLine(r.Cwd), oneLine(r.ID))
 	if c.Omitted > 0 {
 		noun := "turns"
 		if c.Omitted == 1 {
@@ -104,7 +116,7 @@ func WriteJSON(w io.Writer, r session.Record, c Conversation) error {
 	}
 	out := struct {
 		session.Record
-		TurnsTotal int    `json:"turns_total"`
+		TurnsTotal int    `json:"total_turns"`
 		Omitted    int    `json:"omitted_turns"`
 		Truncated  bool   `json:"truncated"`
 		Turns      []Turn `json:"turns"`

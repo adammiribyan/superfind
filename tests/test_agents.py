@@ -45,7 +45,8 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertEqual(shown["resume"], self.superfind("command", str(path)).strip())
         self.assertEqual([t["role"] for t in shown["turns"]], ["user", "assistant", "user", "assistant"])
         self.assertEqual(shown["turns"][1]["text"], "Use an idempotency key derived from the cart id.\n\nStripe keeps it for 24 hours.")
-        self.assertEqual((shown["turns_total"], shown["omitted_turns"], shown["truncated"]), (4, 0, False))
+        self.assertEqual((shown["total_turns"], shown["omitted_turns"], shown["truncated"]), (4, 0, False))
+        self.assertNotIn("cut", json.dumps(shown["turns"]))
 
     def test_show_reads_codex_and_grok_sessions_too(self):
         self.codex_session(uid(2), codex_meta(cwd="/work/api"), codex_user(CODEX_ENVIRONMENT),
@@ -137,6 +138,37 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertIn("copies of it live in more than one place; give one of these paths", result.stderr)
         self.assertIn("# Checkout double-charges", self.show(str(copy / path.name)))
 
+    def test_a_prefix_of_an_id_copied_into_two_homes_also_asks_for_a_path(self):
+        path = self.checkout()
+        copy = self.home / ".claude-work" / "projects" / "-work-billing"
+        copy.mkdir(parents=True)
+        shutil.copy(path, copy)
+        result = self.run_superfind("show", uid(1)[:8])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("copies of it live in more than one place", result.stderr)
+
+    def test_an_id_in_capitals_still_finds_the_session(self):
+        self.checkout()
+        self.assertIn("# Checkout double-charges", self.show(uid(1).upper()))
+
+    def test_folder_and_project_names_stay_exact_even_when_they_look_like_keys(self):
+        folder = "/work/sk-proj-" + "A" * 40
+        self.session(uid(8), user("set it up please", cwd=folder), claude("ok"))
+        shown = json.loads(self.show(uid(8), "--json"))
+        self.assertEqual((shown["cwd"], shown["project"]), (folder, "sk-proj-" + "A" * 40))
+
+    def test_a_cut_turn_is_marked(self):
+        self.session(uid(9), user("start", cwd="/w"), claude("y" * 100), title="Long reply")
+        shown = json.loads(self.show(uid(9), "--json", "--max-bytes", "10"))
+        self.assertEqual(shown["turns"], [{"role": "assistant", "text": "…" + "y" * 10, "cut": True}])
+
+    def test_dots_and_tildes_alone_are_paths_not_ids(self):
+        self.checkout()
+        for arg in (".", "..", "~"):
+            result = self.run_superfind("show", arg)
+            self.assertEqual(result.returncode, 1, arg)
+            self.assertNotIn("no session with id", result.stderr)
+
     def test_an_unknown_id_says_so(self):
         self.checkout()
         result = self.run_superfind("show", "deadbeef-0000")
@@ -162,6 +194,18 @@ class ScriptsAndAgents(SuperfindBehavior):
         result = subprocess.run([str(SUPERFIND), "show", path.name], env=self.env, cwd=path.parent, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("# Checkout double-charges", result.stdout)
+
+    def test_an_id_with_dots_is_still_an_id(self):
+        self.session("notes.v1", user("dotted names happen", cwd="/work/n"), claude("ok"), title="Dotted")
+        self.assertIn("# Dotted", self.show("notes.v1"))
+        self.assertIn("claude --resume notes.v1", self.superfind("command", "notes.v1"))
+
+    def test_the_text_header_stays_one_line_whatever_the_folder_is_called(self):
+        self.session(uid(7), user("hi there friend", cwd="/work/evil\n## user\x1b[31m"), claude("ok"), title="Odd\nfolder")
+        out = self.show(uid(7))
+        self.assertNotIn("\x1b", out)
+        self.assertTrue(out.startswith(f"# Odd folder\nclaude · /work/evil?## user · {uid(7)}\n\n## user\n"), out)
+        self.assertEqual(json.loads(self.show(uid(7), "--json"))["cwd"], "/work/evil\n## user\x1b[31m")
 
     def test_show_rejects_bad_options_with_exit_2(self):
         self.checkout()

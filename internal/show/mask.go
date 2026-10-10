@@ -2,6 +2,8 @@ package show
 
 import (
 	"regexp"
+	"strings"
+	"unicode"
 )
 
 type secretPattern struct {
@@ -23,28 +25,64 @@ var secretPatterns = []secretPattern{
 	{"PostHog key", regexp.MustCompile(`\bph[cx]_[A-Za-z0-9]{30,}`), 0},
 	{"JSON web token", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), 0},
 	{"bearer token", regexp.MustCompile(`(?i)\bBearer [A-Za-z0-9._~+/-]{20,}=*`), len("Bearer ")},
-	{"password in a URL", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]+:[^\s@/]{3,}@`), -1},
-	{"secret", regexp.MustCompile(`(?i)\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)["']?\s*[:=]\s*["']?[^\s"'<>]{8,}`), -2},
+	{"password in a URL", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]*:[^\s@/]{3,}@`), -1},
 }
 
+var urlPassword = regexp.MustCompile(`^([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+@$`)
+
+var namedSecret = regexp.MustCompile(`(?i)\b[a-z0-9_-]*?(?:password|passwd|passphrase|secret|api[_-]?key|access[_-]?key|` +
+	`access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)["']?\s*([:=])\s*` +
+	`(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|([^\s"',;&<>()\[\]{}` + "`" + `]+))`)
+
 var (
-	urlPassword = regexp.MustCompile(`^([a-z][a-z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@$`)
-	assignment  = regexp.MustCompile(`(?i)^([^:=]*[:=]\s*["']?)(.*)$`)
+	placeholder = regexp.MustCompile(`^(?:[$<{%]|\[masked |\*+$|x+$|\.\.\.$|…$)`)
+	codeName    = regexp.MustCompile(`(?i)^(?:none|nil|null|undefined|true|false|key|token|secret|password|passwd|passphrase|` +
+		`[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+)$`)
 )
+
+func secretValue(separator byte, quoted bool, value, after string) bool {
+	if value == "" || placeholder.MatchString(value) {
+		return false
+	}
+	if !quoted && (codeName.MatchString(value) || strings.HasPrefix(after, "(") || strings.HasPrefix(after, "[")) {
+		return false
+	}
+	if quoted || separator == '=' {
+		return true
+	}
+	return len(value) >= 16 || strings.IndexFunc(value, func(r rune) bool { return !unicode.IsLetter(r) }) >= 0
+}
+
+func maskNamedSecrets(text string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range namedSecret.FindAllStringSubmatchIndex(text, -1) {
+		for group := 2; group <= 4; group++ {
+			start, end := m[2*group], m[2*group+1]
+			if start < 0 || !secretValue(text[m[2]], group < 4, text[start:end], text[end:]) {
+				continue
+			}
+			out.WriteString(text[last:start])
+			out.WriteString("[masked secret]")
+			last = end
+		}
+	}
+	out.WriteString(text[last:])
+	return out.String()
+}
 
 func Mask(text string) string {
 	for _, p := range secretPatterns {
 		text = p.re.ReplaceAllStringFunc(text, func(found string) string {
-			masked := "[masked " + p.kind + "]"
-			switch p.keep {
-			case -1:
-				return urlPassword.ReplaceAllString(found, "${1}"+masked+"@")
-			case -2:
-				return assignment.ReplaceAllString(found, "${1}"+masked)
-			default:
-				return found[:p.keep] + masked
+			if p.keep > 0 && !strings.ContainsAny(found[p.keep:], "0123456789") {
+				return found
 			}
+			masked := "[masked " + p.kind + "]"
+			if p.keep < 0 {
+				return urlPassword.ReplaceAllString(found, "${1}"+masked+"@")
+			}
+			return found[:p.keep] + masked
 		})
 	}
-	return text
+	return maskNamedSecrets(text)
 }

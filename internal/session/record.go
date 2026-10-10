@@ -52,8 +52,8 @@ func RecordOf(r Row, clean func(string) string) Record {
 		Cwd:        s.Cwd,
 		Home:       r.Home,
 		Title:      clean(s.Title),
-		Project:    clean(s.Project()),
-		Branch:     clean(s.Branch),
+		Project:    agent.Printable(s.Project()),
+		Branch:     agent.Printable(s.Branch),
 		Updated:    time.Unix(int64(s.Mtime), 0).UTC().Format(time.RFC3339),
 		Prompts:    s.Prompts,
 		Status:     StatusName(r.Status),
@@ -65,7 +65,7 @@ func RecordOf(r Row, clean func(string) string) Record {
 
 func ByID(rows []Row, id string) (matches []Row, exact bool) {
 	for _, r := range rows {
-		if r.Session.ID == id {
+		if strings.EqualFold(r.Session.ID, id) {
 			matches = append(matches, r)
 		}
 	}
@@ -73,7 +73,7 @@ func ByID(rows []Row, id string) (matches []Row, exact bool) {
 		return matches, len(matches) > 0
 	}
 	for _, r := range rows {
-		if strings.HasPrefix(r.Session.ID, id) {
+		if strings.HasPrefix(strings.ToLower(r.Session.ID), strings.ToLower(id)) {
 			matches = append(matches, r)
 		}
 	}

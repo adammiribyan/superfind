@@ -41,6 +41,15 @@ func TestByIDReturnsEveryCopyOfAnExactID(t *testing.T) {
 	}
 }
 
+func TestByIDIgnoresLetterCase(t *testing.T) {
+	if m, exact := ByID(idRows("0f6cab12-aaaa"), "0F6CAB12-AAAA"); len(m) != 1 || !exact {
+		t.Fatalf("exact: got %v", m)
+	}
+	if m, _ := ByID(idRows("0f6cab12-aaaa"), "0F6CAB12"); len(m) != 1 {
+		t.Fatalf("prefix: got %v", m)
+	}
+}
+
 func TestByIDIgnoresPrefixesShorterThanTheMinimum(t *testing.T) {
 	if m, _ := ByID(idRows("01990001-aaaa"), "0199000"); len(m) != 0 {
 		t.Fatalf("a %d-character prefix matched %v", len("0199000"), m)
@@ -65,6 +74,9 @@ func TestRecordOfCleansTextFieldsButKeepsPathsExact(t *testing.T) {
 		Agent:   agent.Named("claude"), Home: "/h/.claude", Path: "/h/.claude/projects/x/id1.jsonl", Status: WaitingLabel,
 	}
 	rec := RecordOf(r, func(s string) string { return agent.Printable(s) })
+	if rec.Project != "a b" || rec.Branch != "main" {
+		t.Fatalf("got %+v", rec)
+	}
 	if rec.Title != "Title" || rec.Cwd != "/work/a b" || rec.Path != r.Path || rec.Status != "waiting" {
 		t.Fatalf("got %+v", rec)
 	}

@@ -21,13 +21,28 @@ func TestMaskReplacesEachKindOfSecret(t *testing.T) {
 		{"AIza" + strings.Repeat("h", 35), "[masked Google API key]"},
 		{"phc_" + strings.Repeat("i", 40), "[masked PostHog key]"},
 		{"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "[masked JSON web token]"},
-		{"Authorization: Bearer " + strings.Repeat("j", 30), "Authorization: Bearer [masked bearer token]"},
+		{"Authorization: Bearer " + strings.Repeat("j7", 15), "Authorization: Bearer [masked bearer token]"},
+		{"redis://:redispass123@cache/0", "redis://:[masked password in a URL]@cache/0"},
+		{"export OPENAI_API_KEY=sk-proj-" + strings.Repeat("B", 48), "export OPENAI_API_KEY=[masked OpenAI key]"},
+		{"ANTHROPIC_API_KEY=sk-ant-api03-" + strings.Repeat("a", 40), "ANTHROPIC_API_KEY=[masked Anthropic key]"},
+		{"DB_PASSWORD=correcthorse", "DB_PASSWORD=[masked secret]"},
+		{"set `CHAT_API_KEY=abc123def456` first", "set `CHAT_API_KEY=[masked secret]` first"},
+		{`"api_key": "sk-ant-api03-` + strings.Repeat("a", 40) + `"`, `"api_key": "[masked Anthropic key]"`},
 		{"postgres://app:s3cretpass@db.internal:5432/x", "postgres://app:[masked password in a URL]@db.internal:5432/x"},
 		{`password = "hunter2hunter2"`, `password = "[masked secret]"`},
 		{`"api_key": "abcd1234efgh5678"`, `"api_key": "[masked secret]"`},
 		{"CLIENT_SECRET=0123456789abcdef", "CLIENT_SECRET=[masked secret]"},
 		{"-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\nafter", "[masked private key]\nafter"},
 		{"-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn", "[masked private key]"},
+		{`password="correct horse battery staple" next`, `password="[masked secret]" next`},
+		{`secret='it\'s a secret' ok`, `secret='[masked secret]' ok`},
+		{"password=hunter2", "password=[masked secret]"},
+		{"DATABASE_PASSWORD=correcthorsebattery", "DATABASE_PASSWORD=[masked secret]"},
+		{"export OPENAI_API_KEY=abc123def456", "export OPENAI_API_KEY=[masked secret]"},
+		{"password=abcdefgh,timeout=30", "password=[masked secret],timeout=30"},
+		{"user=a&password=pa55word&next=1", "user=a&password=[masked secret]&next=1"},
+		{"password: hunter2", "password: [masked secret]"},
+		{"passphrase: correcthorsebatterystaple", "passphrase: [masked secret]"},
 	}
 	for _, c := range cases {
 		if got := Mask(c.in); got != c.want {
@@ -41,6 +56,17 @@ func TestMaskLeavesOrdinaryTextAlone(t *testing.T) {
 		"we use sk-learn and scikit for this",
 		"the task-ant-colony test",
 		"password: short",
+		"password: required",
+		"secret: true",
+		"password=$DB_PASSWORD and api_key=<your key> and token_secret={{ vault }}",
+		`password: "" and secret=*** and api_key=...`,
+		"password_hash: bcrypt",
+		"client = OpenAI(api_key=key)",
+		`api_key=os.environ["OPENAI_API_KEY"]`,
+		"password=None, secret=settings.SECRET, password=password",
+		"password = getpass()",
+		"password: process.env.DB_PASSWORD",
+		"Bearer authentication-is-the-scheme",
 		"set the password field to required",
 		"AKIA is the prefix AWS uses",
 		"session 01990001-a751-7860-aac9-738072c82895 resumed",
@@ -116,8 +142,23 @@ func TestSelectCutsAnOversizedLastTurnFromItsStartOnARuneBoundary(t *testing.T) 
 	if len(c.Turns) != 1 || !c.Truncated || c.Omitted != 1 {
 		t.Fatalf("got %+v", c)
 	}
-	if got := c.Turns[0].Text; got != "…rld" {
-		t.Fatalf("cut text = %q", got)
+	if got := c.Turns[0].Text; got != "…rld" || !c.Turns[0].Cut {
+		t.Fatalf("cut turn = %+v", c.Turns[0])
+	}
+}
+
+func TestSelectWholeTurnsAreNeverMarkedCut(t *testing.T) {
+	for _, turn := range Select(turns("aaaa", "bbbb", "cccc"), Options{MaxBytes: 8}).Turns {
+		if turn.Cut {
+			t.Fatalf("%+v is marked cut", turn)
+		}
+	}
+}
+
+func TestSelectAppliesTailThenTheByteLimit(t *testing.T) {
+	c := Select(turns("aaaa", "bbbb", "cccc", "dddd"), Options{Tail: 3, MaxBytes: 8})
+	if strings.Join(texts(c), ",") != "cccc,dddd" || c.Omitted != 2 || !c.Truncated {
+		t.Fatalf("got %+v", c)
 	}
 }
 
