@@ -692,14 +692,19 @@ const (
 	sayWhere
 )
 
-func onEnter(fresh *open.State, inTmux bool) enterAction {
+func onEnter(cached, fresh *open.State, inTmux bool) (enterAction, *open.State) {
+	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
+		kept := *fresh
+		kept.Tmux = cached.Tmux
+		fresh = &kept
+	}
 	switch {
 	case fresh == nil:
-		return resumeIt
+		return resumeIt, nil
 	case fresh.Tmux != nil && inTmux:
-		return goToPane
+		return goToPane, fresh
 	}
-	return sayWhere
+	return sayWhere, fresh
 }
 
 func (m picker) enter() (tea.Model, tea.Cmd) {
@@ -708,15 +713,16 @@ func (m picker) enter() (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	}
-	chosen := *r
-	state, ok := open.Find(agent.Places())[open.KeyOf(chosen.Agent.ID, chosen.Session.ID)]
-	chosen.Open = nil
-	if ok {
-		chosen.Open = &state
+	var fresh *open.State
+	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
+		fresh = &state
 	}
-	if onEnter(chosen.Open, m.inTmux) == sayWhere {
+	action, state := onEnter(r.Open, fresh, m.inTmux)
+	chosen := *r
+	chosen.Open = state
+	if action == sayWhere {
 		m.notice = "Already open in another terminal window."
-		if pane := chosen.Open.Tmux; pane != nil {
+		if pane := state.Tmux; pane != nil {
 			m.notice = fmt.Sprintf("Already open in tmux session “%s”, window %d.", render.Flat(pane.Session), pane.Window)
 		}
 		return m, nil
@@ -820,8 +826,10 @@ func (m picker) inputBox(width int) []string {
 
 func (m picker) hints() [][2]string {
 	enter := "resume"
-	if r := m.focused(); r != nil && onEnter(r.Open, m.inTmux) == goToPane {
-		enter = "go to it"
+	if r := m.focused(); r != nil {
+		if action, _ := onEnter(r.Open, r.Open, m.inTmux); action == goToPane {
+			enter = "go to it"
+		}
 	}
 	switch {
 	case m.phase() == asking:

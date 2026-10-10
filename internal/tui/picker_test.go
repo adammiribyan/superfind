@@ -264,20 +264,30 @@ func TestEnterOnASessionThatClosedSinceTheLastLookResumesIt(t *testing.T) {
 func TestEnterGoesToTheTmuxPaneOnlyWhenTheSessionIsOpenInOneAndSuperfindRunsInTmux(t *testing.T) {
 	pane := &open.Pane{ID: "%3", Session: "work", Window: 1}
 	cases := []struct {
-		name   string
-		fresh  *open.State
-		inTmux bool
-		want   enterAction
+		name     string
+		cached   *open.State
+		fresh    *open.State
+		inTmux   bool
+		want     enterAction
+		wantPane *open.Pane
 	}{
-		{"closed", nil, true, resumeIt},
-		{"closed outside tmux", nil, false, resumeIt},
-		{"open in a pane", &open.State{PID: 4242, Tmux: pane}, true, goToPane},
-		{"open in a pane outside tmux", &open.State{PID: 4242, Tmux: pane}, false, sayWhere},
-		{"open without a pane", &open.State{PID: 4242}, true, sayWhere},
+		{"closed", nil, nil, true, resumeIt, nil},
+		{"closed since the last look", &open.State{PID: 4242, Tmux: pane}, nil, true, resumeIt, nil},
+		{"closed outside tmux", nil, nil, false, resumeIt, nil},
+		{"open in a pane", nil, &open.State{PID: 4242, Tmux: pane}, true, goToPane, pane},
+		{"open in a pane outside tmux", nil, &open.State{PID: 4242, Tmux: pane}, false, sayWhere, pane},
+		{"open without a pane", nil, &open.State{PID: 4242}, true, sayWhere, nil},
+		{"tmux did not answer the fresh look", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242}, true, goToPane, pane},
+		{"another process has it open now", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4343}, true, sayWhere, nil},
 	}
 	for _, c := range cases {
-		if got := onEnter(c.fresh, c.inTmux); got != c.want {
-			t.Errorf("%s: enter does %d, want %d", c.name, got, c.want)
+		got, state := onEnter(c.cached, c.fresh, c.inTmux)
+		var gotPane *open.Pane
+		if state != nil {
+			gotPane = state.Tmux
+		}
+		if got != c.want || gotPane != c.wantPane {
+			t.Errorf("%s: enter does %d in pane %v, want %d in pane %v", c.name, got, gotPane, c.want, c.wantPane)
 		}
 	}
 }
@@ -314,5 +324,16 @@ func TestEnterOnASessionThatOpenedSinceTheLastLookSaysWhereItIsOpen(t *testing.T
 	}
 	if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
 		t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open in another terminal window", screen)
+	}
+}
+
+func TestEnterKeepsTheKnownPaneWhenTmuxDoesNotAnswerTheFreshLook(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "/private/tmp/tmux-501/default,1,0")
+	m := openPicker(t)
+	m.shown[0].Open = &open.State{PID: os.Getpid(), Status: "idle", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
+	m, msg := press(m, tea.KeyEnter)
+	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Open == nil || m.chosen.Open.Tmux == nil || m.chosen.Open.Tmux.ID != "%3" {
+		t.Fatalf("enter sent %v and chose %+v, want it to quit choosing the session in pane %%3", msg, m.chosen)
 	}
 }
