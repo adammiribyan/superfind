@@ -105,6 +105,7 @@ type Transcript struct {
 	ToolCalls                        int
 	Last                             Event
 	Hidden, Incomplete               bool
+	ByAgent, PeerDriven              bool
 }
 
 type reader interface {
@@ -229,11 +230,12 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 			}
 			buf = buf[end:]
 		}
-		turns := r.done().Turns
+		read := r.done()
+		turns := read.Turns
 		if start > 0 && len(turns) > 0 {
 			turns = turns[1:]
 		}
-		if start == 0 || enough(turns) {
+		if start == 0 || (enough(turns) && !read.PeerDriven) {
 			return turns, nil
 		}
 	}

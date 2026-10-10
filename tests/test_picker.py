@@ -228,6 +228,35 @@ class PickerBehavior(unittest.TestCase):
                                         ["Ledger migration", "payments-reco…", "2d"]])
         self.assertEqual({len(l) for l in self.row_lines()}, {len(self.row_lines()[0])})
 
+    def test_sessions_another_program_started_appear_only_with_is_agent(self):
+        self.three_sessions()
+        self.session("sdk", "Nightly eval run", line(type="user", cwd="/tmp", entrypoint="sdk-cli",
+                                                     message={"role": "user", "content": "score the ledger answers"}),
+                     tool("Bash"), claude("Scored 40 answers."))
+        self.codex_session("exec1", line(timestamp="2026-10-09T10:00:00Z", type="session_meta",
+                                          payload={"id": "meta", "cwd": "/tmp", "source": "exec"}),
+                           line(timestamp="2026-10-09T10:00:00Z", type="response_item", payload={
+                               "type": "message", "role": "user", "content": [{"type": "input_text", "text": "review the ledger diff"}]}))
+        self.open_picker()
+        self.assertEqual(sorted(self.titles()), ["Checkout double charge", "Invoice layout", "Ledger migration"])
+        self.assertIn("3/3", self.screen())
+        self.assertNotIn("codex", self.screen())
+        self.keys("is:agent")
+        self.assertEqual(sorted(self.titles()), ["Nightly eval run", "review the ledger diff"])
+        self.assertIn("2/2", self.screen())
+
+    def test_a_picker_holding_only_sessions_another_program_started_says_how_to_see_them(self):
+        self.session("sdk", "Nightly eval run", line(type="user", cwd="/tmp", entrypoint="sdk-cli",
+                                                     message={"role": "user", "content": "score the ledger answers"}),
+                     tool("Bash"), claude("Scored 40 answers."))
+        self.open_picker()
+        self.wait_for("Only sessions other programs started. Type is:agent to see them.")
+        self.assertNotIn("0/", self.screen())
+        self.keys("is:agent")
+        self.assertEqual(self.titles(), ["Nightly eval run"])
+        self.assertIn("1/1", self.screen())
+        self.assertNotIn("Only sessions other programs started", self.screen())
+
     def test_typing_narrows_the_list_and_shows_the_matching_passage(self):
         self.three_sessions()
         self.open_picker()

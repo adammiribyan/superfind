@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -85,5 +86,58 @@ func TestRecordOfCleansTextFieldsButKeepsPathsExact(t *testing.T) {
 	}
 	if want := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, "id1"); rec.Resume != want {
 		t.Fatalf("resume = %q, want %q", rec.Resume, want)
+	}
+}
+
+func kindRows() []Row {
+	return []Row{
+		{Session: Session{ID: "typed", Title: "typed"}, Agent: agent.Named("claude"), Path: "/a"},
+		{Session: Session{ID: "exec", Title: "exec", ByAgent: true}, Agent: agent.Named("codex"), Path: "/b", Status: WaitingLabel},
+	}
+}
+
+func ids(rows []Row) string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.Session.ID)
+	}
+	return strings.Join(out, ",")
+}
+
+func TestNarrowHidesSessionsAnAgentStartedUnlessAskedFor(t *testing.T) {
+	cases := []struct {
+		query string
+		every bool
+		want  string
+		words string
+	}{
+		{"", false, "typed", ""},
+		{"login bug", false, "typed", "login bug"},
+		{"is:agent", false, "exec", ""},
+		{"IS:AGENT review", false, "exec", "review"},
+		{"is:agent agent:claude", false, "", ""},
+		{"", true, "typed,exec", ""},
+		{"is:agent", true, "exec", ""},
+		{"agent:codex", true, "exec", ""},
+		{"is:waiting is:agent", false, "exec", ""},
+		{"is:waiting", false, "", ""},
+		{"is:waiting", true, "exec", ""},
+	}
+	for _, c := range cases {
+		narrow := Narrow
+		if c.every {
+			narrow = NarrowEvery
+		}
+		words, rows := narrow(c.query, kindRows())
+		if ids(rows) != c.want || words != c.words {
+			t.Errorf("query %q every=%v: rows %q words %q, want rows %q words %q", c.query, c.every, ids(rows), words, c.want, c.words)
+		}
+	}
+}
+
+func TestRecordKindNamesWhoStartedTheSession(t *testing.T) {
+	rows := kindRows()
+	if a, b := RecordOf(rows[0], agent.Printable).Kind, RecordOf(rows[1], agent.Printable).Kind; a != "interactive" || b != "agent" {
+		t.Fatalf("kinds %q %q", a, b)
 	}
 }

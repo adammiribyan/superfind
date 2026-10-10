@@ -52,6 +52,7 @@ func newGrokReader(path string) (reader, error) {
 	g.t.Cwd = cmp.Or(s.Info.Cwd, folder)
 	g.t.Branch = s.HeadBranch
 	g.t.Hidden = s.SessionKind == "subagent"
+	g.t.ByAgent = s.SessionKind == "headless"
 	title := cmp.Or(s.SessionSummary, s.GeneratedTitle)
 	if s.TitleIsManual {
 		g.t.CustomTitle = title

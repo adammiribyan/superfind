@@ -2,6 +2,23 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+## [0.10.0] - 2026-10-10
+
+### Added
+
+- `superfind show <session>` prints a session's conversation for scripts and agents: what you asked and what the agent answered, without color or wrapping. `--json` prints it as one JSON object, `--tail N` keeps the last N turns, and `--max-bytes N` sets the size limit (60,000 bytes by default). Keys, tokens, and passwords in common formats are replaced with `[masked …]`.
+- `search --json` and `ask --json` print one JSON object per session, with the session's id, folder, title, kind, the passage that matched, and the command that resumes it.
+- `show`, `preview`, and `command` take a session's id, or a unique start of one at least 8 characters long, as well as its path. An id that matches more than one session exits 2 and lists them.
+- `is:agent` lists sessions that another program started: runs of `claude -p` (even ones you ran yourself) and the Claude Agent SDK, runs of `codex exec`, headless Grok runs, and Claude Code sessions driven only by another Claude Code session.
+- The README has a new section, "Use from scripts and agents", and `superfind --help` lists the exit codes.
+
+### Changed
+
+- Sessions that another program started no longer appear in the picker, `search`, or `ask` unless you add `is:agent`. `--json` output always includes them, marked `"kind": "agent"`.
+- Claude Code sessions whose every request came from another Claude Code session used to be hidden entirely. They now appear under `is:agent`.
+- Labeling skips sessions another program started, so their endings are no longer sent to TypeSafe.
+- The index is rebuilt once after upgrading, to record which sessions another program started.
+
 ## [0.9.1] - 2026-10-10
 
 ### Changed

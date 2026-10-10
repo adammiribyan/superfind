@@ -28,7 +28,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
-const version = "0.9.1"
+const version = "0.10.0"
 
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
@@ -37,10 +37,13 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           or  eval "$(superfind init bash)"  to ~/.bashrc
   superfind pick          open the picker; prints the chosen session's title, then the command
                           that resumes it
-  superfind search WORDS  print sessions whose title or conversation contains every word;
+  superfind search WORDS [--json]
+                          print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent
-  superfind ask WORDS     print the sessions that best fit what you describe, even in other words;
+                          agent:claude, agent:codex, and agent:grok by the agent, and
+                          is:agent shows sessions another program started
+  superfind ask WORDS [--json]
+                          print the sessions that best fit what you describe, even in other words;
                           takes the same is: and agent: filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
@@ -78,22 +81,29 @@ Open the picker full screen. When you choose a session, print its title on the f
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
 `,
-	"search": `superfind search WORDS
+	"search": `superfind search WORDS [--json]
 
 Print the sessions whose title, project, branch, or conversation contains every word, titles
-that match first. With no words, print every session, newest first.
+that match first. With no words, print every session, newest first. Sessions that another
+program started, such as codex exec, claude -p, or another Claude Code session, are left out
+unless you ask for them with is:agent.
 
   is:waiting      only sessions waiting on you; is:unfinished works the same way
+  is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
+  --json          print one JSON object per session instead, including the ones another
+                  program started, each with its kind and the passage that matched
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
-its title, and the line the picker shows.
+its title, and the line the picker shows. To search for a word that starts with --, put --
+before it.
 `,
-	"ask": `superfind ask WORDS
+	"ask": `superfind ask WORDS [--json]
 
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same is: and agent: filters as search, and prints the same fields.
+With --json, it prints one JSON object per session, as search --json does.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
@@ -430,12 +440,22 @@ func usageError(message string) {
 	exit(2)
 }
 
-func searchWords(command string, args []string) string {
+func writeRecords(rows []session.Row, db *sql.DB, query string) {
+	if err := show.WriteRecords(stdout, rows, db, query); err != nil {
+		fail("superfind: couldn't write the output: " + err.Error())
+	}
+}
+
+func searchWords(command string, args []string) (string, bool) {
 	var words []string
+	asJSON := false
 	for i, arg := range args {
 		switch {
 		case arg == "--":
-			return strings.Join(append(words, args[i+1:]...), " ")
+			return strings.Join(append(words, args[i+1:]...), " "), asJSON
+		case arg == "--json":
+			asJSON = true
+			continue
 		case arg == "--deep" && command == "search":
 			usageError("superfind search: --deep is now its own command: superfind ask WORDS")
 		case strings.HasPrefix(arg, "--"):
@@ -444,7 +464,7 @@ func searchWords(command string, args []string) string {
 		}
 		words = append(words, arg)
 	}
-	return strings.Join(words, " ")
+	return strings.Join(words, " "), asJSON
 }
 
 func main() {
@@ -496,22 +516,41 @@ func run(args []string) {
 		}
 		fmt.Fprintf(stdout, "%d %s indexed\n", n, noun)
 	case "search":
-		query := searchWords("search", args[1:])
+		query, asJSON := searchWords("search", args[1:])
+		find := session.Search
+		if asJSON {
+			find = session.SearchEvery
+		}
 		rows := session.Annotate(mustIndex("search"))
-		found, err := session.Search(mustOpenSearch(), query, rows)
+		db := mustOpenSearch()
+		found, err := find(db, query, rows)
 		if errors.Is(err, session.ErrDamaged) {
 			rows = session.Annotate(mustRefresh("search", session.Rebuild))
-			found, err = session.Search(mustOpenSearch(), query, rows)
+			db = mustOpenSearch()
+			found, err = find(db, query, rows)
 		}
 		if err != nil {
 			fail("superfind search: " + err.Error())
 		}
-		printRows(found, render.TagsFor(rows))
+		if asJSON {
+			writeRecords(found, db, query)
+			return
+		}
+		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
 	case "ask":
 		rows := session.Annotate(mustIndex("ask"))
-		shown := render.TagsFor(rows)
+		shown := render.TagsFor(session.SameKind(rows, session.AsksForAgents(strings.Join(args[1:], " "))))
 		db := mustOpenSearch()
-		query, eligible := session.Narrow(searchWords("ask", args[1:]), rows)
+		words, asJSON := searchWords("ask", args[1:])
+		narrow := session.Narrow
+		if asJSON {
+			narrow = session.NarrowEvery
+		}
+		query, eligible := narrow(words, rows)
+		if query == "" && asJSON {
+			writeRecords(session.RecentFirst(eligible), db, "")
+			return
+		}
 		if query == "" {
 			printRows(session.RecentFirst(eligible), shown)
 			return
@@ -526,6 +565,10 @@ func run(args []string) {
 		var failure ask.Failure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
+		}
+		if asJSON {
+			writeRecords(session.InOrder(rows, paths), db, query)
+			return
 		}
 		printRows(session.InOrder(rows, paths), shown)
 	case "label":
@@ -572,7 +615,7 @@ func run(args []string) {
 		req.Agent, req.Path = r.Agent, r.Path
 		var header []string
 		if indexed {
-			header = append(render.PreviewHeader(req, r, render.TagsFor(rows), mustOpenSearch()), "")
+			header = append(render.PreviewHeader(req, r, render.TagsFor(session.SameKind(rows, r.Session.ByAgent)), mustOpenSearch()), "")
 		}
 		body, err := render.PreviewBody(req)
 		for _, line := range append(header, body...) {

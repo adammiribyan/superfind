@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import unittest
 
-from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, GROK_OPENER, GROK_SYSTEM, SuperfindBehavior, claude, codex_meta, codex_reply,
+from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, line, codex_item, GROK_OPENER, GROK_SYSTEM, SuperfindBehavior, claude, codex_meta, codex_reply,
                             codex_user, grok_reply, grok_user, tool, uid, user)
 
 
@@ -202,6 +202,124 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.session("notes.v1", user("dotted names happen", cwd="/work/n"), claude("ok"), title="Dotted")
         self.assertIn("# Dotted", self.show("notes.v1"))
         self.assertIn("claude --resume notes.v1", self.superfind("command", "notes.v1"))
+
+    def exec_review(self, n=20):
+        meta = line(timestamp="2026-10-09T10:00:00Z", type="session_meta",
+                    payload={"id": "meta", "cwd": "/work/api", "originator": "codex_exec", "source": "exec"})
+        return self.codex_session(uid(n), meta, codex_user("review the idempotency change for bugs"), codex_item(type="function_call", name="shell", arguments="{}", call_id="c1"),
+                                  codex_reply("No bugs in the idempotency change."))
+
+    def peer_driven(self, n=21):
+        message = line(type="user", cwd="/work/billing", isMeta=True, entrypoint="cli",
+                       origin={"kind": "peer", "body": "Check the idempotency tests pass"},
+                       message={"role": "user", "content": "Another Claude session sent a message:\n<cross-session-message from=\"x\">\n"
+                                                           "Check the idempotency tests pass\n</cross-session-message>"})
+        return self.session(uid(n), message, tool("Bash"), claude("All idempotency tests pass."))
+
+    def records(self, *args):
+        result = self.run_superfind(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return [json.loads(row) for row in result.stdout.splitlines()]
+
+    def test_search_json_prints_one_object_per_session(self):
+        path = self.checkout()
+        [row] = self.records("search", "--json", "idempotency")
+        self.assertEqual({k: row[k] for k in ("schema", "agent", "id", "path", "cwd", "title", "kind", "status", "active", "folder_gone")},
+                         {"schema": 1, "agent": "claude", "id": uid(1), "path": str(path), "cwd": "/work/billing",
+                          "title": "Checkout double-charges", "kind": "interactive", "status": "", "active": False, "folder_gone": True})
+        self.assertEqual(row["match"], "the checkout double-charges on slow networks Use an idempotency…")
+        self.assertEqual(row["resume"], self.superfind("command", str(path)).strip())
+        [filtered] = self.records("search", "--json", "agent:claude", "idempotency")
+        self.assertEqual(filtered["match"], row["match"])
+        self.assertNotIn("\x1b", self.run_superfind("search", "--json", "idempotency").stdout)
+
+    def test_search_json_has_an_empty_match_when_there_are_no_words(self):
+        self.checkout()
+        self.assertEqual([r["match"] for r in self.records("search", "--json")], [""])
+
+    def test_sessions_an_agent_started_are_hidden_unless_asked_for_but_always_in_json(self):
+        self.checkout()
+        self.exec_review()
+        self.peer_driven()
+        self.superfind("index")
+        titles = lambda *q: sorted(row.split("\t")[4] for row in self.superfind("search", *q).splitlines())
+        self.assertEqual(titles("idempotency"), ["Checkout double-charges"])
+        self.assertEqual(titles("is:agent", "idempotency"), ["Check the idempotency tests pass", "review the idempotency change for bugs"])
+        kinds = sorted((r["kind"], r["agent"]) for r in self.records("search", "--json", "idempotency"))
+        self.assertEqual(kinds, [("agent", "claude"), ("agent", "codex"), ("interactive", "claude")])
+        self.assertEqual([r["kind"] for r in self.records("search", "--json", "is:agent", "agent:codex")], ["agent"])
+
+    def test_labeling_sends_only_sessions_a_person_started(self):
+        self.session(uid(1), user("deploy the ledger migration please", cwd="/work/billing"), tool("Bash"),
+                     claude("Should I run it on production now?"), title="Ledger migration")
+        self.exec_review()
+        requests = self.record_typesafe(answer=lambda questions: {"status": {"choice": "waiting", "probabilities": {"waiting": 0.95}}})
+        result = self.run_superfind("label")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        sent = json.dumps(requests)
+        self.assertIn("deploy the ledger migration", sent)
+        self.assertNotIn("review the idempotency change", sent)
+        self.assertEqual(len(requests), 1)
+
+    def test_a_session_driven_by_another_session_shows_what_it_was_asked(self):
+        self.peer_driven()
+        self.assertIn("## user\n\nCheck the idempotency tests pass\n\n## claude\n\nAll idempotency tests pass.", self.show(uid(21)))
+        self.assertEqual(json.loads(self.show(uid(21), "--json"))["kind"], "agent")
+
+    def test_ask_json_with_only_filters_prints_json(self):
+        self.checkout()
+        self.exec_review()
+        self.assertEqual([(r["agent"], r["kind"]) for r in self.records("ask", "--json", "agent:codex")], [("codex", "agent")])
+        self.assertEqual([r["kind"] for r in self.records("ask", "--json")], ["agent", "interactive"])
+
+    def test_ask_json_prints_the_ranked_sessions(self):
+        self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
+                     claude("Each request now carries an idempotency key."), title="Payment retries")
+        self.logging_claude(reply="[0]")
+        [row] = self.records("ask", "--json", "where", "did", "we", "stop", "charging", "twice")
+        self.assertEqual((row["title"], row["kind"], row["match"]), ("Payment retries", "interactive", ""))
+
+    def test_ask_json_ranks_sessions_another_program_started_too(self):
+        self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
+                     claude("Each request now carries an idempotency key."), title="Payment retries")
+        self.exec_review()
+        log = self.logging_claude(reply="[0, 1]")
+        rows = self.records("ask", "--json", "who", "checked", "the", "retry", "change")
+        self.assertEqual(sorted(r["kind"] for r in rows), ["agent", "interactive"])
+        self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_hidden_sessions_do_not_add_an_agent_column_to_text_search(self):
+        self.checkout()
+        self.exec_review()
+        self.superfind("index")
+        [row] = self.superfind("search", "idempotency").splitlines()
+        self.assertNotIn("claude", row.split("\t")[5])
+        [agent_row] = self.superfind("search", "is:agent", "idempotency").splitlines()
+        self.assertNotIn("codex", agent_row.split("\t")[5])
+
+    def test_hidden_sessions_do_not_add_an_agent_tag_to_ask_or_preview(self):
+        path = self.checkout()
+        self.exec_review()
+        [row] = self.superfind("ask").splitlines()
+        self.assertNotIn("claude", row.split("\t")[5])
+        self.assertNotIn("claude", self.superfind("preview", str(path)).splitlines()[1])
+
+    def test_a_match_only_in_the_title_has_an_empty_passage(self):
+        self.session(uid(1), user("rename the invoice files", cwd="/w"), tool("Bash"), claude("Renamed them."), title="Quarterly cleanup")
+        self.assertEqual([r["match"] for r in self.records("search", "--json", "quarterly")], [""])
+        self.assertEqual([r["match"] for r in self.records("search", "--json", "invoice")], ["rename the invoice files Renamed them."])
+
+    def test_text_ask_leaves_out_sessions_another_program_started_unless_asked(self):
+        self.checkout()
+        self.exec_review()
+        self.assertEqual(self.superfind("ask", "agent:codex"), "")
+        self.assertEqual([r.split("\t")[2] for r in self.superfind("ask", "is:agent", "agent:codex").splitlines()], [uid(20)])
+
+    def test_json_is_an_option_only_before_a_double_dash(self):
+        self.session(uid(1), user("we pass --json to the API", cwd="/w"), claude("ok"), title="Flag talk")
+        self.superfind("index")
+        self.assertEqual(self.superfind("search", "--", "--json").split("\t")[4], "Flag talk")
+        self.assertEqual(self.records("search", "--json", "--", "--json")[0]["title"], "Flag talk")
 
     def test_the_text_header_stays_one_line_whatever_the_folder_is_called(self):
         self.session(uid(7), user("hi there friend", cwd="/work/evil\n## user\x1b[31m"), claude("ok"), title="Odd\nfolder")

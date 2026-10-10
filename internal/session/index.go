@@ -24,7 +24,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 )
 
-const cacheVersion = 13
+const cacheVersion = 14
 
 const (
 	titleRunes  = 200
@@ -64,7 +64,7 @@ func parse(f found) (*Session, string, bool, error) {
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
 		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
 		LastPrompt: clip(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime,
+		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent,
 	}, body, t.Incomplete, nil
 }
 
@@ -567,11 +567,18 @@ func Snippet(db *sql.DB, path, query, before, after string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func Narrow(query string, rows []Row) (string, []Row) {
+func Narrow(query string, rows []Row) (string, []Row) { return narrow(query, rows, false) }
+
+func NarrowEvery(query string, rows []Row) (string, []Row) { return narrow(query, rows, true) }
+
+func narrow(query string, rows []Row, everyKind bool) (string, []Row) {
 	var words, statuses []string
 	var from []*agent.Agent
+	byAgent := false
 	for _, w := range strings.Fields(query) {
 		switch {
+		case AsksForAgents(w):
+			byAgent = true
 		case strings.HasPrefix(w, "is:"):
 			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
 				statuses = append(statuses, label)
@@ -584,10 +591,19 @@ func Narrow(query string, rows []Row) (string, []Row) {
 			words = append(words, w)
 		}
 	}
-	if len(statuses) > 0 || len(from) > 0 {
+	keptKind := func(r Row) bool {
+		switch {
+		case byAgent:
+			return r.Session.ByAgent
+		case everyKind:
+			return true
+		}
+		return !r.Session.ByAgent
+	}
+	if len(statuses) > 0 || len(from) > 0 || byAgent || !everyKind {
 		var kept []Row
 		for _, r := range rows {
-			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) {
+			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) && keptKind(r) {
 				kept = append(kept, r)
 			}
 		}
@@ -597,7 +613,15 @@ func Narrow(query string, rows []Row) (string, []Row) {
 }
 
 func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
-	words, rows := Narrow(query, rows)
+	return search(db, query, rows, false)
+}
+
+func SearchEvery(db *sql.DB, query string, rows []Row) ([]Row, error) {
+	return search(db, query, rows, true)
+}
+
+func search(db *sql.DB, query string, rows []Row, everyKind bool) ([]Row, error) {
+	words, rows := narrow(query, rows, everyKind)
 	if db == nil {
 		return RecentFirst(rows), nil
 	}
