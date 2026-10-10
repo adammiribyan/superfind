@@ -46,6 +46,20 @@ func TestParseStatRejectsAShortLine(t *testing.T) {
 	}
 }
 
+func TestAStartTimeYearsAfterBootDoesNotOverflow(t *testing.T) {
+	boot := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	cases := map[uint64]time.Time{
+		0:                     boot,
+		150:                   boot.Add(1500 * time.Millisecond),
+		5 * 365 * 86400 * 100: time.Date(2024, 12, 30, 0, 0, 0, 0, time.UTC),
+	}
+	for ticks, want := range cases {
+		if got := startedAt(boot, ticks); !got.Equal(want) {
+			t.Errorf("startedAt(boot, %d) = %v, want %v", ticks, got, want)
+		}
+	}
+}
+
 func TestTTYNumbersDecodeToMajorAndMinor(t *testing.T) {
 	cases := map[int64]TTY{0: {}, 34819: {136, 3}, 1083436: {136, 300}, 1025: {4, 1}}
 	for n, want := range cases {

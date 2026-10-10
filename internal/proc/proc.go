@@ -69,3 +69,9 @@ func parseStat(line string) (stat, bool) {
 func fromTTYNr(n int64) TTY {
 	return TTY{uint32(n>>8) & 0xfff, uint32(n&0xff) | uint32(n>>12)&0xfff00}
 }
+
+const ticksPerSecond = 100
+
+func startedAt(boot time.Time, ticks uint64) time.Time {
+	return boot.Add(time.Duration(ticks) * (time.Second / ticksPerSecond))
+}

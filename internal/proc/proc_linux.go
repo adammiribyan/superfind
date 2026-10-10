@@ -16,8 +16,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const ticksPerSecond = 100
-
 func Lookup(pid int) (Process, bool) {
 	if pid <= 0 {
 		return Process{}, false
@@ -31,8 +29,7 @@ func Lookup(pid int) (Process, bool) {
 	if !ok || !booted {
 		return Process{}, false
 	}
-	started := boot.Add(time.Duration(s.ticks) * time.Second / ticksPerSecond)
-	return Process{PID: pid, Name: s.name, Start: started, TTY: s.tty}, true
+	return Process{PID: pid, Name: s.name, Start: startedAt(boot, s.ticks), TTY: s.tty}, true
 }
 
 var bootTime = sync.OnceValues(func() (time.Time, bool) {
