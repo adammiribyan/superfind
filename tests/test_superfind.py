@@ -611,6 +611,7 @@ class SuperfindBehavior(unittest.TestCase):
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
+        self.assertIn(f"        {Path(SUPERFIND).resolve()} $argv", self.superfind("init", "fish"))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
         import http.server
@@ -1454,7 +1455,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("Fixed.", self.superfind("preview", printed))
 
     def test_usage_mistakes_exit_2_and_say_what_was_wrong(self):
-        for args, reason in ((("init",), "which shell?"), (("init", "fish"), "which shell?"), (("command",), "which session?"),
+        for args, reason in ((("init",), "which shell?"), (("init", "tcsh"), "which shell?"), (("command",), "which session?"),
                              (("preview",), "which session?")):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)

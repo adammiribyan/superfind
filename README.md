@@ -38,6 +38,7 @@ Then add one line to your shell's startup file. It defines the `superfind` and `
 ```sh
 eval "$(superfind init zsh)"     # in ~/.zshrc
 eval "$(superfind init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
+superfind init fish | source     # in ~/.config/fish/config.fish
 ```
 
 To open superfind with Cmd-Shift-O in Ghostty, also add this line to your Ghostty config, then reload the config with Cmd-Shift-, (comma):
@@ -152,7 +153,7 @@ superfind has no telemetry, analytics, or update checks. The requests above are 
 
 ```sh
 superfind                    # open the picker; sfd is short for it
-superfind init zsh|bash      # print the shell setup
+superfind init zsh|bash|fish # print the shell setup
 superfind search <words>     # print sessions that contain every word (--json)
 superfind ask <words>        # print the sessions that best fit your description (--json)
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
