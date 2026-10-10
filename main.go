@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
@@ -386,7 +388,13 @@ func run(args []string) {
 			printRows(session.RecentFirst(eligible), shown)
 			return
 		}
-		paths, err := ask.Ask(context.Background(), db, query, eligible)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		paths, err := ask.Ask(ctx, db, query, eligible)
+		interrupted := ctx.Err() != nil
+		stop()
+		if interrupted {
+			exit(130)
+		}
 		var failure ask.Failure
 		if errors.As(err, &failure) {
 			fail(failure.Error())
