@@ -303,6 +303,23 @@ func Ago(mtime float64) string {
 	return t.Format("Jan 2 2006")
 }
 
+func Age(mtime float64) string {
+	seconds := session.Now() - mtime
+	switch {
+	case seconds < 3600:
+		return fmt.Sprintf("%dm", max(int(seconds/60), 1))
+	case seconds < 86400:
+		return fmt.Sprintf("%dh", int(seconds/3600))
+	case seconds < 7*86400:
+		return fmt.Sprintf("%dd", int(seconds/86400))
+	}
+	t := time.Unix(int64(mtime), 0)
+	if t.Year() == time.Now().Year() {
+		return t.Format("Jan 2")
+	}
+	return t.Format("Jan 2006")
+}
+
 func when(s session.Session) string {
 	if s.Active() {
 		return "active now"

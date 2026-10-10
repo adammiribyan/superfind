@@ -37,6 +37,7 @@ const (
 	marginTop      = 1
 	marginSide     = 1
 	listChrome     = 6
+	minStatusTitle = 8
 	stackedMinimum = headerLines + 4
 )
 
@@ -149,6 +150,7 @@ type picker struct {
 	dbProblem  string
 	statusSeen time.Time
 	tags       render.Tags
+	widths     render.Widths
 	label      string
 
 	input     textinput.Model
@@ -192,6 +194,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 		asks: &asks{},
 	}
+	m.widths = render.Measure(m.all, m.tags)
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
 		m.problem = "Indexing your sessions…"
@@ -237,7 +240,7 @@ func (m picker) layout() layout {
 	case m.hidePreview:
 		l.listHeight = free
 	case m.width >= wideColumns:
-		l.listWidth = m.width * 45 / 100
+		l.listWidth = m.width * 54 / 100
 		l.previewWidth = m.width - l.listWidth - 3
 		l.previewHeight = m.height
 		l.listHeight = free
@@ -472,6 +475,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
+		m.widths = render.Measure(m.all, m.tags)
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
 				if m.db != nil && !m.asking {
@@ -511,6 +515,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all = session.Annotate(m.all)
+		m.widths = render.Measure(m.all, m.tags)
 		if m.askedFor == "" {
 			m.filter()
 		} else {
@@ -625,7 +630,9 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return updated, tea.Batch(cmd, load)
 }
 
-func (m picker) rowLine(r session.Row, selected bool, width int) string {
+func cell(text string, width int) string { return pad(ansi.Truncate(text, width, "…"), width) + "  " }
+
+func (m picker) rowLine(r session.Row, selected bool, width int, c render.Columns) string {
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -636,17 +643,29 @@ func (m picker) rowLine(r session.Row, selected bool, width int) string {
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(m.colors.muted)
-	t := render.RowTextOf(r, m.tags)
-	segment := ""
-	if t.Waiting != "" {
-		segment = paint(m.colors.accent).Render(t.Waiting) + muted.Render(" · ")
+	cells := render.CellsOf(r, m.tags)
+	c = c.For(cells, width)
+	right := ""
+	if c.Project > 0 {
+		right += muted.Render(cell(cells.Project, c.Project))
 	}
-	line := plain.Render(" "+t.Title+"  ") + segment + muted.Render(strings.Join(t.Context, " · "))
-	line = ansi.Truncate(line, max(width-1, 0), muted.Render("…"))
-	if pad := width - lipgloss.Width(line); pad > 0 {
-		line += plain.Render(strings.Repeat(" ", pad))
+	if c.Agent > 0 {
+		right += muted.Render(cell(cells.Agent, c.Agent))
 	}
-	return line
+	right += muted.Render(fmt.Sprintf("%*s ", render.AgeWidth, cells.Age))
+	room := max(width-3-lipgloss.Width(right), 1)
+	status := ""
+	if word := 2 + lipgloss.Width(cells.Status); cells.Status != "" && room-word >= minStatusTitle {
+		room -= word
+		paintStatus := muted
+		if cells.Waiting {
+			paintStatus = plain
+		}
+		status = plain.Render("  ") + paintStatus.Render(cells.Status)
+	}
+	left := plain.Render(" "+ansi.Truncate(cells.Title, room, "…")) + status
+	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 2)
+	return ansi.Truncate(left+plain.Render(strings.Repeat(" ", gap))+right, width, "")
 }
 
 func (m picker) inputBox(width int) []string {
@@ -723,9 +742,10 @@ func (m picker) View() tea.View {
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
+	cols := m.widths.Fit(l.listWidth)
 	for i := m.offset; i < m.offset+l.listHeight; i++ {
 		if i < len(m.shown) {
-			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth))
+			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth, cols))
 		} else {
 			column = append(column, "")
 		}
