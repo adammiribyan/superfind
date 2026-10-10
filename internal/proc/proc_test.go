@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,18 @@ func TestParseStatReadsANameWithParenthesesAndSpaces(t *testing.T) {
 	got, ok := parseStat(line)
 	if want := (stat{name: "a) (b c", tty: TTY{136, 3}, ticks: 987654}); !ok || got != want {
 		t.Fatalf("got %+v ok=%v, want %+v", got, ok, want)
+	}
+}
+
+func TestParseStatRejectsAZombieAndADeadProcess(t *testing.T) {
+	line := "4242 (claude) %s 1 4242 4242 34819 4242 4194304 120 0 0 0 7 3 0 0 20 0 1 0 987654 0 0 18446744073709551615\n"
+	for _, state := range []string{"Z", "X"} {
+		if got, ok := parseStat(fmt.Sprintf(line, state)); ok {
+			t.Errorf("state %s parsed as live: %+v", state, got)
+		}
+	}
+	if got, ok := parseStat(fmt.Sprintf(line, "S")); !ok || got.name != "claude" {
+		t.Errorf("a sleeping process: got %+v ok=%v", got, ok)
 	}
 }
 
@@ -95,6 +108,21 @@ func TestLookupFindsThisProcessAndNotAReapedOne(t *testing.T) {
 	}
 	if p, ok := Lookup(child.Process.Pid); ok {
 		t.Fatalf("a reaped child is still found: %+v", p)
+	}
+}
+
+func TestLookupDoesNotFindAnExitedChildNotYetReaped(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("process facts are read on macOS and Linux only")
+	}
+	child := exec.Command("sleep", "0")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer child.Wait()
+	time.Sleep(200 * time.Millisecond)
+	if p, ok := Lookup(child.Process.Pid); ok {
+		t.Fatalf("a zombie child is found as live: %+v", p)
 	}
 }
 

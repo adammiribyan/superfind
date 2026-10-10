@@ -55,7 +55,7 @@ func parseStat(line string) (stat, bool) {
 		return stat{}, false
 	}
 	fields := strings.Fields(line[end+1:])
-	if len(fields) < 20 {
+	if len(fields) < 20 || fields[0] == "Z" || fields[0] == "X" {
 		return stat{}, false
 	}
 	nr, err1 := strconv.ParseInt(fields[4], 10, 64)

@@ -12,12 +12,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const zombie = 5
+
 func Lookup(pid int) (Process, bool) {
 	if pid <= 0 {
 		return Process{}, false
 	}
 	k, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
-	if err != nil || int(k.Proc.P_pid) != pid {
+	if err != nil || int(k.Proc.P_pid) != pid || k.Proc.P_stat == zombie {
 		return Process{}, false
 	}
 	return processOf(k), true
@@ -30,6 +32,9 @@ func Named(prefixes ...string) []Process {
 	}
 	var out []Process
 	for i := range all {
+		if all[i].Proc.P_stat == zombie {
+			continue
+		}
 		if p := processOf(&all[i]); p.PID > 0 && slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(p.Name, prefix) }) {
 			out = append(out, p)
 		}
