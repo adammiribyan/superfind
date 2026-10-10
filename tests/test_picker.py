@@ -56,18 +56,19 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         if linger:
             command += "; sleep 60"
-        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
+        style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
+        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command, *style)
         self.wait_for(header)
 
-    def screen(self):
-        return tmux("capture-pane", "-p", "-t", self.session_name).stdout
+    def screen(self, *flags):
+        return tmux("capture-pane", "-p", *flags, "-t", self.session_name).stdout
 
     def wait_for(self, text, timeout=5):
         deadline = time.time() + timeout
@@ -243,6 +244,47 @@ class PickerBehavior(unittest.TestCase):
         self.keys("ledger")
         self.wait_for("2/3")
         self.assertEqual(self.titles(), ["Ledger migration follow-up", "Ledger migration"])
+
+    def list_column(self):
+        return "\n".join(l.split("│")[0] for l in self.screen("-e").splitlines())
+
+    def answering_claude(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+
+    def two_ledger_sessions(self):
+        self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
+        self.session("old", "Ledger migration", user("move the ledger"), tool("Bash"), claude("Moved."))
+        self.session("new", "Ledger migration follow-up", user("check the ledger"), tool("Bash"), claude("Checked."))
+
+    def ledger_rows(self):
+        self.keys("ledger")
+        self.wait_for("2/3")
+        return [l for l in self.list_column().splitlines() if "migration" in l]
+
+    def test_matched_words_are_bold_and_blue_while_searching_and_plain_in_ask_results(self):
+        self.answering_claude()
+        del self.env["NO_COLOR"]
+        self.two_ledger_sessions()
+        self.open_picker(colors=True)
+        blue = r"\x1b\[1m\x1b\[[0-9;]*34mLedger\x1b\[[0-9;]*m migration"
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(unselected, r"^  " + blue + r"( |\x1b)")
+        self.keys("C-r")
+        time.sleep(1.5)
+        self.assertNotIn("Asking", self.screen())
+        self.assertEqual(self.titles(), ["Ledger migration follow-up"])
+        self.assertNotRegex(self.list_column(), blue)
+
+    def test_matched_words_are_bold_under_no_color(self):
+        self.two_ledger_sessions()
+        self.open_picker()
+        selected, unselected = self.ledger_rows()
+        self.assertRegex(unselected, r"^  \x1b\[1mLedger\x1b\[0m migration ")
+        self.assertNotIn("34m", selected + unselected)
 
     def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
         self.three_sessions()

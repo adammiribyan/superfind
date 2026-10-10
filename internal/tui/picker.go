@@ -13,6 +13,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
@@ -181,6 +182,32 @@ type picker struct {
 	chosen   *session.Row
 	quitting bool
 	reindex  bool
+}
+
+type phase int
+
+const (
+	searching phase = iota
+	asking
+	asked
+)
+
+func (m picker) phase() phase {
+	switch {
+	case m.asking:
+		return asking
+	case m.askedFor != "":
+		return asked
+	}
+	return searching
+}
+
+func (m picker) matchWords() []string {
+	if m.phase() != searching {
+		return nil
+	}
+	words, _ := session.Narrow(m.input.Value(), nil)
+	return strings.FieldsFunc(words, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' })
 }
 
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
@@ -632,7 +659,7 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func cell(text string, width int) string { return pad(ansi.Truncate(text, width, "…"), width) + "  " }
 
-func (m picker) rowLine(r session.Row, selected bool, width int, c render.Columns) string {
+func (m picker) rowLine(r session.Row, selected bool, width int, c render.Columns, words []string) string {
 	paint := func(st lipgloss.Style) lipgloss.Style {
 		if selected && !m.colors.plain() {
 			return st.Background(m.colors.tint)
@@ -643,6 +670,10 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 		return st
 	}
 	plain, muted := paint(lipgloss.NewStyle()), paint(m.colors.muted)
+	hit := plain.Bold(true)
+	if !m.colors.noColor {
+		hit = hit.Foreground(lipgloss.Color("4"))
+	}
 	cells := render.CellsOf(r, m.tags)
 	c = c.For(cells, width)
 	right := ""
@@ -654,6 +685,14 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 	}
 	right += muted.Render(fmt.Sprintf("%*s ", render.AgeWidth, cells.Age))
 	room := max(width-3-lipgloss.Width(right), 1)
+	title := ""
+	for _, span := range render.Marks(cells.Title, words) {
+		if span.Hit {
+			title += hit.Render(span.Text)
+		} else {
+			title += plain.Render(span.Text)
+		}
+	}
 	status := ""
 	if word := 2 + lipgloss.Width(cells.Status); cells.Status != "" && room-word >= minStatusTitle {
 		room -= word
@@ -663,7 +702,7 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 		}
 		status = plain.Render("  ") + paintStatus.Render(cells.Status)
 	}
-	left := plain.Render(" "+ansi.Truncate(cells.Title, room, "…")) + status
+	left := plain.Render(" ") + ansi.Truncate(title, room, plain.Render("…")) + status
 	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right), 2)
 	return ansi.Truncate(left+plain.Render(strings.Repeat(" ", gap))+right, width, "")
 }
@@ -742,10 +781,10 @@ func (m picker) View() tea.View {
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
-	cols := m.widths.Fit(l.listWidth)
+	cols, words := m.widths.Fit(l.listWidth), m.matchWords()
 	for i := m.offset; i < m.offset+l.listHeight; i++ {
 		if i < len(m.shown) {
-			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth, cols))
+			column = append(column, m.rowLine(m.shown[i], i == m.cursor, l.listWidth, cols, words))
 		} else {
 			column = append(column, "")
 		}
