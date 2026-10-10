@@ -137,7 +137,7 @@ def main(home):
         script = "#!/bin/sh\n"
         if name == "claude" and real_claude and real_home:
             script += f'[ "$1" = -p ] && HOME={shlex.quote(real_home)} exec {shlex.quote(real_claude)} "$@"\n'
-        stand_in.write_text(script + "exit 0\n")
+        stand_in.write_text(script + "printf '\\033[?25l'\nsleep 3\nprintf '\\033[?25h'\nexit 0\n")
         stand_in.chmod(0o755)
     now = time.time()
     for age, (project, title, branch, turns) in enumerate(SESSIONS):
