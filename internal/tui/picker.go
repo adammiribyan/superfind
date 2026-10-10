@@ -185,6 +185,8 @@ type picker struct {
 	askedFor    string
 	explained   map[string]string
 	message     string
+	notice      string
+	inTmux      bool
 
 	asks     *asks
 	chosen   *session.Row
@@ -234,7 +236,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{},
+		asks: &asks{}, inTmux: os.Getenv("TMUX") != "",
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
@@ -630,6 +632,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.loadPreview()
 		}
 	case tea.KeyPressMsg:
+		m.notice = ""
 		switch msg.String() {
 		case "esc":
 			if m.phase() != searching {
@@ -642,9 +645,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
-			m.chosen = m.focused()
-			m.quitting = true
-			return m, tea.Quit
+			return m.enter()
 		case "up", "ctrl+p":
 			m.cursor--
 			return m.afterMove()
@@ -681,6 +682,49 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m.editInput(msg)
+}
+
+type enterAction int
+
+const (
+	resumeIt enterAction = iota
+	goToPane
+	sayWhere
+)
+
+func onEnter(fresh *open.State, inTmux bool) enterAction {
+	switch {
+	case fresh == nil:
+		return resumeIt
+	case fresh.Tmux != nil && inTmux:
+		return goToPane
+	}
+	return sayWhere
+}
+
+func (m picker) enter() (tea.Model, tea.Cmd) {
+	r := m.focused()
+	if r == nil {
+		m.quitting = true
+		return m, tea.Quit
+	}
+	chosen := *r
+	if chosen.Open != nil {
+		state, ok := open.Find(agent.Places())[open.KeyOf(chosen.Agent.ID, chosen.Session.ID)]
+		chosen.Open = nil
+		if ok {
+			chosen.Open = &state
+		}
+	}
+	if onEnter(chosen.Open, m.inTmux) == sayWhere {
+		m.notice = "Already open in another terminal window."
+		if pane := chosen.Open.Tmux; pane != nil {
+			m.notice = fmt.Sprintf("Already open in tmux session “%s”, window %d.", render.Flat(pane.Session), pane.Window)
+		}
+		return m, nil
+	}
+	m.chosen, m.quitting = &chosen, true
+	return m, tea.Quit
 }
 
 func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -777,19 +821,23 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) hints() [][2]string {
+	enter := "resume"
+	if r := m.focused(); r != nil && onEnter(r.Open, m.inTmux) == goToPane {
+		enter = "go to it"
+	}
 	switch {
 	case m.phase() == asking:
 		return [][2]string{{"esc", "stop asking"}}
 	case m.phase() == asked && len(m.shown) == 0:
 		return [][2]string{{"esc", "back to search"}}
 	case m.phase() == asked:
-		return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"esc", "back to search"}}
+		return [][2]string{{"enter", enter}, {"tab", "view"}, {"esc", "back to search"}}
 	case len(m.all) == 0:
 		return [][2]string{{"esc", "quit"}}
 	case len(m.shown) == 0:
 		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
-	return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
+	return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}}
 }
 
 func (m picker) footer(width int) string {
@@ -842,7 +890,11 @@ func (m picker) View() tea.View {
 	l := m.layout()
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
-	column = append(column, ansi.Truncate(muted.Render(" "+m.message), l.listWidth, "…"))
+	message := m.message
+	if m.notice != "" {
+		message = m.notice
+	}
+	column = append(column, ansi.Truncate(muted.Render(" "+message), l.listWidth, "…"))
 	cols, words := m.widths.Fit(l.listWidth), m.matchWords()
 	for i := m.offset; i < m.offset+l.listHeight; i++ {
 		if i < len(m.shown) {
