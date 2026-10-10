@@ -28,7 +28,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
-const version = "0.9.1"
+const version = "0.10.0"
 
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
