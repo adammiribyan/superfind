@@ -333,7 +333,7 @@ func withPanes(claims map[Key]claim, listed <-chan map[proc.TTY]Pane) map[Key]St
 func tmuxPanes() map[proc.TTY]Pane {
 	ctx, cancel := context.WithTimeout(context.Background(), tmuxTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "tmux", "list-panes", "-a", "-F",
+	out, err := exec.CommandContext(ctx, "tmux", "-u", "list-panes", "-a", "-F",
 		"#{pane_tty}\t#{pane_id}\t#{window_index}\t#{session_name}").Output()
 	if err != nil {
 		return map[proc.TTY]Pane{}
