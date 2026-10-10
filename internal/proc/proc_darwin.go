@@ -55,12 +55,14 @@ func TerminalOf(path string) (TTY, bool) {
 }
 
 func processOf(k *unix.KinfoProc) Process {
-	pid := int(k.Proc.P_pid)
+	pid, tty := int(k.Proc.P_pid), fromTdev(k.Eproc.Tdev)
 	comm, _, _ := bytes.Cut(k.Proc.P_comm[:], []byte{0})
 	name := string(comm)
-	if args := Args(pid); len(args) > 0 && args[0] != "" {
-		name = filepath.Base(args[0])
+	if tty != (TTY{}) {
+		if args := Args(pid); len(args) > 0 && args[0] != "" {
+			name = filepath.Base(args[0])
+		}
 	}
 	started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*int64(time.Microsecond))
-	return Process{PID: pid, Name: name, Start: started, TTY: fromTdev(k.Eproc.Tdev)}
+	return Process{PID: pid, Name: name, Start: started, TTY: tty}
 }

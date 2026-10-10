@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -303,10 +304,10 @@ class SuperfindBehavior(unittest.TestCase):
         (folder / (name or f"{pid}.json")).write_text(json.dumps(
             {"pid": pid, "sessionId": session_id, "cwd": "/tmp", "startedAt": started_at, "status": "busy"}))
 
-    def private_tmux(self):
+    def private_tmux(self, command="exec sleep 300"):
         server = f"sfd-open-{os.getpid()}-{id(self)}"
         tmux = lambda *args: subprocess.run(["tmux", "-L", server, *args], capture_output=True, text=True, check=True).stdout
-        tmux("new-session", "-d", "-s", "work", "-x", "80", "-y", "20", "exec sleep 300")
+        tmux("new-session", "-d", "-s", "work", "-x", "80", "-y", "20", command)
         self.addCleanup(subprocess.run, ["tmux", "-L", server, "kill-server"], capture_output=True)
         pid, pane, socket, window = tmux("display-message", "-p", "-t", "work",
                                          "#{pane_pid}\t#{pane_id}\t#{socket_path}\t#{window_index}").strip().split("\t")
@@ -335,18 +336,17 @@ class SuperfindBehavior(unittest.TestCase):
         self.env["TMUX"] = f"{self.home}/no-such-socket,0,0"
         self.assertEqual(self.records()[uid(1)]["open"], {"pid": pid, "status": "busy", "tmux": None})
 
+    @unittest.skipUnless(shutil.which("tmux"), "codex runs in a terminal, here a tmux pane")
     def test_a_codex_session_resumed_by_id_is_open_while_codex_runs(self):
         stub = Path(tempfile.mkdtemp()) / "codex"
         stub.symlink_to(shutil.which("dash") or "/bin/sh")
         self.codex_session(uid(7), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."))
         self.codex_session(uid(8), codex_meta(), codex_user("fix the tests"), codex_reply("Fixed."))
-        codex = subprocess.Popen([str(stub), "-c", "read line", "resume", uid(7)], stdin=subprocess.PIPE,
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        self.addCleanup(codex.communicate)
-        self.addCleanup(codex.kill)
+        pid, pane, socket, window = self.private_tmux(f"exec {shlex.quote(str(stub))} -c 'read line' resume {uid(7)}")
+        self.env["TMUX"] = f"{socket},0,0"
         records = self.records()
         self.assertEqual([records[uid(7)]["open"], records[uid(8)]["open"]],
-                         [{"pid": codex.pid, "status": "", "tmux": None}, None])
+                         [{"pid": pid, "status": "", "tmux": {"pane": pane, "session": "work", "window": window}}, None])
 
     def test_bold_text_that_wraps_never_shows_its_markers(self):
         path = self.session("a1", user("summarize the incident for the team"), tool("Read"),
