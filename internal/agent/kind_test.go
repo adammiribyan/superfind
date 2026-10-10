@@ -144,6 +144,7 @@ func TestASlashCommandAnsweredByItsOwnOutputLeavesTheEndingAsItWas(t *testing.T)
 		{[]string{typed, compact, output}, Prompted},
 		{[]string{typed, reply, compact, output, reply, output}, Replied},
 		{[]string{typed, reply, compact, output, stopped, output}, Interrupted},
+		{[]string{typed, reply, compact, stopped, output}, Interrupted},
 	}
 	for i, c := range cases {
 		if tr := claudeLines(t, c.ending...); tr.Last != c.want {
