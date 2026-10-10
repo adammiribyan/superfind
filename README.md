@@ -138,6 +138,7 @@ superfind has no telemetry, analytics, or update checks. The requests above are 
 - Codex: `~/.codex/sessions`, every `~/.codex-*` folder, `$CODEX_HOME`, and `$SUPERFIND_CODEX_DIRS`. Sessions you archived are left out, and so are threads that another Codex thread started, such as subagents and reviews. Runs of `codex exec` are listed like any other session.
 - Grok: `~/.grok/sessions`, every `~/.grok-*` folder, `$GROK_HOME`, and `$SUPERFIND_GROK_DIRS`. Subagent runs are left out.
 - When one agent's sessions come from more than one folder, each row says which, and resuming sets that agent's home variable (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME`) to match.
+- Folders that share one sessions folder through a link, as Omarchy's agent accounts do, count as one, so each session is listed once. When the home variable points at one of them, that one is used.
 - Claude Code accounts you switch between with `/login` share one folder, so all their sessions appear. Resuming uses whichever account is logged in now.
 - A session whose folder was deleted, which is common with worktrees, is marked **folder removed** and resumes from the nearest parent folder that still exists.
 
