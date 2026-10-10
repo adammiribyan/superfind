@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-superfind reads your Claude Code, Codex, and Grok sessions and finds the one you want, by the words in it or by a description. Then it opens the session's folder and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh or bash.
+superfind reads your Claude Code, Codex, and Grok sessions and finds the one you want, by the words in it or by a description. Then it opens the session's folder and resumes it with the agent that made it, right in the terminal pane you're in. It runs on macOS and Linux, in zsh, bash, or fish.
 
 ![superfind searching sessions from three agents, listing the one waiting on you, asking for one by description, and resuming it](demo/superfind.gif)
 
@@ -68,7 +68,7 @@ The setup line takes effect in shells started after you add it, so open a new te
 Open the picker in any of these ways:
 
 - Run `superfind`, or `sfd` for short.
-- In zsh or bash, press **Ctrl-X**, then **c**.
+- In zsh, bash, or fish, press **Ctrl-X**, then **c**.
 - In Ghostty, press **Cmd-Shift-O**.
 
 The picker opens full screen. When you choose or cancel, it closes and leaves your scrollback as it was.
@@ -331,7 +331,7 @@ rm "$(go env GOPATH)/bin/superfind"                # go install, or $GOBIN/super
 rm ~/.local/bin/superfind                          # the install script, or install.sh
 ```
 
-Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, or `~/.bash_profile`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
+Delete the line containing `superfind init` from `~/.zshrc`, `~/.bashrc`, `~/.bash_profile`, or `~/.config/fish/config.fish`, and the `keybind = super+shift+o=text:\x18c` line from your Ghostty config if you added it. Then delete the index and your settings:
 
 ```sh
 rm -rf ~/.cache/superfind ~/.config/superfind      # and $XDG_CACHE_HOME/superfind if you set XDG_CACHE_HOME

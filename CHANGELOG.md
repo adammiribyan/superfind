@@ -15,7 +15,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
-- A resume command whose folder or id contains a backslash, `%`, or a leading `=` now means the same thing in fish, zsh, and bash. Before, zsh read a folder named `=sh` as `/bin/sh`.
+- A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 
 ## [0.10.0] - 2026-10-10
 
