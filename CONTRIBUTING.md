@@ -57,13 +57,13 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 
 ## Demo
 
-`demo/superfind.gif` is recorded with [vhs](https://github.com/charmbracelet/vhs) from fake sessions that `demo/make-home.py` writes to `/tmp/superfind-demo-home`:
+`demo/superfind.gif` is recorded with [vhs](https://github.com/charmbracelet/vhs) from fake sessions that `demo/make-home.py` writes to `/tmp/sfd-demo`:
 
 ```sh
 vhs demo/superfind.tape
 ```
 
-The recording runs ask for real. With a TypeSafe key in `.env` at the repo root, it uses Jev and also shows labels. Without one, it sends ask to Claude Haiku through your Claude Code login, so Claude Code must be installed and logged in.
+The recording runs ask and labeling for real. With a TypeSafe key in `.env` at the repo root, ask uses Jev and the `is:waiting` step shows the session waiting on you. Without one, ask goes to Claude Haiku through your Claude Code login, so Claude Code must be installed and logged in, and the `is:waiting` step shows an empty list; record the README's GIF with a key.
 
 ## Releasing
 
