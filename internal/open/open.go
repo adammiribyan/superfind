@@ -31,6 +31,10 @@ type State struct {
 	Tmux   *Pane  `json:"tmux"`
 }
 
+func (s State) Equal(t State) bool {
+	return s.PID == t.PID && s.Status == t.Status && (s.Tmux == t.Tmux || s.Tmux != nil && t.Tmux != nil && *s.Tmux == *t.Tmux)
+}
+
 type Key struct{ Agent, ID string }
 
 func KeyOf(agent, id string) Key { return Key{agent, strings.ToLower(id)} }

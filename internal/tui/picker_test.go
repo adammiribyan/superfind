@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -143,5 +144,44 @@ func TestAStatusFollowsTheTitleUntilTheTitleWouldGetUnderEightCells(t *testing.T
 		if got := ansi.Strip(m.rowLine(row, false, width, render.Columns{}, nil)); got != want {
 			t.Errorf("at width %d the row reads %q, want %q", width, got, want)
 		}
+	}
+}
+
+func TestARunningPickerMarksASessionThatOpensWithoutMovingFocus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	rows := []session.Row{
+		{Path: "a", Agent: agent.Named("claude"), Session: session.Session{ID: "id-a", Title: "Ledger migration", Cwd: "/tmp", Mtime: 2, Prompts: 5}},
+		{Path: "b", Agent: agent.Named("claude"), Session: session.Session{ID: "id-b", Title: "Invoice layout", Cwd: "/tmp", Mtime: 1, Prompts: 5}},
+	}
+	m := newPicker(rows, nil, "")
+	m.cursor = 1
+	openOf := func(m picker, path string) *open.State {
+		i := slices.IndexFunc(m.shown, func(r session.Row) bool { return r.Path == path })
+		return m.shown[i].Open
+	}
+	held := func() heldMsg {
+		return heldMsg{open.KeyOf("claude", "id-a"): {PID: 4242, Status: "busy", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}}
+	}
+	next, _ := m.Update(held())
+	m = next.(picker)
+	want := open.State{PID: 4242, Status: "busy", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
+	if got := openOf(m, "a"); got == nil || got.PID != want.PID || got.Status != want.Status || *got.Tmux != *want.Tmux {
+		t.Fatalf("row a open = %+v, want %+v", got, want)
+	}
+	if got := openOf(m, "b"); got != nil {
+		t.Fatalf("row b open = %+v, want nil", got)
+	}
+	if m.focused().Path != "b" {
+		t.Fatalf("focus moved to %s", m.focused().Path)
+	}
+	before := openOf(m, "a")
+	next, _ = m.Update(held())
+	if got := openOf(next.(picker), "a"); got != before {
+		t.Fatalf("an unchanged lookup rebuilt the rows: open %p, was %p", got, before)
+	}
+	next, _ = next.(picker).Update(heldMsg{})
+	if got := openOf(next.(picker), "a"); got != nil {
+		t.Fatalf("after the process exited: row a open = %+v", got)
 	}
 }
