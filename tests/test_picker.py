@@ -602,6 +602,44 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Resuming")
         self.assertIn("\n/tmp", self.screen())
 
+    def last_through_shell(self, shell):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.folder_sessions()
+        self.session("shop-new", "Newest elsewhere", user("charge once", cwd=str(self.home / "shop")), tool("Edit"),
+                     claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        tmux("new-session", "-d", "-s", self.session_name, "-x", "160", "-y", "32", f"env -i {env} {start}")
+        time.sleep(0.5)
+        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        self.keys(f"cd {self.home / 'app'}", "Enter")
+        self.keys("superfind last --json", "Enter")
+        self.wait_for('"schema":1')
+        time.sleep(0.5)
+        self.assertNotIn("Resuming", self.screen())
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.keys("clear", "Enter")
+        self.keys("superfind last", "Enter")
+        deadline = time.time() + 5
+        while not Path(f"{self.out}.resumed").exists() and time.time() < deadline:
+            time.sleep(0.1)
+        folder = self.home / "app" / "sub"
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume sub\n")
+        self.keys("pwd", "Enter")
+        self.wait_for("Resuming")
+        self.assertIn("Resuming Invoice layout", self.screen())
+        self.wait_for(f"\n{folder}\n")
+
+    def test_typing_superfind_last_in_zsh_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("zsh")
+
+    def test_typing_superfind_last_in_bash_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("bash")
+
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])
 

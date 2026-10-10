@@ -5,7 +5,8 @@ import subprocess
 import time
 import unittest
 
-from test_superfind import SUPERFIND, SuperfindBehavior, claude, line, tool, user
+from test_superfind import (ANSI, SUPERFIND, SuperfindBehavior, claude, codex_call, codex_meta, codex_output, codex_reply,
+                            codex_user, line, tool, uid, user)
 
 WHEN = "takes a day like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w."
 MALFORMED = {
@@ -133,7 +134,7 @@ class Recall(SuperfindBehavior):
 
     def test_a_filter_that_cannot_be_read_is_a_usage_mistake_before_any_work(self):
         log = self.logging_claude()
-        for command in ("search", "ask"):
+        for command in ("search", "ask", "last"):
             for token, hint in MALFORMED.items():
                 for args in ((command, "ledger", token), (command, "--json", token)):
                     result = self.run_in(*args)
@@ -156,6 +157,64 @@ class Recall(SuperfindBehavior):
         self.worked("app", "/work/app")
         self.assertEqual(self.ids("is:bogus", "agent:bogus", "ledger"), ["app"])
         self.assertEqual(self.ids("foo:bar"), [])
+
+    def last(self, *args, pwd="/work/app"):
+        result = self.run_in("last", *args, pwd=pwd)
+        return result.returncode, ANSI.sub("", result.stdout), result.stderr
+
+    def handoff(self, path, title):
+        return f"{title}\n{self.superfind('command', str(path))}"
+
+    def test_last_prints_the_newest_real_session_here_and_the_command_that_resumes_it(self):
+        self.worked("app", "/work/app")
+        sub = self.session("sub", user("wrap the invoice names", cwd="/work/app/sub"), tool("Edit"), claude("Wrapped."),
+                           title="Invoice names")
+        self.session("hi", user("hi", cwd="/work/app"), claude("Hello."))
+        self.worked("other", "/elsewhere/other")
+        self.by_agent("sdk", "/work/app")
+        self.assertEqual(self.last(), (0, self.handoff(sub, "Invoice names"), ""))
+        [record] = [json.loads(row) for row in self.last("--json")[1].splitlines()]
+        self.assertEqual((record["id"], record["kind"], record["match"], record["resume"]),
+                         ("sub", "interactive", "", self.superfind("command", str(sub)).strip()))
+        self.assertEqual([json.loads(row)["id"] for row in self.last("--json", "is:agent")[1].splitlines()], ["sdk"])
+        self.assertEqual(self.last("branch:nope")[:2], (1, ""))
+        hi = self.projects / "hi.jsonl"
+        self.assertEqual(self.last(pwd="/work/app/sub/deeper")[1], self.handoff(sub, "Invoice names"))
+        for name in ("app", "sub"):
+            (self.projects / f"{name}.jsonl").unlink()
+        self.assertEqual(self.last()[1], self.handoff(hi.resolve(), "hi"))
+
+    def test_last_takes_the_agent_and_every_other_filter(self):
+        self.worked("app", "/work/app")
+        codex = self.codex_session(uid(1), codex_meta(cwd="/work/app"), codex_user("migrate the ledger index"), codex_call(),
+                                   codex_output(), codex_reply("Migrated."))
+        self.worked("newest", "/work/app", branch="fix")
+        code, out, _ = self.last("agent:codex")
+        self.assertEqual((code, out), (0, self.handoff(codex, "migrate the ledger index")))
+        self.assertIn(f"codex resume {uid(1)}", out)
+        self.assertEqual(self.last("branch:main", "agent:claude")[1].splitlines()[1], self.superfind("command", "app").strip())
+
+    def test_a_session_still_running_says_it_may_be_open(self):
+        path = self.worked("app", "/work/app", at=time.time())
+        self.assertEqual(self.last()[1].splitlines()[0], "fix the ledger · may still be open in another window")
+        self.assertIn(f"--resume {path.stem}", self.last()[1])
+
+    def test_last_with_nothing_here_or_words_or_an_unknown_option_says_so(self):
+        self.worked("other", "/elsewhere/other")
+        self.assertEqual(self.last(), (1, "", "superfind last: no session started in this folder or a folder inside it.\n"))
+        self.assertEqual(self.last("agent:codex"),
+                         (1, "", "superfind last: no session that fits these filters started in this folder or a folder inside it.\n"))
+        for args in (("ledger",), ("agent:codex", "ledger"), ("--", "--json")):
+            self.assertEqual(self.last(*args), (2, "", "superfind last: takes filters, such as agent:codex or branch:main, not words. "
+                                                       "To search this folder, use superfind search in:here WORDS.\n"), args)
+        self.assertEqual(self.last("--frobnicate"), (2, "", "superfind last: there is no --frobnicate option. See superfind help last.\n"))
+
+    def test_last_explains_itself(self):
+        for args in (("help", "last"), ("last", "--help"), ("last", "-h")):
+            result = self.run_in(*args)
+            self.assertEqual((result.returncode, result.stderr), (0, ""), args)
+            self.assertTrue(result.stdout.startswith("superfind last [FILTERS] [--json]\n"), args)
+        self.assertIn("superfind last [FILTERS] [--json]", self.superfind("--help"))
 
 
 def load_tests(loader, tests, pattern):
