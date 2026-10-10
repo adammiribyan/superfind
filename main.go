@@ -40,7 +40,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
   superfind search WORDS [--json]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent, and
+                          agent:claude, agent:codex, and agent:grok by the agent,
+                          is:open shows sessions an agent has open right now, and
                           is:agent shows sessions another program started
   superfind ask WORDS [--json]
                           print the sessions that best fit what you describe, even in other words;
@@ -89,6 +90,7 @@ program started, such as codex exec, claude -p, or another Claude Code session, 
 unless you ask for them with is:agent.
 
   is:waiting      only sessions waiting on you; is:unfinished works the same way
+  is:open         only sessions an agent has open right now
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
   --json          print one JSON object per session instead, including the ones another
