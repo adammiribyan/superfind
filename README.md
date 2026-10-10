@@ -41,6 +41,8 @@ eval "$(superfind init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
 superfind init fish | source     # in ~/.config/fish/config.fish
 ```
 
+fish needs version 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
+
 To open superfind with Cmd-Shift-O in Ghostty, also add this line to your Ghostty config, then reload the config with Cmd-Shift-, (comma):
 
 ```

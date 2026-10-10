@@ -76,7 +76,8 @@ Add one line to your shell's startup file:
   superfind init fish | source     # in ~/.config/fish/config.fish
 
 Then superfind with no arguments, sfd, or Ctrl-X c opens the picker. Choosing a session cds
-into its folder and runs its agent's resume command, which lands in your shell history.
+into its folder and runs its agent's resume command, which lands in your shell history
+(in fish, from version 4.0). fish needs version 3.1 or later.
 `,
 	"pick": `superfind pick
 
