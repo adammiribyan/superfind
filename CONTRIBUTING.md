@@ -67,7 +67,7 @@ The recording runs ask for real. With a TypeSafe key in `.env` at the repo root,
 
 ## Releases
 
-Maintainers release by setting `version` in `main.go`, adding the version's date to CHANGELOG.md, committing, and pushing a tag such as `v0.9.0`. The release workflow checks that the tag matches `superfind --version`, then GoReleaser builds the macOS and Linux binaries, publishes the GitHub release, and updates the Homebrew cask in `adammiribyan/homebrew-tap`.
+Maintainers release by setting `version` in `main.go`, adding the version's date to CHANGELOG.md, committing, and pushing a tag such as `v0.9.0`. The release workflow checks that every release secret is set and that the tag matches `superfind --version`. GoReleaser then builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release. Jobs on arm64 and amd64 Macs check that the draft's binaries are signed, notarized, and run under quarantine. Only then does the workflow push the Homebrew cask to `adammiribyan/homebrew-tap` and publish the release. [RELEASE.md](RELEASE.md) is the full checklist.
 
 ## Conduct
 

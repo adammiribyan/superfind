@@ -24,6 +24,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The README reports label accuracy on hand-labeled Codex and Grok sessions.
 - `--help`, `-h`, `superfind help <command>`, and `<command> --help`.
 - On a machine with no sessions, superfind says where it looked.
+- The macOS binaries are signed with a Developer ID certificate and notarized by Apple, so the Homebrew cask no longer removes macOS's quarantine flag.
 
 ### Removed
 
