@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -49,8 +51,9 @@ var evidenceFor = map[string]evidence{
 }
 
 const (
-	clockSlack  = time.Second
-	tmuxTimeout = 500 * time.Millisecond
+	clockSlack    = time.Second
+	tmuxTimeout   = 500 * time.Millisecond
+	registryLimit = 1 << 20
 )
 
 func Find(places []agent.Place) map[Key]State {
@@ -99,11 +102,11 @@ func claudeClaims(home string) []claim {
 	var out []claim
 	for _, e := range entries {
 		pid, ok := pidFileName(e.Name())
-		if !ok || !e.Type().IsRegular() {
+		if !ok {
 			continue
 		}
-		raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
+		raw, ok := readRegistry(filepath.Join(dir, e.Name()))
+		if !ok {
 			continue
 		}
 		if c, ok := claudeClaim(raw, pid); ok {
@@ -141,13 +144,22 @@ func claudeClaim(raw []byte, pid int) (claim, bool) {
 	return claim{Key{"claude", f.SessionID}, State{PID: f.PID, Status: statusOf(f.Status)}, p.TTY}, true
 }
 
-func grokClaims(home string) []claim {
-	path := filepath.Join(home, "active_sessions.json")
-	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
-		return nil
-	}
-	raw, err := os.ReadFile(path)
+func readRegistry(path string) ([]byte, bool) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, registryLimit+1))
+	return raw, err == nil && len(raw) <= registryLimit
+}
+
+func grokClaims(home string) []claim {
+	raw, ok := readRegistry(filepath.Join(home, "active_sessions.json"))
+	if !ok {
 		return nil
 	}
 	var out []claim

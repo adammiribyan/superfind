@@ -1,6 +1,7 @@
 package open
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -216,5 +217,39 @@ func TestFindReportsAGrokSessionFromItsActiveList(t *testing.T) {
 	got := Find([]agent.Place{{Agent: agent.Named("grok"), Home: home}})
 	if state, ok := got[Key{"grok", sessionID}]; !ok || state != (State{PID: me}) {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestFindReadsOnlyARegistryThatIsAPlainSmallFile(t *testing.T) {
+	needsProcessFacts(t)
+	me := os.Getpid()
+	claude, grok := claudeHome(t), filepath.Join(t.TempDir(), ".grok")
+	os.MkdirAll(grok, 0o700)
+	elsewhere := t.TempDir()
+	claudeKey, grokKey := filepath.Join(elsewhere, "1.abc.key"), filepath.Join(elsewhere, "2.abc.key")
+	os.WriteFile(claudeKey, pidJSON(me, sessionID, time.Now(), "busy"), 0o600)
+	os.WriteFile(grokKey, []byte(fmt.Sprintf(`[{"session_id":%q,"pid":%d,"opened_at":%q}]`, sessionID, me, time.Now().UTC().Format(time.RFC3339))), 0o600)
+	fifo := filepath.Join(elsewhere, "pipe")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Symlink(claudeKey, filepath.Join(claude, "sessions", strconv.Itoa(me)+".json"))
+	os.Symlink(fifo, filepath.Join(claude, "sessions", "999999.json"))
+	os.Symlink(grokKey, filepath.Join(grok, "active_sessions.json"))
+	places := []agent.Place{{Agent: agent.Named("claude"), Home: claude}, {Agent: agent.Named("grok"), Home: grok}}
+	if got := Find(places); len(got) != 0 {
+		t.Fatalf("a symlinked registry was read: %+v", got)
+	}
+	os.Remove(filepath.Join(grok, "active_sessions.json"))
+	os.Symlink(fifo, filepath.Join(grok, "active_sessions.json"))
+	padded := append(pidJSON(me, sessionID, time.Now(), "busy"), bytes.Repeat([]byte(" "), 1<<20)...)
+	os.Remove(filepath.Join(claude, "sessions", strconv.Itoa(me)+".json"))
+	os.WriteFile(filepath.Join(claude, "sessions", strconv.Itoa(me)+".json"), padded, 0o600)
+	if got := Find(places); len(got) != 0 {
+		t.Fatalf("an oversized pid file was read: %+v", got)
+	}
+	os.WriteFile(filepath.Join(claude, "sessions", strconv.Itoa(me)+".json"), pidJSON(me, sessionID, time.Now(), "busy"), 0o600)
+	if got := Find(places); got[Key{"claude", sessionID}] != (State{PID: me, Status: "busy"}) {
+		t.Fatalf("a plain pid file was not read: %+v", got)
 	}
 }
