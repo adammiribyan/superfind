@@ -213,7 +213,7 @@ func (m picker) matchWords() []string {
 
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in := textinput.New()
-	in.Prompt = "› "
+	in.Prompt = ""
 	in.Placeholder = "Search sessions and conversations"
 	in.SetVirtualCursor(false)
 	in.Focus()
@@ -285,7 +285,6 @@ func (m picker) layout() layout {
 
 func (m *picker) styleInput() {
 	styles := textinput.DefaultStyles(m.colors.bg == nil || isDark(m.colors.bg))
-	styles.Focused.Prompt = m.colors.accent
 	styles.Focused.Text = lipgloss.NewStyle()
 	styles.Focused.Placeholder = m.colors.muted
 	styles.Cursor.Color = nil
@@ -481,7 +480,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.screenHeight = msg.Height
 		m.width, m.height = max(msg.Width-2*marginSide, 1), max(msg.Height-marginTop, 1)
-		m.input.SetWidth(max(m.layout().listWidth-14, 4))
+		m.input.SetWidth(max(m.layout().listWidth-12, 4))
 		return m.afterMove()
 	case tea.BackgroundColorMsg:
 		m.colors.bg = msg.Color
@@ -631,7 +630,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.loadPreview()
 		case "ctrl+/", "ctrl+_":
 			m.hidePreview = !m.hidePreview
-			m.input.SetWidth(max(m.layout().listWidth-14, 4))
+			m.input.SetWidth(max(m.layout().listWidth-12, 4))
 			return m.afterMove()
 		case "alt+up":
 			m.body.PageUp()

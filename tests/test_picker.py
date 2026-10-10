@@ -435,6 +435,14 @@ class PickerBehavior(unittest.TestCase):
         self.keys("C-u")
         self.wait_for("3/3")
 
+    def test_the_search_box_has_no_prompt_mark_and_the_cursor_follows_the_text(self):
+        self.three_sessions()
+        self.open_picker()
+        self.keys("led")
+        box = next(l for l in self.screen().splitlines() if "1/3" in l)
+        cursor = tmux("display", "-p", "-t", self.session_name, "#{cursor_x},#{cursor_y}").stdout.strip()
+        self.assertEqual((box[:7], cursor), (" │ led ", f"6,{self.screen().splitlines().index(box)}"))
+
     def test_enter_prints_the_title_and_the_command_that_resumes_it(self):
         self.three_sessions()
         self.open_picker()
