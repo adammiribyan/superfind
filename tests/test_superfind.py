@@ -114,6 +114,7 @@ CODEX_ENVIRONMENT = "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_con
 class SuperfindBehavior(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.home, True)
         self.projects = self.home / ".claude" / "projects" / "-work-billing"
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
@@ -208,7 +209,7 @@ class SuperfindBehavior(unittest.TestCase):
         return path.resolve()
 
     def superfind(self, *args):
-        result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True)
+        result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True, timeout=60)
         return ANSI.sub("", result.stdout)
 
     def run_superfind(self, *args):
@@ -321,7 +322,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.session(uid(3), user("tidy the readme"), tool("Edit"), claude("Tidied."), title="Readme tidy")
         now_ms = int(time.time() * 1000)
         self.claude_pid_file(pid, uid(1), now_ms)
-        (self.home / ".claude" / "sessions" / f"{pid}.deadbeef.key").write_text("secret")
+        os.mkfifo(self.home / ".claude" / "sessions" / f"{pid}.deadbeef.key")
         dead = subprocess.Popen(["true"])
         dead.wait()
         self.claude_pid_file(dead.pid, uid(2), now_ms)
@@ -338,7 +339,9 @@ class SuperfindBehavior(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("tmux"), "codex runs in a terminal, here a tmux pane")
     def test_a_codex_session_resumed_by_id_is_open_while_codex_runs(self):
-        stub = Path(tempfile.mkdtemp()) / "codex"
+        stubs = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, stubs, True)
+        stub = Path(stubs) / "codex"
         stub.symlink_to(shutil.which("dash") or "/bin/sh")
         self.codex_session(uid(7), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."))
         self.codex_session(uid(8), codex_meta(), codex_user("fix the tests"), codex_reply("Fixed."))
