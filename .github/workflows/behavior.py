@@ -7,19 +7,22 @@
       run the tests of shard SHARD (1-based) of SHARDS in WORKERS long-lived
       processes, and write what ran, failed, and was skipped, with each test's
       duration, to COUNTS_FILE
-  behavior.py total COUNTS_DIR
+  behavior.py total COUNTS_DIR [ALLOWED_SKIP ...]
       check that the counts files under COUNTS_DIR cover every behavior test
-      exactly once
+      exactly once, that none failed, and that only the named tests skipped
 
 Shards are balanced on the durations in behavior-durations.json (a test
 missing from it counts as the median), longest first. Within a shard, each
 worker process takes the next longest test as it frees up, and keeps running
 tests until none are left, as one unittest process would. Each worker has its own
-TMUX_TMPDIR, so no two tests running at once share a tmux server.
+TMUX_TMPDIR, so no two tests running at once share a tmux server. A test still
+running after max(120s, 4 times its recorded duration) fails, and its worker
+is replaced.
 """
 import json
 import os
 import queue
+import select
 import statistics
 import subprocess
 import sys
@@ -27,6 +30,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -91,10 +95,15 @@ class Worker:
         os.close(write)
         self.results = os.fdopen(read)
 
-    def run(self, test_id):
+    def run(self, test_id, deadline):
         try:
             self.proc.stdin.write(test_id + "\n")
             self.proc.stdin.flush()
+            if not select.select([self.results], [], [], deadline)[0]:
+                self.proc.kill()
+                self.proc.wait()
+                return {"ran": 0, "seconds": deadline, "failed": True, "skipped": False,
+                        "output": f"still running after {deadline:.0f}s; the worker was stopped"}
             line = self.results.readline()
         except OSError:
             line = ""
@@ -113,6 +122,7 @@ class Worker:
 
 def run(shard, shards, workers, counts_file):
     ids, planned = shard_of(test_ids(), shard, shards)
+    cost = expected_durations(ids)
     print(f"shard {shard}/{shards}: {len(ids)} tests, about {planned:.0f}s of work by past durations, {workers} at a time")
     work = Path(tempfile.mkdtemp(prefix="behavior-"))
     todo = queue.Queue()
@@ -130,10 +140,11 @@ def run(shard, shards, workers, counts_file):
             except queue.Empty:
                 current.close()
                 return
-            result = current.run(test_id)
-            if result is None:
-                result = {"ran": 0, "seconds": 0, "failed": True, "skipped": False,
-                          "output": f"the worker process died running this test (exit {current.proc.poll()})"}
+            result = current.run(test_id, max(120.0, 4 * cost[test_id]))
+            if result is None or current.proc.poll() is not None:
+                if result is None:
+                    result = {"ran": 0, "seconds": 0, "failed": True, "skipped": False,
+                              "output": f"the worker process died running this test (exit {current.proc.poll()})"}
                 current.close()
                 current = Worker(tmux)
             result["failed"] = result["failed"] or result["ran"] != 1
@@ -142,7 +153,9 @@ def run(shard, shards, workers, counts_file):
                 mark = "FAIL" if result["failed"] else "skip" if result["skipped"] else "ok"
                 print(f"{mark:4} {result['seconds']:6.1f}s  {test_id}", flush=True)
                 if result["failed"]:
-                    print(f"::group::output of {test_id}\n{result['output']}\n::endgroup::", flush=True)
+                    token = uuid.uuid4().hex
+                    print(f"::group::output of {test_id}\n::stop-commands::{token}\n{result['output']}\n::{token}::\n::endgroup::",
+                          flush=True)
 
     start = time.time()
     threads = [threading.Thread(target=worker, args=(n,)) for n in range(workers)]
@@ -169,21 +182,28 @@ def run(shard, shards, workers, counts_file):
     sys.exit(0 if ok else 1)
 
 
-def total(counts_dir):
+def total(counts_dir, allowed_skips):
     want = test_ids()
     files = sorted(Path(counts_dir).rglob("*.json"))
-    ran = [i for f in files for i in json.loads(f.read_text())["ids"]]
-    skipped = [i for f in files for i in json.loads(f.read_text())["skipped"]]
-    print(f"{len(files)} shards, {len(ran)} tests ran, {len(skipped)} skipped, {len(want)} tests exist")
+    counts = [json.loads(f.read_text()) for f in files]
+    ran = [i for c in counts for i in c["ids"]]
+    skipped = [i for c in counts for i in c["skipped"]]
+    failed = [i for c in counts for i in c["failed"]]
+    print(f"{len(files)} shards, {len(ran)} tests ran, {len(skipped)} skipped, {len(failed)} failed, {len(want)} tests exist")
     for t in skipped:
-        print(f"  skipped: {t}")
+        print(f"  skipped: {t}" + ("" if t in allowed_skips else " (not expected on this system)"))
+        if t not in allowed_skips:
+            print(f"::error::skipped, and not on this system's list of expected skips: {t}")
+    for t in failed:
+        print(f"::error::failed: {t}")
     missing = sorted(set(want) - set(ran))
     extra = sorted({i for i in ran if ran.count(i) > 1 or i not in want})
     for t in missing:
         print(f"::error::never ran: {t}")
     for t in extra:
         print(f"::error::ran twice or unknown: {t}")
-    sys.exit(0 if files and not missing and not extra and len(ran) == len(want) else 1)
+    unexpected = set(skipped) - set(allowed_skips)
+    sys.exit(0 if files and not missing and not extra and not failed and not unexpected and len(ran) == len(want) else 1)
 
 
 if __name__ == "__main__":
@@ -192,7 +212,7 @@ if __name__ == "__main__":
         print("\n".join(test_ids()))
     elif command == "run" and len(sys.argv) == 6:
         run(int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
-    elif command == "total" and len(sys.argv) == 3:
-        total(sys.argv[2])
+    elif command == "total" and len(sys.argv) >= 3:
+        total(sys.argv[2], sys.argv[3:])
     else:
         sys.exit(__doc__)
