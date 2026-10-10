@@ -12,12 +12,12 @@ Set TypingSpeed 50ms
 Set WaitTimeout 90s
 
 Hide
-Type `go build -o bin/superfind . && export DEMO_CLAUDE=$(command -v claude) DEMO_HOME=$HOME && export HOME=/tmp/sfd-demo XDG_CACHE_HOME=/tmp/sfd-demo/.cache PATH=$PWD/bin:/tmp/sfd-demo/bin:$PATH` Enter
+Type `unset ${(k)parameters[(I)CLAUDE*]} ${(k)parameters[(I)ANTHROPIC*]}; go build -o bin/superfind . && export DEMO_CLAUDE=$(command -v claude) DEMO_HOME=$HOME && export HOME=/tmp/sfd-demo XDG_CACHE_HOME=/tmp/sfd-demo/.cache PATH=$PWD/bin:/tmp/sfd-demo/bin:$PATH` Enter
 Type `python3 demo/make-home.py $HOME && rehash && eval "$(superfind init zsh)" && cd ~/code && superfind index >/dev/null && { superfind label >/dev/null 2>&1; PROMPT='%F{blue}%~ >%f '; clear; }` Enter
 Wait+Screen /code >/
 Show
 
-Sleep 600ms
+Sleep 1s
 Type "superfind" Enter
 Wait+Screen@15s /Sessions/
 Sleep 2.2s
@@ -36,4 +36,5 @@ Wait+Screen@30s /Sessions by description/
 Sleep 2.5s
 Enter
 Wait+Screen@10s /Resuming/
-Sleep 3.5s
+Sleep 1.5s
+Hide
