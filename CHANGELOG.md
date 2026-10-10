@@ -171,7 +171,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
-- Throwaway sessions sort last and are left out of ask.
+- Very short sessions (two prompts or fewer, under 150 words, and no tool calls) sort last and are left out of ask.
 - The preview opens on your last request longer than three words, so "done" no longer stands in for the work.
 
 ### Fixed

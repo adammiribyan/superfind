@@ -77,7 +77,7 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 
 Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words.
 
-Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. One-line "hi" sessions that did no work sink to the bottom.
+Each row shows a session's title, how long ago it was active, and its project. When your sessions come from more than one agent, each row also names its agent. Sessions from the folder you're in come first, then everything else, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched.
 
@@ -127,7 +127,7 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 ## What leaves your machine
 
-Asking sends the ranker your description and, for each session except one-line "hi" sessions, its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+Asking sends the ranker your description and, for each session except very short ones (two prompts or fewer, under 150 words, and no tool calls), its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions and very short ones are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
