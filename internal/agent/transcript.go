@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -148,7 +147,11 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 		return err
 	}
 	defer f.Close()
-	lines := bufio.NewReaderSize(f, 1<<20)
+	return scanLines(f, fn)
+}
+
+func scanLines(r io.Reader, fn func(raw []byte) bool) error {
+	lines := bufio.NewReaderSize(r, 1<<20)
 	var long []byte
 	tooLong := false
 	for {
@@ -160,7 +163,7 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 			continue
 		}
 		if long != nil || tooLong {
-			if !tooLong {
+			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
 				raw = append(long, raw...)
 			} else {
 				raw = nil
@@ -224,6 +227,15 @@ func read(a *Agent, path string, start Transcript) (Transcript, error) {
 
 const firstEndingWindow = 1 << 20
 
+func skipLine(r *bufio.Reader) bool {
+	for {
+		_, err := r.ReadSlice('\n')
+		if !errors.Is(err, bufio.ErrBufferFull) {
+			return err == nil
+		}
+	}
+}
+
 func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
 	f, err := openFile(path)
 	if err != nil {
@@ -237,26 +249,20 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 	size := info.Size()
 	for window := int64(firstEndingWindow); ; window *= 4 {
 		start := max(size-window, 0)
-		buf := make([]byte, size-start)
-		if _, err := f.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
-			return nil, err
-		}
-		if start > 0 {
-			buf = buf[bytes.IndexByte(buf, '\n')+1:]
-		}
 		r, err := a.reader(path, Transcript{Last: Replied})
 		if err != nil {
 			return nil, err
 		}
-		for len(buf) > 0 {
-			end := bytes.IndexByte(buf, '\n') + 1
-			if end == 0 {
-				end = len(buf)
-			}
-			if end <= longestLine {
-				r.feed(buf[:end])
-			}
-			buf = buf[end:]
+		lines := bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
+		if start > 0 && !skipLine(lines) {
+			lines = bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
+		}
+		err = scanLines(lines, func(raw []byte) bool {
+			r.feed(raw)
+			return true
+		})
+		if err != nil {
+			return nil, err
 		}
 		read := r.done()
 		turns := read.Turns
