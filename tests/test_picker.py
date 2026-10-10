@@ -20,6 +20,7 @@ from test_superfind import (SUPERFIND, claude, codex_call, codex_meta, codex_out
 
 
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
+CELL_GAP = r" {2,}"
 
 
 def tmux(*args):
@@ -106,11 +107,11 @@ class PickerBehavior(unittest.TestCase):
                      user("add a test that taps twice"), tool("Edit"), claude("Added a test that taps Pay twice."))
 
     def row_lines(self):
-        return [l.split("│")[0].rstrip() for l in self.screen().splitlines()
-                if AGE.fullmatch(re.split(r" {2,}", l.split("│")[0].strip())[-1])]
+        return [l.split("│")[0].rstrip() for l in self.screen().expandtabs().splitlines()
+                if AGE.fullmatch(re.split(CELL_GAP, l.split("│")[0].strip())[-1])]
 
     def cells(self):
-        return [re.split(r" {2,}", l.strip()) for l in self.row_lines()]
+        return [re.split(CELL_GAP, l.strip()) for l in self.row_lines()]
 
     def rows(self):
         return ["  ".join(c) for c in self.cells()]
