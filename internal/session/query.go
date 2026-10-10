@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -152,14 +153,6 @@ func (q Query) keeps(r Row, everyKind bool) bool {
 func seconds(t time.Time) float64 { return float64(t.UnixNano()) / 1e9 }
 
 func hereMatcher() func(string) bool {
-	pwd := os.Getenv("PWD")
-	if !filepath.IsAbs(pwd) {
-		wd, err := os.Getwd()
-		if err != nil {
-			return func(string) bool { return false }
-		}
-		pwd = wd
-	}
 	seen := map[string][]string{}
 	forms := func(path string) []string {
 		if f, ok := seen[path]; ok {
@@ -172,20 +165,38 @@ func hereMatcher() func(string) bool {
 		seen[path] = f
 		return f
 	}
-	here, ends := forms(pwd), append(forms(agent.Home()), "/")
+	var here []string
+	if pwd := os.Getenv("PWD"); filepath.IsAbs(pwd) && sameFolder(pwd, ".") {
+		here = append(here, forms(pwd)...)
+	}
+	if wd, err := syscall.Getwd(); err == nil {
+		here = append(here, forms(wd)...)
+	}
+	ends := append([]string{"/"}, forms(agent.Home())...)
 	return func(cwd string) bool {
 		if cwd == "" {
 			return false
 		}
-		for _, c := range forms(cwd) {
+		own := forms(cwd)
+		end := slices.ContainsFunc(own, func(c string) bool { return slices.Contains(ends, c) })
+		for _, c := range own {
 			for _, p := range here {
-				if c == p || inside(c, p) || inside(p, c) && !slices.Contains(ends, c) {
+				if c == p || inside(c, p) || inside(p, c) && !end {
 					return true
 				}
 			}
 		}
 		return false
 	}
+}
+
+func sameFolder(a, b string) bool {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	bi, err := os.Stat(b)
+	return err == nil && os.SameFile(ai, bi)
 }
 
 func inside(path, folder string) bool {

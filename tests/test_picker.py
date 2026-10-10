@@ -36,6 +36,7 @@ class PickerBehavior(unittest.TestCase):
         self.out = self.home / "out"
         self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
+        self.here = Path("/")
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
                     "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
 
@@ -65,7 +66,8 @@ class PickerBehavior(unittest.TestCase):
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
-        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command, *style)
+        tmux("new-session", "-d", "-s", self.session_name, "-c", str(self.here), "-x", str(width), "-y", str(height), command,
+             *style)
         self.wait_for(header)
 
     def screen(self, *flags):
@@ -979,14 +981,15 @@ class PickerBehavior(unittest.TestCase):
         self.session("old", "Old ledger fix", user("fix the ledger", cwd=str(self.home / "app"), branch="fix"),
                      tool("Bash"), claude("Done."))
         os.utime(self.projects / "old.jsonl", (time.time() - 10 * 86400, time.time() - 10 * 86400))
-        self.env["PWD"] = str(self.home / "app")
+        self.here = self.home / "app"
+        self.env["PWD"] = str(self.here)
 
     def test_filters_in_the_picker_list_what_search_prints_in_the_same_order(self):
         self.folder_sessions()
         self.open_picker()
         for query in ("in:here", "in:here branch:FIX", "branch:fix after:5d", "in:here ledger"):
-            printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, capture_output=True,
-                                     text=True, check=True).stdout
+            printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, cwd=self.here,
+                                     capture_output=True, text=True, check=True).stdout
             self.keys("C-u", query)
             self.assertEqual(self.titles(), [row.split("\t")[4] for row in printed.splitlines()], query)
         self.keys("C-u", "in:here")

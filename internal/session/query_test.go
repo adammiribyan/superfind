@@ -184,13 +184,13 @@ func TestInHereKeepsThisFolderTheFoldersInsideItAndTheFoldersAboveIt(t *testing.
 		{"/", []string{"app", "sub", "linked-sub", "real-app", "application", "home", "root", "elsewhere", "parent"}},
 	}
 	for _, c := range cases {
-		t.Setenv("PWD", c.pwd)
+		t.Chdir(c.pwd)
 		if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, c.want) {
 			t.Errorf("from %s: %v, want %v", strings.TrimPrefix(c.pwd, root), got, c.want)
 		}
 	}
 	t.Chdir(filepath.Join(home, "application"))
-	for _, pwd := range []string{"", "home/app"} {
+	for _, pwd := range []string{"", "home/app", filepath.Join(home, "app"), filepath.Join(root, "gone")} {
 		t.Setenv("PWD", pwd)
 		if pwd == "" {
 			os.Unsetenv("PWD")
@@ -201,14 +201,47 @@ func TestInHereKeepsThisFolderTheFoldersInsideItAndTheFoldersAboveIt(t *testing.
 	}
 }
 
-func TestLastPicksTheNewestRealSessionHere(t *testing.T) {
-	t.Setenv("PWD", "/work/app")
+func TestInHereLeavesOutHomeReachedThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(filepath.Join(home, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(home, filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
 	rows := []Row{
-		{Path: "elsewhere", Session: Session{Cwd: "/work/other", Mtime: 500, Prompts: 5}},
-		{Path: "hi", Session: Session{Cwd: "/work/app", Mtime: 400, Prompts: 1}},
-		{Path: "older", Session: Session{Cwd: "/work/app", Mtime: 100, Prompts: 5}},
-		{Path: "sub", Session: Session{Cwd: "/work/app/web", Mtime: 300, Prompts: 5}},
-		{Path: "exec", Session: Session{Cwd: "/work/app", Mtime: 450, Prompts: 5, ByAgent: true}},
+		{Path: "app", Session: Session{Cwd: filepath.Join(home, "app")}},
+		{Path: "home", Session: Session{Cwd: home}},
+		{Path: "alias", Session: Session{Cwd: filepath.Join(root, "alias")}},
+		{Path: "alias-slash", Session: Session{Cwd: filepath.Join(root, "alias") + "/"}},
+	}
+	for _, pwd := range []string{filepath.Join(home, "app"), filepath.Join(root, "alias", "app")} {
+		t.Chdir(pwd)
+		if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"app"}) {
+			t.Errorf("from %s: %v, want [app]", strings.TrimPrefix(pwd, root), got)
+		}
+	}
+	t.Chdir(filepath.Join(root, "alias"))
+	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"app", "home", "alias", "alias-slash"}) {
+		t.Errorf("from the alias itself: %v", got)
+	}
+}
+
+func TestLastPicksTheNewestRealSessionHere(t *testing.T) {
+	work := t.TempDir()
+	app := filepath.Join(work, "app")
+	if err := os.MkdirAll(filepath.Join(app, "web"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(app)
+	rows := []Row{
+		{Path: "elsewhere", Session: Session{Cwd: filepath.Join(work, "other"), Mtime: 500, Prompts: 5}},
+		{Path: "hi", Session: Session{Cwd: app, Mtime: 400, Prompts: 1}},
+		{Path: "older", Session: Session{Cwd: app, Mtime: 100, Prompts: 5}},
+		{Path: "sub", Session: Session{Cwd: filepath.Join(app, "web"), Mtime: 300, Prompts: 5}},
+		{Path: "exec", Session: Session{Cwd: app, Mtime: 450, Prompts: 5, ByAgent: true}},
 	}
 	for query, want := range map[string]string{"": "sub", "is:agent": "exec", "after:2026-01-01": ""} {
 		r, ok := Last(Parse(query), rows)
