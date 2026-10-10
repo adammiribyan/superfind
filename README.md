@@ -13,12 +13,14 @@ superfind reads your Claude Code, Codex, and Grok sessions and finds the one you
 
 superfind is a single binary. To resume a session it runs the agent that made it, so you need [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli), or [Grok](https://docs.x.ai/build/overview) on your PATH for that session. Installing with Go, or from source, needs Go 1.21 or newer; if yours is older than 1.26, Go downloads 1.26 the first time.
 
-There are two ways to install. Install with Homebrew or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
+There are two ways to install. Install with Homebrew, mise, or Go and do the setup yourself, or build [from source](#from-source) with `install.sh`, which does the setup for you.
 
-### With Homebrew or Go
+### With Homebrew, mise, or Go
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
+# or, on Linux and Omarchy
+mise use -g github:adammiribyan/superfind
 # or
 go install github.com/adammiribyan/superfind@latest
 ```
@@ -54,7 +56,7 @@ cd superfind
 
 On [Omarchy](https://omarchy.org), Hyprland takes Super keys before Ghostty sees them, so `install.sh` skips the Ghostty keybind. It adds **Super-Shift-Ctrl-F** to `~/.config/hypr/bindings.lua` instead (`bindings.conf` on Omarchy 3), next to Omarchy's Super-Shift-Ctrl-A agent key; run `hyprctl reload` to use it now. The key opens superfind in a new terminal and resumes the session you choose there. Like Omarchy's agent key, the window closes when the agent exits.
 
-With Homebrew or Go, add this line to `~/.config/hypr/bindings.lua` yourself. It runs `superfind` from the PATH Hyprland has; if superfind isn't on it, write the full path that `command -v superfind` prints:
+With Homebrew, mise, or Go, add this line to `~/.config/hypr/bindings.lua` yourself. It runs `superfind` from the PATH Hyprland has; if superfind isn't on it, write the full path that `command -v superfind` prints:
 
 ```lua
 o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui superfind pick --run")
