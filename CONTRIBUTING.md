@@ -80,7 +80,3 @@ For maintainers:
 Pushing the tag starts the release workflow. It checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
 
 The workflow needs these repository secrets: `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`, and `HOMEBREW_TAP_TOKEN`.
-
-## Conduct
-
-Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
