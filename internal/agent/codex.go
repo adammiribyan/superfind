@@ -15,6 +15,7 @@ type codexItem struct {
 	Content        json.RawMessage `json:"content"`
 	Cwd            string          `json:"cwd"`
 	ParentThreadID string          `json:"parent_thread_id"`
+	Source         json.RawMessage `json:"source"`
 	Git            *struct {
 		Branch string `json:"branch"`
 	} `json:"git"`
@@ -132,6 +133,7 @@ func (c *codexReader) feed(raw []byte) bool {
 			t.Branch = item.Git.Branch
 		}
 		t.Hidden = item.ParentThreadID != ""
+		t.ByAgent = string(item.Source) == `"exec"`
 		return !t.Hidden
 	case l.Type == "turn_context":
 		t.Cwd = cmp.Or(item.Cwd, t.Cwd)

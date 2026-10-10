@@ -39,7 +39,12 @@ type logLine struct {
 	AITitle      string `json:"aiTitle"`
 	LastPrompt   string `json:"lastPrompt"`
 	RelocatedCwd string `json:"relocatedCwd"`
-	Message      struct {
+	Entrypoint   string `json:"entrypoint"`
+	Origin       struct {
+		Kind string `json:"kind"`
+		Body string `json:"body"`
+	} `json:"origin"`
+	Message struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 }
@@ -80,9 +85,17 @@ const interruptMark = "[Request interrupted"
 type parser struct {
 	t         Transcript
 	relocated string
+	byAgent   Transcript
 }
 
 func newParser() *parser { return &parser{t: Transcript{Last: Replied}} }
+
+func agentPrompt(l logLine, text string) string {
+	if l.Origin.Kind != "peer" && l.Origin.Kind != "coordinator" {
+		return ""
+	}
+	return strings.TrimSpace(cmp.Or(l.Origin.Body, withoutWrappers(strings.TrimPrefix(text, "Another Claude session sent a message:"))))
+}
 
 func (p *parser) feed(raw []byte) bool {
 	t := &p.t
@@ -94,6 +107,9 @@ func (p *parser) feed(raw []byte) bool {
 		t.Cwd = l.Cwd
 	}
 	t.Branch = cmp.Or(l.GitBranch, t.Branch)
+	if l.Entrypoint == "sdk-cli" {
+		t.ByAgent = true
+	}
 	switch l.Type {
 	case "user":
 		c := decodeContent(l.Message.Content)
@@ -103,6 +119,10 @@ func (p *parser) feed(raw []byte) bool {
 			wasInterrupted = wasInterrupted || strings.HasPrefix(strings.TrimSpace(r), interruptMark)
 		}
 		prompt := promptText(text)
+		if asked := agentPrompt(l, text); asked != "" {
+			p.byAgent.Prompts = append(p.byAgent.Prompts, asked)
+			p.byAgent.say("user", asked)
+		}
 		switch {
 		case wasInterrupted:
 			t.Last = Interrupted
@@ -122,6 +142,7 @@ func (p *parser) feed(raw []byte) bool {
 		}
 		if text := strings.TrimSpace(c.text); text != "" && !l.IsMeta {
 			t.say("assistant", text)
+			p.byAgent.say("assistant", text)
 		}
 	case "custom-title":
 		t.CustomTitle = cmp.Or(l.CustomTitle, t.CustomTitle)
@@ -138,6 +159,9 @@ func (p *parser) feed(raw []byte) bool {
 func (p *parser) done() Transcript {
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
+	}
+	if len(p.t.Prompts) == 0 && len(p.byAgent.Prompts) > 0 {
+		p.t.Prompts, p.t.Turns, p.t.Messages, p.t.ByAgent = p.byAgent.Prompts, p.byAgent.Turns, p.byAgent.Messages, true
 	}
 	return p.t
 }

@@ -10,6 +10,7 @@ import (
 const (
 	RecordSchema     = 1
 	ShortestIDPrefix = 8
+	AgentFilter      = "is:agent"
 )
 
 type Record struct {
@@ -28,6 +29,8 @@ type Record struct {
 	Active     bool   `json:"active"`
 	FolderGone bool   `json:"folder_gone"`
 	Resume     string `json:"resume"`
+	Kind       string `json:"kind"`
+	Match      string `json:"match"`
 }
 
 func StatusName(label string) string {
@@ -60,7 +63,15 @@ func RecordOf(r Row, clean func(string) string) Record {
 		Active:     s.Active(),
 		FolderGone: r.FolderGone,
 		Resume:     agent.ResumeCommand(r.Agent, r.Home, s.Cwd, s.ID),
+		Kind:       KindOf(s),
 	}
+}
+
+func KindOf(s Session) string {
+	if s.ByAgent {
+		return "agent"
+	}
+	return "interactive"
 }
 
 func ByID(rows []Row, id string) (matches []Row, exact bool) {

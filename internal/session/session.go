@@ -29,6 +29,7 @@ type Session struct {
 	Words      int     `json:"words"`
 	ToolCalls  int     `json:"tool_calls"`
 	Mtime      float64 `json:"mtime"`
+	ByAgent    bool    `json:"by_agent,omitempty"`
 }
 
 func (s Session) Project() string {

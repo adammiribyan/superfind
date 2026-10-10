@@ -105,6 +105,7 @@ type Transcript struct {
 	ToolCalls                        int
 	Last                             Event
 	Hidden, Incomplete               bool
+	ByAgent                          bool
 }
 
 type reader interface {
