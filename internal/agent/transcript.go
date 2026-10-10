@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const bidiControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+const (
+	bidiControls = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+	bidiMarks    = "\u061c\u200e\u200f"
+)
 
 func Bidi(r rune) bool { return strings.ContainsRune(bidiControls, r) }
 
@@ -20,6 +23,15 @@ func dropped(r rune) bool {
 }
 
 var escapeSequence = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|[\\]P_^X][^\x07\x1b\n]*(?:\x07|\x1b\\\\)|[ -/]*[0-~])")
+
+func Searchable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if strings.ContainsRune(bidiMarks, r) {
+			return -1
+		}
+		return r
+	}, Printable(s))
+}
 
 func Printable(s string) string {
 	if !strings.ContainsFunc(s, dropped) {

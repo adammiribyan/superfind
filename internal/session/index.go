@@ -58,7 +58,7 @@ func parse(f found) (*Session, string, bool, error) {
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
 		return nil, "", t.Incomplete, nil
 	}
-	body := agent.Printable(strings.Join(t.Messages, "\n"))
+	body := agent.Searchable(strings.Join(t.Messages, "\n"))
 	return &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
 		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
@@ -416,7 +416,7 @@ func updateSearch(results map[string]parsed, gone []string, discarded bool) erro
 		if r.session != nil {
 			s := r.session
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
-				agent.Printable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
+				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
 			}
 		}

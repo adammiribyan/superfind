@@ -1166,7 +1166,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("red"), ["make the red title go away esrever"])
         self.assertEqual(self.titles("isolated"), ["make the red title go away esrever"])
         self.assertEqual(self.titles("deploy"), ["deploy checklist"])
-        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the kubernetes cluster"])
+        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the ku\u200fber\u200enetes clu\u061cster"])
         search = self.run_superfind("search", "red").stdout
         self.assert_only_our_styles(search)
         self.assertEqual(search.split("\t")[4], "make the red title go away esrever")
@@ -1615,6 +1615,20 @@ class SuperfindBehavior(unittest.TestCase):
         for _ in range(2):
             result = subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, text=True, timeout=30)
             self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "1 session indexed\n", ""))
+
+    def test_right_to_left_marks_are_shown_but_overrides_are_not(self):
+        path = self.session("a1", user("תקן את הבאג\u200f בבקשה \u202eesrever"), tool("Bash"),
+                            claude("תוקן\u200f! مرحبا\u061c"), title="Hebrew fix")
+        self.superfind("index")
+        preview = self.run_superfind("preview", str(path), "--recent").stdout
+        for mark in ("\u200f", "\u061c"):
+            self.assertIn(mark, preview)
+        self.assertNotIn("\u202e", preview)
+        self.assertEqual(self.titles("בבקשה"), ["Hebrew fix"])
+        self.session("b2", user("handle the keys"), tool("Bash"), claude("Done."), title="ro\u200ftate the signing keys")
+        self.session("c3", user("move the tables"), tool("Bash"), claude("I will mi\u200egrate them tonight."), title="Tables")
+        self.assertEqual(self.titles("rotate"), ["ro\u200ftate the signing keys"])
+        self.assertEqual(self.titles("migrate"), ["Tables"])
 
 
 if __name__ == "__main__":
