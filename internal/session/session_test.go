@@ -70,3 +70,24 @@ func pathsOf(rows []Row) []string {
 	}
 	return out
 }
+
+func TestSearchHitsRankByBandThenNewestFirst(t *testing.T) {
+	hits := []scored{
+		{"a-strong-old", 0, 10}, {"b-close-new", 0, 9}, {"weaker", 0, 7},
+		{"body-best", 1, 100}, {"body-zero", 1, 0}, {"body-faint", 1, 1},
+	}
+	mtime := map[string]float64{"a-strong-old": 1, "b-close-new": 5, "weaker": 9, "body-best": 10, "body-zero": 20, "body-faint": 30}
+	want := []string{"b-close-new", "a-strong-old", "weaker", "body-best", "body-faint", "body-zero"}
+	if got := banded(hits, mtime); !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestSearchBandsIgnoreHitsTheFiltersLeftOut(t *testing.T) {
+	hits := []scored{{"filtered-out", 0, 100}, {"a-strong-old", 0, 90}, {"b-close-new", 0, 75}}
+	mtime := map[string]float64{"a-strong-old": 1, "b-close-new": 5}
+	want := []string{"b-close-new", "a-strong-old"}
+	if got := banded(hits, mtime); !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}

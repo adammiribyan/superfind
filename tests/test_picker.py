@@ -118,6 +118,15 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
         self.assertIn("customers get charged twice", self.screen())
 
+    def test_sessions_that_match_about_as_well_list_newest_first(self):
+        self.session("old", "Ledger migration", user("move the ledger"), tool("Bash"), claude("Moved."))
+        self.session("new", "Ledger migration follow-up", user("check the ledger"), tool("Bash"), claude("Checked."))
+        self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
+        self.open_picker()
+        self.keys("ledger")
+        self.wait_for("2/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Ledger migration follow-up", "Ledger migration"])
+
     def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
