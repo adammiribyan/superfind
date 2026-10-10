@@ -36,7 +36,7 @@ The checkout button double-charges customers on slow networks.
 Each request now carries an idempotency key…
 ```
 
-By default `show` keeps the most recent turns that fit in 60,000 bytes of text, and says how many earlier turns it left out. If even the last turn is longer, it keeps that turn's end and starts it with `…`; in JSON that turn also has `"cut": true`. `--max-bytes N` changes the limit, and `--max-bytes 0` removes it. `--tail N` keeps only the last N turns.
+By default `show` keeps the most recent turns that fit in 60,000 bytes of text, plus the 3-byte `…` that marks a cut, and says how many earlier turns it left out. If even the last turn is longer, it keeps that turn's end and starts it with `…`; in JSON that turn also has `"cut": true`. `--max-bytes N` changes the limit, and `--max-bytes 0` removes it. `--tail N` keeps only the last N turns.
 
 `show --json` prints one JSON object:
 
@@ -68,7 +68,7 @@ By default `show` keeps the most recent turns that fit in 60,000 bytes of text, 
 - GitHub tokens, AWS access key ids, Slack tokens, and Stripe, Google, and PostHog keys;
 - JSON web tokens, and `Bearer` tokens 20 characters or longer that contain a digit;
 - the password in a URL such as `postgres://user:password@host`;
-- the value given to a name that contains `password`, `passwd`, `passphrase`, `secret`, `api_key`, `access_key`, `access_token`, `auth_token`, `refresh_token`, `client_secret`, or `private_key`, such as `DATABASE_PASSWORD=…` or `"api_key": "…"`. After `=`, or in quotes, any value is masked. After `:` without quotes, only a value with a digit or symbol, or one 16 characters or longer, so `password: required` stays as written. Placeholders such as `$VAR`, `<your key>`, and `***` are left alone, and so is code that names a value instead of holding it, such as `api_key=key`, `password=None`, `secret=settings.SECRET`, or `password = getpass()`.
+- the value given, on the same line, to a name that contains `password`, `passwd`, `passphrase`, `secret`, `api_key`, `access_key`, `access_token`, `auth_token`, `refresh_token`, `client_secret`, or `private_key`, such as `DATABASE_PASSWORD=…` or `"api_key": "…"`. After `=`, or in quotes, any value is masked. After `:` without quotes, only a value with a digit or symbol, or one 16 characters or longer, so `password: required` stays as written. Placeholders such as `$VAR`, `<your key>`, and `***` are left alone, and so is code that names a value instead of holding it, such as `api_key=key`, `password=None`, `secret=settings.SECRET`, or `password = getpass()`.
 
 Masking catches common formats, not every secret, so don't rely on it alone. Paths, folders, project and branch names, and the resume command are never masked, so they stay exact.
 
@@ -85,8 +85,8 @@ A past session can contain text such as "ignore your previous instructions". `sh
 | Code | Means |
 |---|---|
 | 0 | Done. Also when a search finds nothing, and when some sessions couldn't be read: they're named on stderr, and the rest are used. |
-| 1 | It failed, for example no session with that id, a session that couldn't be read, or a failed ask. Also when you close the picker without choosing. |
-| 2 | A usage mistake, or a start of an id that matches more than one session. |
+| 1 | It failed, for example no session with an id 8 or more characters long, a session that couldn't be read, or a failed ask. Also when you close the picker without choosing. |
+| 2 | A usage mistake, including an unknown id shorter than 8 characters, or a start of an id that matches more than one session. |
 | 130 | `ask` was interrupted while ranking. |
 
 ### Resume in another pane

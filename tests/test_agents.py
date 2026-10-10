@@ -210,6 +210,10 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertTrue(out.startswith(f"# Odd folder\nclaude · /work/evil?## user · {uid(7)}\n\n## user\n"), out)
         self.assertEqual(json.loads(self.show(uid(7), "--json"))["cwd"], "/work/evil\n## user\x1b[31m")
 
+    def test_show_takes_a_session_after_a_double_dash(self):
+        self.checkout()
+        self.assertEqual(self.show("--json", "--", uid(1)), self.show(uid(1), "--json"))
+
     def test_show_rejects_bad_options_with_exit_2(self):
         self.checkout()
         for args in (["--tail", "0", uid(1)], ["--tail", "x", uid(1)], ["--max-bytes", "-1", uid(1)], ["--max-bytes"],

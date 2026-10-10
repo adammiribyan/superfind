@@ -31,7 +31,7 @@ var secretPatterns = []secretPattern{
 var urlPassword = regexp.MustCompile(`^([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+@$`)
 
 var namedSecret = regexp.MustCompile(`(?i)\b[a-z0-9_-]*?(?:password|passwd|passphrase|secret|api[_-]?key|access[_-]?key|` +
-	`access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)["']?\s*([:=])\s*` +
+	`access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)["']?([ \t]*)([:=])([ \t]*)` +
 	`(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|([^\s"',;&<>()\[\]{}` + "`" + `]+))`)
 
 var (
@@ -57,9 +57,11 @@ func maskNamedSecrets(text string) string {
 	var out strings.Builder
 	last := 0
 	for _, m := range namedSecret.FindAllStringSubmatchIndex(text, -1) {
-		for group := 2; group <= 4; group++ {
+		separator := text[m[4]]
+		emptyShellValue := separator == '=' && m[3] == m[2] && m[7] > m[6]
+		for group := 4; group <= 6; group++ {
 			start, end := m[2*group], m[2*group+1]
-			if start < 0 || !secretValue(text[m[2]], group < 4, text[start:end], text[end:]) {
+			if start < 0 || emptyShellValue || !secretValue(separator, group < 6, text[start:end], text[end:]) {
 				continue
 			}
 			out.WriteString(text[last:start])

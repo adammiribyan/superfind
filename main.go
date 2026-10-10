@@ -356,9 +356,13 @@ func findSession(command, arg string) (session.Row, bool, []session.Row) {
 
 func runShow(args []string) {
 	opt := show.Options{MaxBytes: show.DefaultMaxBytes}
-	asJSON, target := false, ""
+	asJSON, target, rest := false, "", false
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
+		case rest && target == "":
+			target = arg
+		case arg == "--" && !rest:
+			rest = true
 		case arg == "--json":
 			asJSON = true
 		case arg == "--tail" || arg == "--max-bytes":
