@@ -1513,6 +1513,49 @@ class SuperfindBehavior(unittest.TestCase):
         self.tick(summary)
         self.assertEqual(self.titles(), ["Job rename"])
 
+    def test_a_search_that_finds_nothing_is_as_quick_as_one_that_finds_something(self):
+        words = " ".join(f"word{n}" for n in range(20000))
+        for n in range(150):
+            self.session(f"s{n}", user(f"task {n} about the ledger"), tool("Bash"), claude(words), title=f"Ledger task {n}")
+        self.superfind("index")
+
+        def took(*search):
+            started = time.monotonic()
+            self.superfind("search", *search)
+            return time.monotonic() - started
+
+        hit, miss = min(took("ledger") for _ in range(3)), min(took("zzqqxx") for _ in range(3))
+        self.assertLess(miss, 3 * hit + 0.2)
+
+    def test_interrupting_ask_stops_claude_and_what_it_started(self):
+        import signal
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        asking = subprocess.Popen([str(SUPERFIND), "ask", "where did we migrate the ledger"], env=self.env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        os.killpg(asking.pid, signal.SIGINT)
+        self.assertEqual(asking.wait(timeout=10), 130)
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
+
 
 if __name__ == "__main__":
     unittest.main()

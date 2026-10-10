@@ -85,7 +85,8 @@ func makeCacheDir() error {
 	if err := os.MkdirAll(CacheDir(), 0o700); err != nil {
 		return err
 	}
-	return os.Chmod(CacheDir(), 0o700)
+	os.Chmod(CacheDir(), 0o700)
+	return nil
 }
 
 func writeAtomically(path string, data []byte) error {
@@ -157,9 +158,7 @@ func OpenSearch() (*sql.DB, error) {
 		return nil, err
 	}
 	f.Close()
-	if err := os.Chmod(path, 0o600); err != nil {
-		return nil, err
-	}
+	os.Chmod(path, 0o600)
 	location := url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"}
 	db, err := sql.Open("sqlite", location.String())
 	if err != nil {
@@ -207,8 +206,18 @@ func intact(db *sql.DB) bool {
 	if _, done := checked.LoadOrStore(db, true); done {
 		return true
 	}
-	_, err := db.Exec("INSERT INTO docs(docs) VALUES('integrity-check')")
-	return !damaged(err)
+	var path, title string
+	err := db.QueryRow("SELECT path, title FROM docs LIMIT 1").Scan(&path, &title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	word := wordPattern.FindString(strings.ToLower(title))
+	if err != nil || word == "" {
+		return err == nil
+	}
+	var held int
+	err = db.QueryRow("SELECT count(*) FROM docs WHERE docs MATCH ? AND path = ?", `"`+word+`"`, path).Scan(&held)
+	return err == nil && held > 0
 }
 
 func searchCount() (int, error) {
