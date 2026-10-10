@@ -30,10 +30,23 @@ func TestParseTakesFiltersOutOfTheWordsAndLeavesOtherColonsAlone(t *testing.T) {
 	}
 }
 
-func TestUnknownIsAndAgentValuesAreStillDroppedQuietly(t *testing.T) {
+func TestUnknownIsAndAgentValuesAreDroppedButRemembered(t *testing.T) {
 	q := Parse("is:bogus agent:bogus ledger is:Waiting agent:Codex IS:AGENT")
 	if q.Words != "ledger" || q.Problem != nil || !q.Agents || len(q.Statuses) != 1 || len(q.From) != 1 || q.From[0].ID != "codex" {
 		t.Fatalf("got %+v", q)
+	}
+	cases := map[string]string{
+		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, or agent.",
+		"agent:codx is:bogus": "can't read agent:codx. agent: takes claude, codex, or grok.",
+		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, or agent.",
+	}
+	for query, want := range cases {
+		if q := Parse(query); q.Unknown == nil || q.Unknown.Error() != want || q.Problem != nil {
+			t.Errorf("%s: got %+v", query, q)
+		}
+	}
+	if q := Parse("is:unfinished agent:grok is:agent"); q.Unknown != nil {
+		t.Errorf("known values: got %+v", q.Unknown)
 	}
 }
 

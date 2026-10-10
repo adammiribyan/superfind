@@ -24,6 +24,7 @@ type Query struct {
 	After    time.Time
 	Before   time.Time
 	Problem  *Problem
+	Unknown  *Problem
 }
 
 type Problem struct{ Token, Hint string }
@@ -31,27 +32,31 @@ type Problem struct{ Token, Hint string }
 func (p *Problem) Error() string { return "can't read " + p.Token + ". " + p.Hint }
 
 type filter struct {
-	hint  string
-	parse func(q *Query, value string, now time.Time) bool
+	hint    string
+	lenient bool
+	parse   func(q *Query, value string, now time.Time) bool
 }
 
 const whenHint = ": takes a day like 2026-10-09, today, yesterday, 12h, 3d, or 2w."
 
 var filters = map[string]filter{
-	"is": {parse: func(q *Query, v string, _ time.Time) bool {
+	"is": {hint: "is: takes " + orList(isValues()) + ".", lenient: true, parse: func(q *Query, v string, _ time.Time) bool {
 		v = strings.ToLower(v)
-		if v == "agent" {
+		label := statusLabelFor(v)
+		switch {
+		case v == "agent":
 			q.Agents = true
-		} else if label := statusLabelFor(v); label != "" {
+		case label != "":
 			q.Statuses = append(q.Statuses, label)
 		}
-		return true
+		return v == "agent" || label != ""
 	}},
-	"agent": {parse: func(q *Query, v string, _ time.Time) bool {
-		if a := agent.Named(strings.ToLower(v)); a != nil {
+	"agent": {hint: "agent: takes " + orList(agentIDs()) + ".", lenient: true, parse: func(q *Query, v string, _ time.Time) bool {
+		a := agent.Named(strings.ToLower(v))
+		if a != nil {
 			q.From = append(q.From, a)
 		}
-		return true
+		return a != nil
 	}},
 	"in": {hint: "in: takes here, as in in:here.", parse: func(q *Query, v string, _ time.Time) bool {
 		q.Here = q.Here || strings.EqualFold(v, "here")
@@ -90,12 +95,37 @@ func parseAt(text string, now time.Time) Query {
 		switch {
 		case !isFilter || !known:
 			words = append(words, token)
-		case !f.parse(&q, value, now) && q.Problem == nil:
+		case f.parse(&q, value, now):
+		case f.lenient && q.Unknown == nil:
+			q.Unknown = &Problem{token, f.hint}
+		case !f.lenient && q.Problem == nil:
 			q.Problem = &Problem{token, f.hint}
 		}
 	}
 	q.Words = strings.Join(words, " ")
 	return q
+}
+
+func isValues() []string {
+	var values []string
+	for _, k := range statusKinds {
+		if k.label != "" {
+			values = append(values, k.name)
+		}
+	}
+	return append(values, strings.TrimPrefix(AgentFilter, "is:"))
+}
+
+func agentIDs() []string {
+	var ids []string
+	for _, a := range agent.Agents {
+		ids = append(ids, a.ID)
+	}
+	return ids
+}
+
+func orList(words []string) string {
+	return strings.Join(words[:len(words)-1], ", ") + ", or " + words[len(words)-1]
 }
 
 var ago = regexp.MustCompile(`^([1-9][0-9]{0,3})([hdw])$`)

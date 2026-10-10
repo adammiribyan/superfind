@@ -300,6 +300,9 @@ func handoff(r session.Row) {
 func runLast(args []string) {
 	text, asJSON := searchWords("last", args)
 	q := mustParse("last", text)
+	if q.Unknown != nil {
+		usageError("superfind last: " + q.Unknown.Error())
+	}
 	if q.Words != "" {
 		usageError("superfind last: takes filters, such as agent:codex or branch:main, not words. To search this folder, use superfind search in:here WORDS.")
 	}
