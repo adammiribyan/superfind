@@ -13,7 +13,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3.
 - When the preview is too short for your last request and the end of the reply, it keeps the start of your request and cuts the reply from its start. Before, a short preview showed only the end of the reply.
 - Under the list, the preview now appears only when it has room for 6 lines of conversation. At 80×24 the list shows 5 sessions and the preview 6 lines, instead of 8 sessions and 3 lines.
-- When the footer is too narrow for every key, it leaves out "tab view" first, then "ctrl-u clear search", then "ctrl-r ask". A message too wide for the list keeps its first sentence instead of being cut mid-word.
+- When the footer is too narrow for every key, it leaves out "tab view" first, then "ctrl-u clear search", then "ctrl-r ask". A message too wide for the list leaves out its later sentences before anything else is cut.
 
 ## [0.10.0] - 2026-10-10
 

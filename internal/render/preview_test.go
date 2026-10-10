@@ -74,3 +74,21 @@ func TestTheShortestPreviewBodyStillShowsTheStartOfYourMessage(t *testing.T) {
 		t.Fatalf("the body reads\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+func TestAPreviewBodyShorterThanItsSpeakersStillStartsWithYou(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	transcript := `{"type":"user","cwd":"/w","entrypoint":"cli","message":{"content":"rotate the signing key"}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Rotated."}]}}` + "\n"
+	if err := os.WriteFile(path, []byte(transcript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for height := 1; height <= 4; height++ {
+		body, err := PreviewBody(PreviewRequest{Agent: agent.Named("claude"), Path: path, Width: 40, Height: height})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := ansi.Strip(body[0]); got != "you" {
+			t.Errorf("at height %d the body starts with %q, want \"you\"", height, got)
+		}
+	}
+}

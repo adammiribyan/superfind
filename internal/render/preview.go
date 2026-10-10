@@ -145,7 +145,7 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 		last := len(askLines) - 1
 		askLines = append(append([]string{}, askLines[:last]...), ansi.Truncate(askLines[last], width-1, "")+req.Secondary+"…"+Reset)
 	}
-	return build(askLines, min(18, within(replied, room-len(askLines)))), nil
+	return build(askLines, max(min(18, within(replied, room-len(askLines))), 0)), nil
 }
 
 func within(lines []string, rows int) int {

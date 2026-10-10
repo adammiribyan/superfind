@@ -114,6 +114,8 @@ func (l layout) bodyHeight() int { return max(l.previewHeight-headerLines-1, 0) 
 
 const secondaryMark = "\x00"
 
+var placeholders = []string{"Search sessions and conversations", "Search sessions", "Search"}
+
 type bodyKey struct {
 	path   string
 	width  int
@@ -404,10 +406,14 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	if query == "" {
 		query = m.input.Value()
 	}
-	req := render.PreviewRequest{Agent: r.Agent, Path: r.Path, Width: l.previewWidth, Height: l.bodyHeight(), Recent: m.recent,
+	height := l.bodyHeight()
+	if m.recent {
+		height = 0
+	}
+	req := render.PreviewRequest{Agent: r.Agent, Path: r.Path, Width: l.previewWidth, Height: height, Recent: m.recent,
 		Query: query, Explained: m.explained[r.Path], Secondary: m.colors.mutedSeq}
 	m.header = render.PreviewHeader(req, *r, m.tags, m.db)
-	key := bodyKey{path: r.Path, width: l.previewWidth, height: l.bodyHeight(), recent: m.recent}
+	key := bodyKey{path: r.Path, width: l.previewWidth, height: height, recent: m.recent}
 	if id, _, err := r.Agent.Stat(r.Path); err == nil {
 		key.file = id
 	}
@@ -500,10 +506,15 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !next.started && next.width > 0 && (patienceOver || next.colors.settled && next.displayed == next.showing) {
 		next.started = true
 	}
-	next.input.SetWidth(next.inputWidth())
-	next.input.Placeholder = "Search sessions and conversations"
-	if next.input.Width()+1 < lipgloss.Width(next.input.Placeholder) {
-		next.input.Placeholder = "Search sessions"
+	if width := next.inputWidth(); width != next.input.Width() {
+		next.input.SetWidth(width)
+		next.input.SetCursor(next.input.Position())
+	}
+	for _, placeholder := range placeholders {
+		next.input.Placeholder = placeholder
+		if next.input.Width()+1 >= lipgloss.Width(placeholder) {
+			break
+		}
 	}
 	return next, cmd
 }

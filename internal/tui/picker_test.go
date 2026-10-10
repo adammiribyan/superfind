@@ -238,6 +238,10 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 			8: "",
 			9: "  enter resume · tab view · ctrl-r ask",
 		}},
+		{20, 5, 8, map[int]string{
+			1: "  Search       8/8",
+			4: "  enter resume",
+		}},
 	}
 	for _, c := range cases {
 		lines := frame(transcriptPicker(t, c.sessions), c.width, c.height)
@@ -283,5 +287,42 @@ func TestANarrowNoMatchMessageKeepsItsFirstSentence(t *testing.T) {
 	m.filter()
 	if got := strings.TrimRight(frame(m, 40, 10)[2], " "); got != "  No session contains these words." {
 		t.Fatalf("the message line at 40 columns reads %q", got)
+	}
+}
+
+func TestAShortWidePaneDrawsEveryLineWithinTheScreen(t *testing.T) {
+	for height := 3; height <= 10; height++ {
+		lines := frame(transcriptPicker(t, 3), 140, height)
+		if len(lines) > height {
+			t.Errorf("at 140x%d the frame is %d lines", height, len(lines))
+		}
+		for i, line := range lines {
+			if w := ansi.StringWidth(line); w > 140 {
+				t.Errorf("at 140x%d line %d is %d cells wide", height, i, w)
+			}
+		}
+	}
+}
+
+func TestALongQueryStaysInViewWhenAskResultsNarrowTheSearch(t *testing.T) {
+	m := settle(transcriptPicker(t, 8), tea.WindowSizeMsg{Width: 60, Height: 16}, colorsSettled{})
+	query := "ledger migration through every step"
+	m.input.SetValue(query)
+	m = settle(m, askDone{seq: m.askSeq, query: query, paths: []string{m.rows[0].Path}})
+	line := strings.TrimRight(strings.Split(ansi.Strip(m.View().Content), "\n")[1], " ")
+	if !strings.HasSuffix(line, "through every step  1/8") {
+		t.Fatalf("after ask the search line reads %q, want it to end with the end of the query", line)
+	}
+}
+
+func TestResizingTheRecentViewReusesItsBody(t *testing.T) {
+	m := settle(transcriptPicker(t, 1), tea.WindowSizeMsg{Width: 140, Height: 36}, colorsSettled{}, tea.KeyPressMsg{Code: tea.KeyTab})
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 140, Height: 35})
+	if cmd != nil {
+		t.Fatalf("resizing the recent view from 36 to 35 rows started a new read")
+	}
+	m = settle(m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if _, cmd := m.Update(tea.WindowSizeMsg{Width: 140, Height: 35}); cmd == nil {
+		t.Fatalf("resizing where the session left off did not refit its body")
 	}
 }
