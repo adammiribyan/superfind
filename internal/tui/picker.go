@@ -342,6 +342,7 @@ func (m *picker) filter() {
 		m.populate()
 	}
 	m.message = m.problem
+	var err error
 	switch {
 	case strings.TrimSpace(query) == "", m.db == nil:
 		m.shown = q.Rows(m.all, false)
@@ -349,8 +350,7 @@ func (m *picker) filter() {
 			m.message = "Only sessions other programs started. Type is:agent to see them."
 		}
 	default:
-		shown, err := session.Search(m.db, query, m.all)
-		m.shown = shown
+		m.shown, err = session.Search(m.db, query, m.all)
 		if errors.Is(err, session.ErrDamaged) {
 			m.db, m.reindex = nil, true
 			m.shown = q.Rows(m.all, false)
@@ -364,7 +364,7 @@ func (m *picker) filter() {
 			m.message = "No sessions match “" + query + "”"
 		}
 	}
-	if q.Problem != nil {
+	if q.Problem != nil && err == nil {
 		m.message = q.Problem.Hint
 	}
 }

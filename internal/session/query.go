@@ -37,7 +37,7 @@ type filter struct {
 	parse   func(q *Query, value string, now time.Time) bool
 }
 
-const whenHint = ": takes a day like 2026-10-09, today, yesterday, 12h, 3d, or 2w."
+const whenHint = ": takes a date like 2026-10-09, yesterday, or 3d."
 
 var filters = map[string]filter{
 	"is": {hint: "is: takes " + orList(isValues()) + ".", lenient: true, parse: func(q *Query, v string, _ time.Time) bool {
