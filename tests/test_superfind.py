@@ -40,6 +40,10 @@ def tool(name):
         {"type": "tool_use", "id": "t1", "name": name, "input": {}}]})
 
 
+def interrupted():
+    return line(type="user", message={"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]})
+
+
 def uid(n):
     return f"0199{n:04d}-a751-7860-aac9-738072c82895"
 
@@ -270,6 +274,17 @@ class SuperfindBehavior(unittest.TestCase):
         self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
+
+    def test_without_a_key_an_interrupted_session_is_unfinished(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Running it on staging first."),
+                     interrupted(), title="Ledger migration")
+        self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
+        self.assertEqual(self.rows(""), ["Export job name  1d ago · tmp", "Ledger migration  unfinished · 1d ago · tmp"])
+        self.assertEqual(self.rows("is:unfinished"), ["Ledger migration  unfinished · 1d ago · tmp"])
+        self.assertEqual([(r["title"], r["status"]) for r in map(json.loads, self.superfind("search", "--json").splitlines())],
+                         [("Export job name", ""), ("Ledger migration", "unfinished")])
+        self.env["TYPESAFE_API_KEY"] = "test"
+        self.assertEqual(self.rows(""), ["Export job name  1d ago · tmp", "Ledger migration  1d ago · tmp"])
 
     def test_a_judgment_is_dropped_once_the_session_changes(self):
         waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
@@ -838,8 +853,10 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.superfind("command", str(path)), f"cd /tmp && grok --resume {uid(1)}\n")
 
     def test_a_grok_home_other_than_the_default_is_passed_to_grok(self):
-        work = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), home="work-grok")
-        self.grok_session(uid(2), "/tmp", grok_user("rename the export job"), grok_reply("Renamed.", tools=1))
+        work = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                                 grok_reply("Fixed."), home="work-grok")
+        self.grok_session(uid(2), "/tmp", grok_user("rename the export job"), grok_reply("Renaming.", tools=1), grok_result(),
+                          grok_reply("Renamed."))
         home = self.home.resolve()
         self.env["SUPERFIND_GROK_DIRS"] = str(home / "work-grok")
         self.assertEqual(self.rows(), ["rename the export job  1d ago · tmp · .grok",
@@ -871,7 +888,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("omega"), ["Retries"])
 
     def test_a_grok_summary_rewrite_does_not_make_the_session_active(self):
-        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), title="Build fix")
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                                 grok_reply("Fixed."), title="Build fix")
         two_days = time.time() - 2 * 86400 - 60
         os.utime(chat, (two_days, two_days))
         os.utime(chat.parent / "summary.json")
@@ -1095,7 +1113,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 14)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 15)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3

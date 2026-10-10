@@ -2,6 +2,17 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+## [Unreleased]
+
+### Added
+
+- Without a TypeSafe key, sessions that ended on an interruption, mid-command, or on a request the agent never answered are marked **unfinished**, and `is:unfinished` finds them. superfind reads this from the session file and sends nothing. **waiting on you** still needs a key, and with a key Jev still decides both labels.
+
+### Changed
+
+- The index is rebuilt once after upgrading, to record how each session ended.
+- A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added

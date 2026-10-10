@@ -24,7 +24,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 )
 
-const cacheVersion = 14
+const cacheVersion = 15
 
 const (
 	titleRunes  = 200
@@ -64,7 +64,7 @@ func parse(f found) (*Session, string, bool, error) {
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
 		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
 		LastPrompt: clip(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent,
+		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
 	}, body, t.Incomplete, nil
 }
 

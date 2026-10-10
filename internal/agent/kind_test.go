@@ -131,6 +131,27 @@ func TestAnUnansweredRequestFromAnotherSessionIsTheLastEvent(t *testing.T) {
 	}
 }
 
+func TestASlashCommandAnsweredByItsOwnOutputLeavesTheEndingAsItWas(t *testing.T) {
+	compact := `{"type":"user","cwd":"/w","message":{"content":"<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"}}`
+	output := `{"type":"user","cwd":"/w","message":{"content":"<local-command-stdout>Compacted</local-command-stdout>"}}`
+	stopped := `{"type":"user","cwd":"/w","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`
+	cases := []struct {
+		ending []string
+		want   Event
+	}{
+		{[]string{typed, reply, compact}, Prompted},
+		{[]string{typed, reply, compact, output}, Replied},
+		{[]string{typed, compact, output}, Prompted},
+		{[]string{typed, reply, compact, output, reply, output}, Replied},
+		{[]string{typed, reply, compact, output, stopped, output}, Interrupted},
+	}
+	for i, c := range cases {
+		if tr := claudeLines(t, c.ending...); tr.Last != c.want {
+			t.Errorf("case %d: last = %v, want %v", i, tr.Last, c.want)
+		}
+	}
+}
+
 func TestACoordinatorMessageCountsAsAnAgentPrompt(t *testing.T) {
 	coordinator := strings.Replace(peer, `"kind":"peer"`, `"kind":"coordinator"`, 1)
 	if tr := claudeLines(t, coordinator, reply); !tr.ByAgent || len(tr.Prompts) != 1 {
