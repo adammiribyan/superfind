@@ -291,7 +291,7 @@ func (m picker) layout() layout {
 	switch {
 	case m.hidePreview:
 		l.listHeight = free
-	case m.width >= wideColumns:
+	case m.width >= wideColumns && m.height-headerLines-1 >= minBody:
 		l.listWidth = m.width * 54 / 100
 		l.previewWidth = m.width - l.listWidth - 3
 		l.previewHeight = m.height
@@ -406,20 +406,20 @@ func (m picker) loadPreview() (picker, tea.Cmd) {
 	if query == "" {
 		query = m.input.Value()
 	}
-	height := l.bodyHeight()
-	if m.recent {
-		height = 0
-	}
-	req := render.PreviewRequest{Agent: r.Agent, Path: r.Path, Width: l.previewWidth, Height: height, Recent: m.recent,
+	req := render.PreviewRequest{Agent: r.Agent, Path: r.Path, Width: l.previewWidth, Recent: m.recent,
 		Query: query, Explained: m.explained[r.Path], Secondary: m.colors.mutedSeq}
 	m.header = render.PreviewHeader(req, *r, m.tags, m.db)
-	key := bodyKey{path: r.Path, width: l.previewWidth, height: height, recent: m.recent}
+	height := m.bodyHeight(l)
+	if !m.recent {
+		req.Height = height
+	}
+	key := bodyKey{path: r.Path, width: l.previewWidth, height: req.Height, recent: m.recent}
 	if id, _, err := r.Agent.Stat(r.Path); err == nil {
 		key.file = id
 	}
 	m.showing = key
 	m.body.SetWidth(l.previewWidth)
-	m.body.SetHeight(l.bodyHeight())
+	m.body.SetHeight(height)
 	if body, ok := m.bodies[key]; ok {
 		m.showBody(key, body)
 		return m, nil
@@ -833,7 +833,7 @@ func (m picker) hints() [][2]string {
 	return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
 }
 
-var hintPriority = map[string]int{"enter": 0, "esc": 0, "ctrl-r": 1, "ctrl-u": 2, "tab": 3}
+var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "tab": 4}
 
 func (m picker) footer(width int) string {
 	hints := m.hints()
@@ -869,6 +869,17 @@ func fitMessage(message string, width int) string {
 	return message
 }
 
+func (m picker) matchLineFree() bool {
+	return len(m.header) == headerLines && m.header[headerLines-1] == ""
+}
+
+func (m picker) bodyHeight(l layout) int {
+	if m.matchLineFree() && l.previewHeight > headerLines {
+		return l.bodyHeight() + 1
+	}
+	return l.bodyHeight()
+}
+
 func (m picker) previewLines(l layout) []string {
 	if !l.hasPreview() {
 		return nil
@@ -877,8 +888,10 @@ func (m picker) previewLines(l layout) []string {
 	for len(lines) < headerLines {
 		lines = append(lines, "")
 	}
-	lines = append(lines, "")
-	if l.bodyHeight() > 0 {
+	if !m.matchLineFree() {
+		lines = append(lines, "")
+	}
+	if m.bodyHeight(l) > 0 {
 		lines = append(lines, strings.Split(m.body.View(), "\n")...)
 	}
 	for len(lines) < l.previewHeight {

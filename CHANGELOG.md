@@ -6,14 +6,15 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
-- Shift-Up and Shift-Down page through the preview, as Alt-Up and Alt-Down do. They work in terminals where Option doesn't act as Alt, which is the default in macOS Terminal.
+- Shift-Up and Shift-Down page through the preview, as Alt-Up and Alt-Down do.
 
 ### Changed
 
 - In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3.
 - When the preview is too short for your last request and the end of the reply, it keeps the start of your request and cuts the reply from its start. Before, a short preview showed only the end of the reply.
-- Under the list, the preview now appears only when it has room for 6 lines of conversation. At 80×24 the list shows 5 sessions and the preview 6 lines, instead of 8 sessions and 3 lines.
-- When the footer is too narrow for every key, it leaves out "tab view" first, then "ctrl-u clear search", then "ctrl-r ask". A message too wide for the list leaves out its later sentences before anything else is cut.
+- Under the list, the preview now appears only when it has room for at least 6 lines below its heading. At 80×24 the list shows 5 sessions and the preview 7 lines, instead of 8 sessions and 3 lines. Beside the list, the preview is left out when the window is too short for 6 lines.
+- When nothing in the preview matched your search, it no longer leaves two blank lines above "you", so the conversation gets one more line.
+- When the footer is too narrow for every key, it leaves keys out in this order: "tab view", "ctrl-u clear search", "ctrl-r ask", "enter resume". "esc" goes last. A message too wide for the list leaves out its later sentences before anything else is cut.
 
 ## [0.10.0] - 2026-10-10
 

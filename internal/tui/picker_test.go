@@ -206,7 +206,7 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 		{140, 36, 8, map[int]string{
 			1:  " ╭─ Claude sessions ──────────────────────────────────────────────────────╮ │ Ledger migration",
 			2:  " │ Search sessions and conversations                                  8/8 │ │ tmp · active now · 5 prompts",
-			6:  "  Invoice layout                                             tmp        1h  │ you",
+			5:  "  Ledger migration  active now                               tmp        1m  │ you",
 			35: "  enter resume · tab view · ctrl-r ask                                      │",
 		}},
 		{100, 30, 8, map[int]string{
@@ -214,14 +214,14 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 			2:  " │ Search sessions and conversations                                                          8/8 │",
 			16: " ──────────────────────────────────────────────────────────────────────────────────────────────────",
 			17: " Ledger migration",
-			22: " you",
+			21: " you",
 			29: "  enter resume · tab view · ctrl-r ask",
 		}},
 		{80, 24, 8, map[int]string{
 			2:  " │ Search sessions and conversations                                      8/8 │",
 			9:  "  Tax rounding                                                   tmp        4h",
 			10: " ──────────────────────────────────────────────────────────────────────────────",
-			16: " you",
+			15: " you",
 			23: "  enter resume · tab view · ctrl-r ask",
 		}},
 		{60, 16, 12, map[int]string{
@@ -324,5 +324,24 @@ func TestResizingTheRecentViewReusesItsBody(t *testing.T) {
 	m = settle(m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if _, cmd := m.Update(tea.WindowSizeMsg{Width: 140, Height: 35}); cmd == nil {
 		t.Fatalf("resizing where the session left off did not refit its body")
+	}
+}
+
+func TestAWidePaneTooShortForAPreviewGivesTheListTheWholeWidth(t *testing.T) {
+	lines := frame(transcriptPicker(t, 3), 120, 11)
+	if got := strings.TrimRight(lines[2], " "); got != "  Ledger migration  active now                                                                           tmp        1m" {
+		t.Fatalf("at 120x11 a row reads %q, want the list across the whole width", got)
+	}
+	if lines := frame(transcriptPicker(t, 3), 120, 12); !strings.Contains(lines[5], "│ you") {
+		t.Fatalf("at 120x12 line 5 reads %q, want the preview beside the list starting with you", lines[5])
+	}
+}
+
+func TestANarrowFooterAfterAskKeepsTheWayBackToSearch(t *testing.T) {
+	m := testPicker(t)
+	m.colors.settle()
+	m.askedFor = "ledger"
+	if got := ansi.Strip(m.footer(24)); got != " esc back to search" {
+		t.Fatalf("the footer after ask at 24 columns reads %q", got)
 	}
 }
