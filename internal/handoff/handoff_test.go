@@ -3,6 +3,7 @@ package handoff
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -395,5 +396,25 @@ func TestATurnBarelyOverItsShareStaysWholeWhenCuttingWouldNotSaveBytes(t *testin
 	text := strings.Repeat("ab ", 28) + "x"
 	if got, _, cut := shorten(text, 80, keepEnds, nil); cut || got != text {
 		t.Fatalf("got %q (cut=%v) for an %d-byte turn", got, cut, len(text))
+	}
+}
+
+func TestTruncatedSaysWhetherTheLimitLeftAnythingOut(t *testing.T) {
+	var texts []string
+	for i := range 12 {
+		texts = append(texts, fmt.Sprintf("turn %d says a few short words", i))
+	}
+	whole := Build(transcript(agent.Replied, texts...), Options{MaxBytes: DefaultMaxBytes})
+	if whole.Truncated || len(whole.Turns) != 12 {
+		t.Fatalf("all 12 turns fit, got %d, truncated=%v", len(whole.Turns), whole.Truncated)
+	}
+	some := Build(transcript(agent.Replied, texts...), Options{MaxBytes: 150})
+	for _, turn := range some.Turns {
+		if turn.Cut {
+			t.Fatalf("turn %d was cut", turn.Number)
+		}
+	}
+	if !some.Truncated || len(some.Turns) == 12 {
+		t.Fatalf("left out %d turns, truncated=%v", 12-len(some.Turns), some.Truncated)
 	}
 }
