@@ -63,6 +63,7 @@ func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 	for i, r := range rows {
 		r.Status = statusLabel(r, known)
 		r.FolderGone = !folderExists(r.Session.Cwd)
+		r.Open = nil
 		out[i] = r
 	}
 	for i, r := range out {

@@ -195,3 +195,16 @@ func TestIsOpenKeepsOnlySessionsAnAgentHolds(t *testing.T) {
 		}
 	}
 }
+
+func TestAnnotatingAgainForgetsAProcessThatExited(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	rows := []Row{{Session: Session{ID: "id1", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p"}}
+	held := map[open.Key]open.State{{Agent: "claude", ID: "id1"}: {PID: 4242, Status: "idle"}}
+	rows = Annotate(rows, held)
+	if rows[0].Open == nil || *rows[0].Open != (open.State{PID: 4242, Status: "idle"}) {
+		t.Fatalf("first annotate: open = %+v", rows[0].Open)
+	}
+	if rows = Annotate(rows, map[open.Key]open.State{}); rows[0].Open != nil {
+		t.Fatalf("after the process exited: open = %+v", rows[0].Open)
+	}
+}
