@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -409,22 +410,28 @@ func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarde
 		if _, err := tx.Exec("DELETE FROM docs"); err != nil {
 			return err
 		}
-	}
-	for p, r := range results {
-		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
+	} else {
+		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY)"); err != nil {
 			return err
 		}
+		for _, p := range slices.AppendSeq(slices.Clone(gone), maps.Keys(results)) {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?)", p); err != nil {
+				return err
+			}
+		}
+		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+	for p, r := range results {
 		if r.session != nil {
 			s := r.session
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
 				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
 			}
-		}
-	}
-	for _, p := range gone {
-		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
-			return err
 		}
 	}
 	return tx.Commit()

@@ -11,6 +11,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Changed
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+- Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
 
 ## [0.10.0] - 2026-10-10
 
