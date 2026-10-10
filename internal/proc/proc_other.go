@@ -4,7 +4,7 @@ package proc
 
 func Lookup(int) (Process, bool) { return Process{}, false }
 
-func Named(string) []Process { return nil }
+func Named(...string) []Process { return nil }
 
 func Args(int) []string { return nil }
 

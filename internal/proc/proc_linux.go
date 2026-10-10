@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,12 +51,13 @@ var bootTime = sync.OnceValues(func() (time.Time, bool) {
 	return time.Time{}, false
 })
 
-func Named(prefix string) []Process {
+func Named(prefixes ...string) []Process {
 	comms, _ := filepath.Glob("/proc/[0-9]*/comm")
 	var out []Process
 	for _, c := range comms {
 		name, err := os.ReadFile(c)
-		if err != nil || !strings.HasPrefix(strings.TrimSuffix(string(name), "\n"), prefix) {
+		named := strings.TrimSuffix(string(name), "\n")
+		if err != nil || !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(named, prefix) }) {
 			continue
 		}
 		pid, _ := strconv.Atoi(filepath.Base(filepath.Dir(c)))

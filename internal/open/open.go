@@ -66,16 +66,22 @@ func Find(places []agent.Place) map[Key]State {
 	for _, c := range claims {
 		registered[c.state.PID] = true
 	}
+	var names []string
 	for _, a := range agent.Agents {
-		if !present[a.ID] {
+		if present[a.ID] {
+			names = append(names, a.ID)
+		}
+	}
+	for _, p := range proc.Named(names...) {
+		if registered[p.PID] {
 			continue
 		}
-		for _, p := range proc.Named(a.ID) {
-			if registered[p.PID] {
+		for _, name := range names {
+			if !strings.HasPrefix(p.Name, name) {
 				continue
 			}
-			if id := resumedID(proc.Args(p.PID), evidenceFor[a.ID].resume); id != "" {
-				claims = append(claims, claim{Key{a.ID, id}, State{PID: p.PID}, p.TTY})
+			if id := resumedID(proc.Args(p.PID), evidenceFor[name].resume); id != "" {
+				claims = append(claims, claim{Key{name, id}, State{PID: p.PID}, p.TTY})
 			}
 		}
 	}

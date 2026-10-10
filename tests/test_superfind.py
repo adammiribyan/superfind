@@ -293,6 +293,61 @@ class SuperfindBehavior(unittest.TestCase):
         self.judged(running, "waiting")
         self.assertEqual(self.rows(""), ["Ledger migration  active now · tmp"])
 
+    def records(self, *search):
+        self.superfind("index")
+        return {r["id"]: r for r in map(json.loads, self.superfind("search", "--json", *search).splitlines())}
+
+    def claude_pid_file(self, pid, session_id, started_at, name=None):
+        folder = self.home / ".claude" / "sessions"
+        folder.mkdir(exist_ok=True)
+        (folder / (name or f"{pid}.json")).write_text(json.dumps(
+            {"pid": pid, "sessionId": session_id, "cwd": "/tmp", "startedAt": started_at, "status": "busy"}))
+
+    def private_tmux(self):
+        server = f"sfd-open-{os.getpid()}-{id(self)}"
+        tmux = lambda *args: subprocess.run(["tmux", "-L", server, *args], capture_output=True, text=True, check=True).stdout
+        tmux("new-session", "-d", "-s", "work", "-x", "80", "-y", "20", "exec sleep 300")
+        self.addCleanup(subprocess.run, ["tmux", "-L", server, "kill-server"], capture_output=True)
+        pid, pane, socket, window = tmux("display-message", "-p", "-t", "work",
+                                         "#{pane_pid}\t#{pane_id}\t#{socket_path}\t#{window_index}").strip().split("\t")
+        return int(pid), pane, socket, int(window)
+
+    @unittest.skipUnless(shutil.which("tmux"), "an open session's pane is read from tmux")
+    def test_a_session_an_agent_holds_open_says_so_with_its_tmux_pane(self):
+        pid, pane, socket, window = self.private_tmux()
+        self.session(uid(1), user("deploy the ledger migration"), tool("Bash"), claude("Deployed."), title="Ledger migration")
+        self.session(uid(2), user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
+        self.session(uid(3), user("tidy the readme"), tool("Edit"), claude("Tidied."), title="Readme tidy")
+        now_ms = int(time.time() * 1000)
+        self.claude_pid_file(pid, uid(1), now_ms)
+        (self.home / ".claude" / "sessions" / f"{pid}.deadbeef.key").write_text("secret")
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        self.claude_pid_file(dead.pid, uid(2), now_ms)
+        self.claude_pid_file(os.getpid(), uid(3), 978307200000)
+        self.env["TMUX"] = f"{socket},0,0"
+        records = self.records()
+        self.assertEqual(records[uid(1)]["open"], {"pid": pid, "status": "busy",
+                                                   "tmux": {"pane": pane, "session": "work", "window": window}})
+        self.assertEqual([records[uid(2)]["open"], records[uid(3)]["open"]], [None, None])
+        self.assertEqual(list(self.records("is:open")), [uid(1)])
+        self.assertEqual(self.rows("is:open"), ["Ledger migration  open · tmp"])
+        self.env["TMUX"] = f"{self.home}/no-such-socket,0,0"
+        self.assertEqual(self.records()[uid(1)]["open"], {"pid": pid, "status": "busy", "tmux": None})
+
+    def test_a_codex_session_resumed_by_id_is_open_while_codex_runs(self):
+        stub = Path(tempfile.mkdtemp()) / "codex"
+        stub.symlink_to(shutil.which("dash") or "/bin/sh")
+        self.codex_session(uid(7), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."))
+        self.codex_session(uid(8), codex_meta(), codex_user("fix the tests"), codex_reply("Fixed."))
+        codex = subprocess.Popen([str(stub), "-c", "read line", "resume", uid(7)], stdin=subprocess.PIPE,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(codex.communicate)
+        self.addCleanup(codex.kill)
+        records = self.records()
+        self.assertEqual([records[uid(7)]["open"], records[uid(8)]["open"]],
+                         [{"pid": codex.pid, "status": "", "tmux": None}, None])
+
     def test_bold_text_that_wraps_never_shows_its_markers(self):
         path = self.session("a1", user("summarize the incident for the team"), tool("Read"),
                             claude("**The outage came from a certificate that expired on the payments gateway "

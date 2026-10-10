@@ -4,6 +4,8 @@ package proc
 
 import (
 	"bytes"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,14 +23,14 @@ func Lookup(pid int) (Process, bool) {
 	return processOf(k), true
 }
 
-func Named(prefix string) []Process {
+func Named(prefixes ...string) []Process {
 	all, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil
 	}
 	var out []Process
 	for i := range all {
-		if p := processOf(&all[i]); p.PID > 0 && strings.HasPrefix(p.Name, prefix) {
+		if p := processOf(&all[i]); p.PID > 0 && slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(p.Name, prefix) }) {
 			out = append(out, p)
 		}
 	}
@@ -53,7 +55,12 @@ func TerminalOf(path string) (TTY, bool) {
 }
 
 func processOf(k *unix.KinfoProc) Process {
-	name, _, _ := bytes.Cut(k.Proc.P_comm[:], []byte{0})
+	pid := int(k.Proc.P_pid)
+	comm, _, _ := bytes.Cut(k.Proc.P_comm[:], []byte{0})
+	name := string(comm)
+	if args := Args(pid); len(args) > 0 && args[0] != "" {
+		name = filepath.Base(args[0])
+	}
 	started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*int64(time.Microsecond))
-	return Process{PID: int(k.Proc.P_pid), Name: string(name), Start: started, TTY: fromTdev(k.Eproc.Tdev)}
+	return Process{PID: pid, Name: name, Start: started, TTY: fromTdev(k.Eproc.Tdev)}
 }
