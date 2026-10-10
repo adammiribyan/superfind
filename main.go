@@ -240,9 +240,12 @@ const fishSetup = `function _superfind_run
 end
 
 function _superfind_resume
+    set -l resume (string join \n -- $argv[2..-1] | string collect)
     printf 'Resuming \e[1m%%s\e[0m\n' $argv[1]
-    history append -- $argv[2] 2>/dev/null
-    eval $argv[2]
+    if test (string split . -- $version)[1] -ge 4
+        history append -- $resume
+    end
+    eval $resume
 end
 
 function superfind
@@ -251,7 +254,7 @@ function superfind
         return
     end
     set -l out (_superfind_run pick); or return
-    _superfind_resume $out[1] (string join \n -- $out[2..-1])
+    _superfind_resume $out
 end
 
 function sfd
@@ -260,7 +263,7 @@ end
 
 function _superfind_widget
     set -l out (_superfind_run pick)
-    and _superfind_resume $out[1] (string join \n -- $out[2..-1])
+    and _superfind_resume $out
     commandline -f repaint
 end
 

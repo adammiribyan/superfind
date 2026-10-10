@@ -6,7 +6,7 @@ import (
 )
 
 func TestAQuotedValueReadsBackUnchangedInEveryShell(t *testing.T) {
-	values := []string{`plain`, `two words`, `it's`, `back\slash`, `end\`, `\'`, `\\'x'\\`, `$HOME`, "`date`", `a;echo PWNED`, "line\nbreak", `"quoted"`}
+	values := []string{`plain`, `two words`, `it's`, `back\slash`, `end\`, `\'`, `\\'x'\\`, `$HOME`, "`date`", `a;echo PWNED`, `%self`, `=sh`, `a=b`, "line\nbreak", `"quoted"`}
 	for _, shell := range []string{"sh", "bash", "zsh", "fish"} {
 		if _, err := exec.LookPath(shell); err != nil {
 			t.Logf("%s is not installed", shell)

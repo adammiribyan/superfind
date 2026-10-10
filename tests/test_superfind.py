@@ -608,6 +608,22 @@ class SuperfindBehavior(unittest.TestCase):
         literal = self.run_superfind("search", "--", "-h")
         self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_fish_resumes_into_a_folder_whose_name_breaks_a_line(self):
+        folder = self.home / "two\nlines"
+        folder.mkdir()
+        path = self.session("a1", user("fix it", cwd=str(folder)), tool("Bash"), claude("Done."), title="Fix")
+        self.superfind("index")
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text('#!/bin/sh\nprintf "%s|%s" "$(pwd)" "$*"\n')
+        (stub / "claude").chmod(0o755)
+        script = (f"{SUPERFIND} init fish | source; function _superfind_run; printf '%s\\n' Fix $resume; end; superfind")
+        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], capture_output=True, text=True,
+                                env={**self.env, "PATH": f"{stub}:/usr/bin:/bin",
+                                     "resume": self.superfind("command", str(path)).rstrip("\n")})
+        self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
+
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
