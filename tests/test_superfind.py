@@ -1556,6 +1556,23 @@ class SuperfindBehavior(unittest.TestCase):
                 pass
         self.assertEqual(alive, [])
 
+    def test_a_healthy_index_is_never_judged_damaged_by_its_first_title(self):
+        import sqlite3
+        db = self.home / ".cache" / "superfind" / "search.db"
+        for n, title in enumerate(("\uf113nerdicon notes", "____ separator line", "ᏣᎳᎩ language notes", "ᲐᲑᲒ test")):
+            for old in self.projects.glob("*.jsonl"):
+                old.unlink()
+            self.session(f"s{n}", user("hello there"), tool("Bash"), claude("ok"), title=title)
+            self.superfind("index")
+            connection = sqlite3.connect(db)
+            before = connection.execute("SELECT rowid, path FROM docs").fetchall()
+            connection.close()
+            result = self.run_superfind("search", "zzqq")
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""), title)
+            connection = sqlite3.connect(db)
+            self.assertEqual(connection.execute("SELECT rowid, path FROM docs").fetchall(), before, title)
+            connection.close()
+
 
 if __name__ == "__main__":
     unittest.main()

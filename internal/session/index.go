@@ -206,18 +206,13 @@ func intact(db *sql.DB) bool {
 	if _, done := checked.LoadOrStore(db, true); done {
 		return true
 	}
-	var path, title string
-	err := db.QueryRow("SELECT path, title FROM docs LIMIT 1").Scan(&path, &title)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true
-	}
-	word := wordPattern.FindString(strings.ToLower(title))
-	if err != nil || word == "" {
+	var docs int
+	if err := db.QueryRow("SELECT count(*) FROM docs").Scan(&docs); err != nil || docs == 0 {
 		return err == nil
 	}
-	var held int
-	err = db.QueryRow("SELECT count(*) FROM docs WHERE docs MATCH ? AND path = ?", `"`+word+`"`, path).Scan(&held)
-	return err == nil && held > 0
+	db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.terms USING fts5vocab(main, docs, 'row')")
+	var term string
+	return db.QueryRow("SELECT term FROM temp.terms LIMIT 1").Scan(&term) == nil
 }
 
 func searchCount() (int, error) {
