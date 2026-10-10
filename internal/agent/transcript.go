@@ -6,7 +6,54 @@ import (
 	"errors"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 )
+
+const bidiControls = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+
+func Bidi(r rune) bool { return strings.ContainsRune(bidiControls, r) }
+
+func dropped(r rune) bool {
+	return (r < 0x20 && !strings.ContainsRune("\t\n\r\v\f", r)) || (r >= 0x7f && r < 0xa0) || Bidi(r)
+}
+
+var escapeSequence = regexp.MustCompile("\x1b(?:\\[[0-?]*[ -/]*[@-~]|[\\]P_^X][^\x07\x1b\n]*(?:\x07|\x1b\\\\)|[ -/]*[0-~])")
+
+func Printable(s string) string {
+	if !strings.ContainsFunc(s, dropped) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if dropped(r) {
+			return -1
+		}
+		return r
+	}, escapeSequence.ReplaceAllString(s, ""))
+}
+
+var (
+	leadingTag = regexp.MustCompile(`^<([A-Za-z][\w-]*)[^<>]*>`)
+	bareTag    = regexp.MustCompile(`^</?[^<>]*>$`)
+)
+
+func withoutWrappers(text string) string {
+	for {
+		text = strings.TrimSpace(text)
+		if bareTag.MatchString(text) {
+			return ""
+		}
+		m := leadingTag.FindStringSubmatch(text)
+		if m == nil || !strings.ContainsAny(m[1], "-_") {
+			return text
+		}
+		end := strings.Index(text, "</"+m[1]+">")
+		if end < 0 {
+			return ""
+		}
+		text = text[end+len(m[1])+3:]
+	}
+}
 
 type Event string
 
@@ -29,7 +76,7 @@ type Transcript struct {
 	Turns                            []Turn
 	ToolCalls                        int
 	Last                             Event
-	Hidden                           bool
+	Hidden, Incomplete               bool
 }
 
 type reader interface {
@@ -37,15 +84,57 @@ type reader interface {
 	done() Transcript
 }
 
+const longestLine = 16 << 20
+
+func errNotAFile(path string) error {
+	return &os.PathError{Op: "read", Path: path, Err: errors.New("not a regular file")}
+}
+
+func openFile(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errNotAFile(path)
+	}
+	return os.Open(path)
+}
+
+func readSmall(path string) ([]byte, error) {
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, longestLine))
+}
+
 func eachLine(path string, fn func(raw []byte) bool) error {
-	f, err := os.Open(path)
+	f, err := openFile(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	lines := bufio.NewReaderSize(f, 1<<20)
+	var long []byte
+	tooLong := false
 	for {
-		raw, err := lines.ReadBytes('\n')
+		raw, err := lines.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
+				long = append(long, raw...)
+			}
+			continue
+		}
+		if long != nil || tooLong {
+			if !tooLong {
+				raw = append(long, raw...)
+			} else {
+				raw = nil
+			}
+			long, tooLong = nil, false
+		}
 		if len(raw) > 0 && !fn(raw) {
 			return nil
 		}
@@ -79,7 +168,7 @@ func ReadTranscript(a *Agent, path string) (Transcript, error) {
 const firstEndingWindow = 1 << 20
 
 func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
-	f, err := os.Open(path)
+	f, err := openFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +196,9 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 			if end == 0 {
 				end = len(buf)
 			}
-			r.feed(buf[:end])
+			if end <= longestLine {
+				r.feed(buf[:end])
+			}
 			buf = buf[end:]
 		}
 		turns := r.done().Turns

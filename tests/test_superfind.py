@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -160,27 +161,42 @@ class SuperfindBehavior(unittest.TestCase):
             fields["session_kind"] = kind
         (chat.parent / "summary.json").write_text(json.dumps(fields, indent=2))
 
-    def record_typesafe(self):
+    def record_typesafe(self, answer=None, delay=0):
         import http.server
         import threading
         requests = []
 
         class Recorder(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
-                requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-                self.send_response(500)
-                self.send_header("Content-Length", "0")
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                requests.append(sent)
+                time.sleep(delay)
+                body = b"" if answer is None else json.dumps({"answers": answer(sent["questions"])}).encode()
+                self.send_response(500 if answer is None else 200)
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
+                self.wfile.write(body)
 
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
         return requests
+
+    def logging_claude(self, reply="[0]"):
+        stub = self.home / "stub"
+        stub.mkdir(exist_ok=True)
+        log = self.home / "claude.log"
+        answer = json.dumps({"result": reply})
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\nprintf '%s\\t%s\\t%s\\t%s\\n' \"$(pwd)\" \"$(ls -A | wc -l | tr -d ' ')\" \"$*\" \"$CLAUDE_CODE_DISABLE_AUTO_MEMORY\" >> {log}\n"
+                                     f"echo '{answer}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        return log
 
     def session(self, session_id, *lines, title=None):
         path = self.projects / f"{session_id}.jsonl"
@@ -577,10 +593,20 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("\x1b[2m", plain)
         self.assertIn("Deployed ", plain)
 
-    def test_search_no_longer_takes_a_deep_flag(self):
+    def test_search_points_a_deep_flag_to_ask_and_rejects_other_flags(self):
         self.session("a1", user("fix the deep build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.session("b2", user("fix the build cache"), tool("Bash"), claude("Fixed."), title="Build cache")
-        self.assertEqual(self.titles("--deep", "build"), ["Build fix"])
+        deep = self.run_superfind("search", "--deep", "build")
+        self.assertEqual((deep.returncode, deep.stdout), (2, ""))
+        self.assertIn("superfind ask", deep.stderr)
+        for command in ("search", "ask"):
+            other = self.run_superfind(command, "--frobnicate", "build")
+            self.assertEqual((other.returncode, other.stdout), (2, ""), command)
+            self.assertIn(f"there is no --frobnicate option. To search for it, put -- first: superfind {command} -- --frobnicate",
+                          other.stderr)
+        self.assertEqual(self.titles("--", "--deep", "build"), ["Build fix"])
+        literal = self.run_superfind("search", "--", "-h")
+        self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         self.assertIn(f"typeset -g _superfind_bin={SUPERFIND}", self.superfind("init", "zsh"))
@@ -612,7 +638,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.superfind("index")
         result = self.run_superfind("ask", "where did we migrate the ledger")
         self.assertEqual((result.returncode, result.stderr.strip()),
-                         (1, "Ask failed: TypeSafe and Claude didn't answer."))
+                         (1, 'Ask failed: TypeSafe returned an unknown session "".'))
         os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
         labeled = self.run_superfind("label")
         self.assertEqual((labeled.returncode, labeled.stderr.strip()),
@@ -865,6 +891,16 @@ class SuperfindBehavior(unittest.TestCase):
         self.superfind("index")
         self.assertEqual([row.split("\t")[1] for row in self.superfind("search").splitlines()], ["/work/billing"])
 
+    def test_a_grok_session_with_a_half_written_summary_is_still_listed(self):
+        chat = self.grok_session(uid(1), "/work/billing", grok_user("fix the build"), grok_reply("Fixed."))
+        summary = chat.parent / "summary.json"
+        whole = summary.read_text()
+        summary.write_text(whole[:len(whole) // 2])
+        self.superfind("index")
+        self.assertEqual([row.split("\t")[1::3] for row in self.superfind("search").splitlines()], [["/work/billing", "fix the build"]])
+        self.grok_summary(chat, "/work/billing", title="Build repair")
+        self.assertEqual(self.titles(), ["Build repair"])
+
     def test_a_grok_summary_folder_wins_over_the_directory_name(self):
         chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."))
         self.grok_summary(chat, "/work/billing")
@@ -882,7 +918,7 @@ class SuperfindBehavior(unittest.TestCase):
         summary.write_text("x" + good[1:])
         self.tick(summary)
         self.assertEqual(self.run_superfind("index").returncode, 0)
-        self.assertEqual(self.titles(), [])
+        self.assertEqual(self.titles(), ["fix the build"])
         stamp = os.stat(summary).st_mtime_ns
         summary.write_text(good)
         os.utime(summary, ns=(stamp, stamp))
@@ -1058,7 +1094,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 12)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 13)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3
@@ -1076,6 +1112,449 @@ class SuperfindBehavior(unittest.TestCase):
         db = sqlite3.connect(cache / "search.db")
         self.addCleanup(db.close)
         self.assertEqual(db.execute("SELECT path FROM docs").fetchall(), [(str(self.projects.resolve() / "a1.jsonl"),)])
+
+    def test_help_prints_the_commands_and_succeeds(self):
+        for flag in ("--help", "-h", "help"):
+            result = self.run_superfind(flag)
+            self.assertEqual((result.returncode, result.stderr), (0, ""), flag)
+            self.assertIn("superfind search WORDS", result.stdout, flag)
+            self.assertIn("superfind help COMMAND", result.stdout, flag)
+
+    def test_every_command_explains_itself(self):
+        for command in ("init", "pick", "search", "ask", "preview", "command", "index", "label", "version"):
+            for args in (("help", command), (command, "--help"), (command, "-h")):
+                result = self.run_superfind(*args)
+                self.assertEqual((result.returncode, result.stderr), (0, ""), args)
+                self.assertTrue(result.stdout.startswith(f"superfind {command}" if command != "version" else "superfind --version"), args)
+        self.assertIn("is:waiting", self.superfind("help", "search"))
+        self.assertIn("--recent", self.superfind("preview", "--help"))
+
+    def test_an_unknown_command_is_named_and_the_real_ones_listed(self):
+        for args in (("serach", "invoices"), ("help", "serach")):
+            result = self.run_superfind(*args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
+            self.assertIn('"serach"', result.stderr)
+            self.assertIn("init, pick, search, ask, preview, command, index, and label", result.stderr)
+
+    def test_preview_refuses_options_it_does_not_understand(self):
+        path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        for args, reason in ((("--width", "abc"), "--width needs a number"), (("--width", "0"), "--width needs a number"),
+                             (("--width", "-5"), "--width needs a number"), (("--width",), "--width needs a value"),
+                             (("--wdith", "60"), "there is no --wdith option")):
+            result = self.run_superfind("preview", str(path), *args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
+            self.assertIn(reason, result.stderr, args)
+        self.assertIn("Upgraded.", self.superfind("preview", "--width", "60", str(path), "--recent"))
+        self.assertIn("Upgraded.", self.superfind("preview", str(path), "--query", "--help"))
+
+    def test_indexing_one_session_says_session(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.assertEqual(self.superfind("index"), "1 session indexed\n")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        self.assertEqual(self.superfind("index"), "2 sessions indexed\n")
+
+    def assert_only_our_styles(self, output):
+        self.assertEqual(output.count("\x1b"), len(re.findall(r"\x1b\[[0-9;]*m", output)), repr(output))
+        for unwanted in ("\x07", "\x08", "\u202e", "\u2066", "\x1b[2J", "\x1b]0;"):
+            self.assertNotIn(unwanted, output)
+
+    def test_session_text_cannot_send_commands_to_the_terminal(self):
+        path = self.session("a1", user("make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway \u202eesrever\u202c"),
+                            claude("a bold reply with a bell\x07 and back\x08space \u2066isolated\u2069"))
+        self.session("b2", user("write the release notes"), claude("Written."), title="\x1b[32mdeploy\x1b[0m checklist")
+        self.session("c3", user("upgrade the ku\u200fber\u200enetes clu\u061cster"), claude("Upgraded."))
+        self.assertEqual(self.titles("red"), ["make the red title go away esrever"])
+        self.assertEqual(self.titles("isolated"), ["make the red title go away esrever"])
+        self.assertEqual(self.titles("deploy"), ["deploy checklist"])
+        self.assertEqual(self.titles("kubernetes", "cluster"), ["upgrade the kubernetes cluster"])
+        search = self.run_superfind("search", "red").stdout
+        self.assert_only_our_styles(search)
+        self.assertEqual(search.split("\t")[4], "make the red title go away esrever")
+        for args in ((), ("--recent",), ("--query", "title")):
+            preview = self.run_superfind("preview", str(path), *args).stdout
+            self.assert_only_our_styles(preview)
+            self.assertIn("a bold reply with a bell and backspace isolated", ANSI.sub("", preview))
+
+    def test_a_folder_with_a_newline_keeps_its_session_on_one_line(self):
+        self.session("a1", user("rename the invoices", cwd="/tmp/a\nb\tc\u202ed"), claude("Renamed."), title="Invoice names")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        self.superfind("index")
+        rows = [row.split("\t") for row in self.superfind("search").splitlines()]
+        self.assertEqual([len(r) for r in rows], [6, 6])
+        self.assertEqual(rows[1][1], "/tmp/a?b?c?d")
+        self.assertIn("a b cd · folder removed", rows[1][5])
+
+    def test_a_huge_pasted_word_previews_in_moments(self):
+        path = self.session("a1", user("decode this: " + "QUJD" * 150_000), claude("It is the alphabet, repeated."))
+        self.superfind("index")
+        started = time.monotonic()
+        result = subprocess.run([str(SUPERFIND), "preview", str(path), "--width", "60"], env=self.env, capture_output=True,
+                                text=True, timeout=60)
+        self.assertLess(time.monotonic() - started, 10)
+        lines = ANSI.sub("", result.stdout).splitlines()
+        self.assertEqual(lines[-1], "  It is the alphabet, repeated.")
+        self.assertEqual(max(len(l) for l in lines[5:]), 58)
+
+    def test_a_search_index_damaged_inside_is_rebuilt_when_a_search_hits_the_damage(self):
+        import sqlite3
+        for n in range(40):
+            self.session(f"s{n}", user(f"task {n} about the kubernetes cluster " + "words " * 200), claude("Done."),
+                         title=f"Cluster task {n}")
+        self.superfind("index")
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        self.assertEqual(len(self.titles("kubernetes")), 40)
+
+    def test_a_damaged_search_index_is_rebuilt_from_the_sessions(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        db = self.home / ".cache" / "superfind" / "search.db"
+        for damage in ("not a database", "empty", "cut in half"):
+            self.superfind("index")
+            whole = db.read_bytes()
+            db.write_bytes({"not a database": b"this is not a database " * 200, "empty": b"",
+                            "cut in half": whole[:len(whole) // 2]}[damage])
+            for leftover in db.parent.glob("search.db-*"):
+                leftover.unlink()
+            self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"], damage)
+            self.assertEqual(self.titles("signing"), ["Key rotation"], damage)
+
+
+    def test_with_a_key_a_typesafe_failure_is_reported_and_nothing_goes_to_anthropic(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        requests = self.record_typesafe()
+        log = self.logging_claude()
+        result = self.run_superfind("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
+                         (1, "", "Ask failed: TypeSafe answered 500."))
+        self.assertEqual((len(requests), log.exists()), (1, False))
+
+    def test_claude_ranks_from_an_empty_folder_without_loading_settings_or_memory(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        log = self.logging_claude()
+        work = self.home / "work"
+        work.mkdir()
+        (work / "CLAUDE.md").write_text("Project memory that must not leave the machine.")
+        result = subprocess.run([str(SUPERFIND), "ask", "where did we migrate the ledger"], env=self.env, cwd=work,
+                                capture_output=True, text=True)
+        self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()]), (0, ["Ledger migration"]))
+        [(folder, entries, args, memory_off)] = [l.split("\t") for l in log.read_text().splitlines()]
+        self.assertEqual(memory_off, "1")
+        self.assertNotEqual(Path(folder).resolve(), work.resolve())
+        self.assertEqual(entries, "0")
+        self.assertIn("--setting-sources= --strict-mcp-config", args)
+        self.assertNotIn("--bare", args)
+
+    def test_ask_with_no_eligible_sessions_asks_no_one(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        log = self.logging_claude()
+        result = self.run_superfind("ask", "is:waiting", "rockets")
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertFalse(log.exists())
+
+    def test_when_jev_says_none_of_the_sessions_fit_ask_finds_nothing(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job")
+        self.superfind("index")
+        for probabilities in (lambda keys: {k: float(k == "none") for k in keys}, lambda keys: {"none": 0.97}):
+            requests = self.record_typesafe(lambda questions: {
+                q: {"choice": "none", "probabilities": probabilities(list(spec["criteria"]))} for q, spec in questions.items()})
+            result = self.run_superfind("ask", "quantum knitting patterns")
+            self.assertEqual((result.returncode, result.stdout, result.stderr, len(requests)), (0, "", "", 1))
+
+    def test_a_stray_escape_hides_none_of_the_conversation_from_search(self):
+        self.session("a1", user("log: ERROR \x1b]8;;broken then the kubernetes cluster died"), tool("Bash"),
+                     claude("The pods ran out of memory."), user("raise the limits to 4Gi"), claude("Raised."))
+        self.assertEqual(self.titles("kubernetes"), ["log: ERROR 8;;broken then the kubernetes cluster died"])
+        for word in ("memory", "limits", "4Gi"):
+            self.assertEqual(len(self.titles(word)), 1, word)
+        preview = self.run_superfind("preview", str(self.projects / "a1.jsonl"), "--recent").stdout
+        self.assertIn("broken then the kubernetes cluster died", ANSI.sub("", preview))
+        self.assertNotIn("\x1b]", preview)
+
+    def test_a_listed_grok_session_with_a_half_written_summary_writes_nothing_on_later_runs(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix")
+        self.session("a1", user("rotate the keys"), claude("Rotated."), title="Key rotation")
+        summary = chat.parent / "summary.json"
+        summary.write_text(summary.read_text()[:20])
+        self.tick(summary)
+        self.assertEqual(sorted(self.titles()), ["Key rotation", "fix the build"])
+        import sqlite3
+        cache = self.home / ".cache" / "superfind"
+
+        def written():
+            db = sqlite3.connect(cache / "search.db")
+            rows = db.execute("SELECT rowid, path FROM docs ORDER BY rowid").fetchall()
+            db.close()
+            return (cache / "index.json").stat().st_mtime_ns, rows
+
+        before = written()
+        time.sleep(0.05)
+        self.assertEqual(sorted(self.titles()), ["Key rotation", "fix the build"])
+        self.assertEqual(written(), before)
+
+    def test_a_search_index_whose_structure_was_wiped_is_rebuilt_when_a_search_finds_nothing(self):
+        import sqlite3
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.session("b2", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        for damage in ("UPDATE docs_data SET block = zeroblob(length(block)) WHERE id = 10",
+                       "UPDATE docs_config SET v = 0 WHERE k = 'version'"):
+            self.superfind("index")
+            db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+            db.execute(damage)
+            db.commit()
+            db.close()
+            self.assertEqual(self.titles("kubernetes"), ["Cluster upgrade"], damage)
+
+    def test_a_pasted_first_prompt_makes_a_short_title_and_a_short_ask_card(self):
+        pasted = "PASTED_LOG " + "log line with SECRET=hunter2 " * 700 + "END"
+        self.session("a1", user(pasted), tool("Bash"), claude("That log shows a timeout."))
+        self.superfind("index")
+        [title] = self.titles()
+        self.assertLessEqual(len(title), 200)
+        cache = json.loads((self.home / ".cache" / "superfind" / "index.json").read_text())
+        [entry] = cache["files"].values()
+        self.assertLessEqual(len(entry["session"]["last_prompt"]), 400)
+        requests = self.record_typesafe()
+        self.run_superfind("ask", "where was the timeout")
+        cards = [c for k, c in requests[0]["questions"]["which"]["criteria"].items() if k != "none"]
+        self.assertLessEqual(max(len(c) for c in cards), 700)
+
+    def test_the_cache_is_readable_only_by_its_owner(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        cache = self.home / ".cache" / "superfind"
+        cache.mkdir(parents=True)
+        cache.chmod(0o755)
+        (cache / "search.db").touch(mode=0o644)
+        self.superfind("index")
+        self.assertEqual(cache.stat().st_mode & 0o777, 0o700)
+        for name in ("search.db", "index.json", "index.lock"):
+            self.assertEqual((cache / name).stat().st_mode & 0o077, 0, name)
+        self.assertEqual(self.titles("signing"), ["Key rotation"])
+        shutil.rmtree(cache)
+        self.superfind("index")
+        self.assertEqual([(cache / n).stat().st_mode & 0o777 for n in (".", "search.db")], [0o700, 0o600])
+
+    def test_a_session_whose_id_reads_as_an_option_is_never_offered(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        flag = self.session("--dangerously-skip-permissions", user("rotate the signing keys"), claude("Rotated."),
+                            title="Sneaky")
+        self.assertEqual(self.titles(), ["Key rotation"])
+        result = self.run_superfind("command", str(flag))
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+
+    def test_a_fifo_or_device_in_a_session_folder_neither_hangs_nor_fills_memory(self):
+        self.session("a1", user("rotate the signing keys"), claude("Rotated."), title="Key rotation")
+        os.mkfifo(self.projects / "fifo.jsonl")
+        os.symlink("/dev/zero", self.projects / "zero.jsonl")
+        for args in (("index",), ("search", "signing"), ("preview", str(self.projects / "fifo.jsonl")),
+                     ("preview", str(self.projects / "zero.jsonl"))):
+            subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, timeout=20)
+        self.assertEqual(self.titles(), ["Key rotation"])
+
+    def test_one_enormous_line_is_skipped_without_using_memory_for_it(self):
+        path = self.projects / "a1.jsonl"
+        with open(path, "w") as f:
+            f.write(user("rotate the signing keys") + "\n")
+            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "x" * 40_000_000}) + "\n")
+            f.write(claude("Rotated.") + "\n")
+        measure = ("import resource, subprocess, sys; subprocess.run(sys.argv[1:], capture_output=True); "
+                   "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)")
+        peak = int(subprocess.run([sys.executable, "-c", measure, str(SUPERFIND), "index"], env=self.env,
+                                  capture_output=True, text=True, timeout=120).stdout)
+        megabytes = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
+        self.assertLess(megabytes, 250)
+        self.assertEqual(self.titles(), ["rotate the signing keys"])
+
+    def test_a_null_label_cache_is_treated_as_empty(self):
+        path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
+                            claude("Should I run it on production now?"), title="Ledger migration")
+        os.utime(path, (time.time() - 600, time.time() - 600))
+        self.superfind("index")
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.write_text("null")
+        self.record_typesafe(lambda questions: {q: {"choice": "waiting", "probabilities": {"waiting": 0.99}}
+                                                for q in questions})
+        result = self.run_superfind("label")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual(list(json.loads(status.read_text()).values())[0]["status"], "waiting")
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_folder_that_cannot_be_read_keeps_its_sessions_and_says_so(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        projects = self.home / ".claude" / "projects"
+        projects.chmod(0)
+        self.addCleanup(projects.chmod, 0o755)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn("1 session file or folder couldn't be read", result.stderr)
+        self.assertIn("permission denied", result.stderr)
+        self.assertEqual([r.split("\t")[4] for r in self.run_superfind("search", "redirect").stdout.splitlines()],
+                         ["Login redirect"])
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads files whatever their mode")
+    def test_a_session_file_that_cannot_be_read_is_reported(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        locked = self.session("b2", user("rotate the keys"), claude("Rotated."), title="Key rotation")
+        locked.chmod(0)
+        self.addCleanup(locked.chmod, 0o644)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn(f"1 session file or folder couldn't be read, so their sessions may be missing or out of date: open {locked}",
+                      result.stderr)
+
+    def test_a_prompt_that_starts_with_markup_is_still_a_prompt(self):
+        self.session("a1", user("<div>Hello</div> fix this component"), claude("Fixed the component."))
+        self.session("b2", user("<system-reminder>Be brief.</system-reminder>\ncommit this and open a PR"), tool("Bash"),
+                     claude("Opened."))
+        self.codex_session(uid(1), codex_meta(), codex_user("<div>Hello</div> fix this Codex component"),
+                           codex_reply("Fixed."))
+        self.codex_session(uid(2), codex_meta(), codex_user(
+            "<in-app-browser-context>\n<url>http://localhost</url>\n</in-app-browser-context>\n## My request for Codex:\nship the redirect fix"),
+            codex_reply("Shipped."))
+        self.session("c3", user("<local-command-stdout>ok</local-command-stdout>"), claude("Noted."))
+        self.session("d4", user("<system-reminder>a wrapper that never closes"), claude("Noted."))
+        self.assertEqual(sorted(self.titles()), ["<div>Hello</div> fix this Codex component", "<div>Hello</div> fix this component",
+                                                 "commit this and open a PR", "ship the redirect fix"])
+
+    def test_one_letter_words_and_common_words_still_narrow_a_search(self):
+        self.session("a1", user("write the C extension for the parser"), claude("Written."), title="C extension")
+        self.session("b2", user("port this service to Rust"), claude("Ported."), title="Rust port")
+        self.session("c3", user("configure nginx proxy"), claude("Configured."), title="Nginx proxy")
+        self.assertEqual(self.titles("C"), ["C extension"])
+        self.assertEqual(self.titles("the"), ["C extension"])
+        self.assertEqual(sorted(self.titles("to")), ["Rust port"])
+
+    def test_filters_in_the_query_do_not_hide_the_matching_passage(self):
+        path = self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        for query in ("redirect", "agent:claude redirect", "is:unfinished redirect"):
+            self.assertIn("redirect", self.superfind("preview", str(path), "--query", query).splitlines()[3], query)
+
+    def test_a_session_in_a_symlinked_project_folder_resumes_from_the_path_search_printed(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        alias = self.home / "alias"
+        alias.symlink_to(self.home / ".claude")
+        through_alias = alias / "projects" / self.projects.name / "a1.jsonl"
+        self.assertEqual(self.superfind("command", str(through_alias)), "cd /tmp && claude --resume a1\n")
+        real = self.home / "real-project"
+        self.projects.rename(real)
+        self.projects.symlink_to(real)
+        self.superfind("index")
+        printed = self.superfind("search", "redirect").split("\t")[0]
+        self.assertEqual(self.superfind("command", printed), "cd /tmp && claude --resume a1\n")
+        self.assertIn("Fixed.", self.superfind("preview", printed))
+
+    def test_usage_mistakes_exit_2_and_say_what_was_wrong(self):
+        for args, reason in ((("init",), "which shell?"), (("init", "fish"), "which shell?"), (("command",), "which session?"),
+                             (("preview",), "which session?")):
+            result = self.run_superfind(*args)
+            self.assertEqual((result.returncode, result.stdout), (2, ""), args)
+            self.assertIn(reason, result.stderr, args)
+
+    @unittest.skipUnless(os.path.exists("/dev/full"), "needs /dev/full, where every write fails")
+    def test_output_that_cannot_be_written_is_an_error(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        for args in (("search", "redirect"), ("--help",), ("init", "zsh")):
+            with open("/dev/full", "w") as full:
+                result = subprocess.run([str(SUPERFIND), *args], env=self.env, stdout=full, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(result.returncode, 1, args)
+            self.assertIn("superfind: couldn't write the output", result.stderr, args)
+
+    def test_a_grok_summary_that_is_a_fifo_or_device_neither_hangs_nor_fills_memory(self):
+        fifo = self.grok_session(uid(1), "/work/a", grok_user("fix the build"), grok_reply("Fixed."), summary=False)
+        os.mkfifo(fifo.parent / "summary.json")
+        zero = self.grok_session(uid(2), "/work/b", grok_user("rename the job"), grok_reply("Renamed."), summary=False)
+        os.symlink("/dev/zero", zero.parent / "summary.json")
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, timeout=30)
+        self.assertEqual(sorted(self.titles()), ["fix the build", "rename the job"])
+
+    def test_previewing_a_session_with_an_enormous_line_skips_it_without_using_memory_for_it(self):
+        path = self.projects / "a1.jsonl"
+        with open(path, "w") as f:
+            f.write(user("rotate the signing keys please") + "\n")
+            f.write(claude("x" * 40_000_000) + "\n")
+            f.write(claude("Rotated.") + "\n")
+        self.superfind("index")
+        measure = ("import resource, subprocess, sys; r = subprocess.run(sys.argv[1:], capture_output=True, text=True); "
+                   "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss); print(r.stdout)")
+        out = subprocess.run([sys.executable, "-c", measure, str(SUPERFIND), "preview", str(path)], env=self.env,
+                             capture_output=True, text=True, timeout=120).stdout
+        peak, preview = out.split("\n", 1)
+        megabytes = int(peak) / (1 << 20) if sys.platform == "darwin" else int(peak) / 1024
+        self.assertLess(megabytes, 250)
+        self.assertIn("Rotated.", preview)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_claude_home_that_cannot_be_read_keeps_its_sessions_and_says_so(self):
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.superfind("index")
+        home = self.home / ".claude"
+        home.chmod(0)
+        self.addCleanup(home.chmod, 0o755)
+        result = self.run_superfind("index")
+        self.assertEqual(result.stdout, "1 session indexed\n")
+        self.assertIn("couldn't be read", result.stderr)
+
+    def test_a_hidden_grok_subagent_stays_hidden_while_its_summary_is_half_written(self):
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed."), title="Build fix",
+                                 kind="subagent")
+        self.grok_session(uid(2), "/tmp", grok_user("rename the job"), grok_reply("Renamed."), title="Job rename")
+        self.assertEqual(self.titles(), ["Job rename"])
+        summary = chat.parent / "summary.json"
+        summary.write_text(summary.read_text()[:20])
+        self.tick(summary)
+        self.assertEqual(self.titles(), ["Job rename"])
+
+    def test_a_search_that_finds_nothing_is_as_quick_as_one_that_finds_something(self):
+        words = " ".join(f"word{n}" for n in range(20000))
+        for n in range(150):
+            self.session(f"s{n}", user(f"task {n} about the ledger"), tool("Bash"), claude(words), title=f"Ledger task {n}")
+        self.superfind("index")
+
+        def took(*search):
+            started = time.monotonic()
+            self.superfind("search", *search)
+            return time.monotonic() - started
+
+        hit, miss = min(took("ledger") for _ in range(3)), min(took("zzqqxx") for _ in range(3))
+        self.assertLess(miss, 3 * hit + 0.2)
+
+    def test_interrupting_ask_stops_claude_and_what_it_started(self):
+        import signal
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        asking = subprocess.Popen([str(SUPERFIND), "ask", "where did we migrate the ledger"], env=self.env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        os.killpg(asking.pid, signal.SIGINT)
+        self.assertEqual(asking.wait(timeout=10), 130)
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
 
 
 if __name__ == "__main__":

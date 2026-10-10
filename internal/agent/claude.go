@@ -9,12 +9,13 @@ import (
 
 var slashCommand = regexp.MustCompile(`(?s)<command-name>(/?[^<]*)</command-name>.*?(?:<command-args>(.*?)</command-args>|$)`)
 
-var machinePrefixes = []string{"<", "Caveat:", "[Request interrupted", "Another Claude session sent a message", "[SYSTEM NOTIFICATION"}
+var machinePrefixes = []string{"Caveat:", "[Request interrupted", "Another Claude session sent a message", "[SYSTEM NOTIFICATION"}
 
 func promptText(text string) string {
 	if m := slashCommand.FindStringSubmatch(text); m != nil {
 		return strings.TrimSpace(m[1] + " " + m[2])
 	}
+	text = withoutWrappers(text)
 	for _, p := range machinePrefixes {
 		if strings.HasPrefix(text, p) {
 			return ""

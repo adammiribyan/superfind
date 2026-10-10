@@ -52,11 +52,13 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions"):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
         command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        if linger:
+            command += "; sleep 60"
         tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command)
         self.wait_for(header)
 
@@ -114,6 +116,128 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("1/3")
         self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
         self.assertIn("customers get charged twice", self.screen())
+
+    def test_a_damaged_search_index_heals_while_the_picker_is_open(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = self.home / ".cache" / "superfind" / "search.db"
+        db.write_bytes(b"this is not a database " * 200)
+        for leftover in db.parent.glob("search.db-*"):
+            leftover.unlink()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_the_picker_searches_the_rebuilt_index_not_the_damaged_one_it_opened(self):
+        import sqlite3
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("DROP TABLE docs_content")
+        db.commit()
+        db.close()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    def test_damage_found_while_typing_rebuilds_the_index_and_finds_the_session(self):
+        import sqlite3
+        self.three_sessions()
+        for n in range(30):
+            self.session(f"pad{n}", f"Padding {n}", user(f"pad session {n} " + "filler " * 300), tool("Bash"), claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        self.open_picker(index_first=False)
+        self.keys("charged")
+        self.wait_for("1/33")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads folders whatever their mode")
+    def test_a_folder_that_cannot_be_read_is_named_in_the_picker(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        self.projects.parent.chmod(0)
+        self.addCleanup(self.projects.parent.chmod, 0o755)
+        self.open_picker(index_first=False)
+        self.wait_for("1 session file or folder couldn't be read")
+        self.assertEqual(len(self.rows()), 3)
+
+    def test_labels_that_land_while_a_status_filter_is_typed_show_up(self):
+        self.three_sessions()
+        self.open_picker()
+        self.keys("is:waiting")
+        self.wait_for("No sessions match")
+        path = self.projects / "mid.jsonl"
+        st = os.stat(path)
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
+        self.wait_for("1/3")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Invoice layout"])
+
+    def test_a_session_that_loses_its_label_leaves_status_filtered_ask_results(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        path = self.projects / "mid.jsonl"
+        st = os.stat(path)
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.open_picker()
+        self.keys("is:waiting invoice names", "C-r")
+        self.wait_for("1/3", timeout=10)
+        status.write_text("{}")
+        os.utime(status, (time.time() + 5, time.time() + 5))
+        self.wait_for("0/3")
+
+    def test_a_lost_search_index_is_rebuilt_even_when_the_picker_opens_first(self):
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        (self.home / ".cache" / "superfind" / "search.db").unlink()
+        self.open_picker(index_first=False)
+        self.wait_for("3/3")
+        self.keys("Escape")
+        self.result()
+        found = subprocess.run([str(SUPERFIND), "search", "charged"], env=self.env, capture_output=True, text=True)
+        self.assertEqual([r.split("\t")[4] for r in found.stdout.splitlines()], ["Checkout double charge"])
+
+    def test_a_machine_with_no_sessions_says_where_it_looked(self):
+        shutil.rmtree(self.home / ".claude")
+        self.open_picker(index_first=False, header="Sessions")
+        self.wait_for("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.")
+        self.keys("abc")
+        screen = self.settled_screen()
+        self.assertIn("No sessions yet in ~/.claude, ~/.codex, or ~/.grok.", screen)
+        self.assertIn("esc quit", screen)
+        self.assertNotIn("deep search", screen)
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+    def test_shrinking_the_terminal_to_one_cell_and_back_redraws_the_picker(self):
+        self.three_sessions()
+        self.open_picker()
+        tmux("resize-window", "-t", self.session_name, "-x", "1", "-y", "1")
+        time.sleep(0.8)
+        self.assertEqual(tmux("display", "-p", "-t", self.session_name, "#{window_width}x#{window_height}").stdout, "1x1\n")
+        tmux("resize-window", "-t", self.session_name, "-x", "140", "-y", "32")
+        time.sleep(0.8)
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge", "Invoice layout", "Ledger migration"])
+
+    def test_the_title_handed_to_the_shell_carries_no_terminal_commands(self):
+        self.session("esc", "make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway",
+                     user("make the title red"), tool("Edit"), claude("Done."))
+        self.open_picker()
+        self.keys("Enter")
+        code, out = self.result()
+        self.assertEqual((code, out.splitlines()[0]), (0, "make the red title go away"))
 
     def test_a_search_with_no_matches_says_so_and_offers_a_way_back(self):
         self.three_sessions()
@@ -370,6 +494,119 @@ class PickerBehavior(unittest.TestCase):
         cards = [c.split(" | ")[0] for k, c in received[0]["questions"]["which"]["criteria"].items() if k != "none"]
         self.assertEqual((received[0]["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
 
+    def test_clearing_an_ask_stops_it_before_more_session_cards_are_sent(self):
+        received = []
+
+        class Slow(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                received.append(sent)
+                time.sleep(2)
+                answers = {q: {"choice": list(spec["criteria"])[0],
+                               "probabilities": {k: 0.5 for k in spec["criteria"]}, "noul": 0.5}
+                           for q, spec in sent["questions"].items()}
+                body = json.dumps({"answers": answers}).encode()
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.three_sessions()
+        status = self.home / ".cache" / "superfind" / "status.json"
+        status.parent.mkdir(parents=True, exist_ok=True)
+        status.write_text("{}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.open_picker()
+        self.keys("ledger", "C-r")
+        self.keys("C-u")
+        time.sleep(5)
+        self.assertEqual([list(r["questions"]) for r in received if "status" not in r["questions"]], [["which"]])
+
+    def test_quitting_during_an_ask_stops_claude_and_what_it_started(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        self.open_picker(linger=True)
+        self.keys("ledger", "C-r")
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        self.keys("Escape")
+        self.assertEqual(self.result()[0], 1)
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
+
+    def test_interrupting_the_picker_during_an_ask_stops_claude_too(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        pids = self.home / "pids"
+        (stub / "claude").write_text(f"#!/bin/sh\necho $PPID > {pids}.parent\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
+        (stub / "claude").chmod(0o755)
+        self.three_sessions()
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
+                                 for pid in (pids.read_text().split() if pids.exists() else [])])
+        self.open_picker(linger=True)
+        self.keys("ledger", "C-r")
+        deadline = time.time() + 10
+        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
+            time.sleep(0.1)
+        os.kill(int(Path(f"{pids}.parent").read_text()), 2)
+        self.result()
+        time.sleep(0.5)
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        self.assertEqual(alive, [])
+
+    def test_a_damaged_index_found_while_typing_is_removed_only_under_the_index_lock(self):
+        import sqlite3
+        self.three_sessions()
+        for n in range(30):
+            self.session(f"pad{n}", f"Padding {n}", user(f"pad session {n} " + "filler " * 300), tool("Bash"), claude("Done."))
+        self.open_picker()
+        self.wait_for("33/33")
+        db_path = self.home / ".cache" / "superfind" / "search.db"
+        db = sqlite3.connect(db_path)
+        db.execute("UPDATE docs_data SET block = x'00' WHERE id > 10")
+        db.commit()
+        db.close()
+        lock = open(self.home / ".cache" / "superfind" / "index.lock", "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.keys("charged")
+        time.sleep(1.5)
+        self.assertTrue(db_path.exists())
+        lock.close()
+        self.wait_for("1/33")
+        self.assertEqual([r.split("  ")[0] for r in self.rows()], ["Checkout double charge"])
+
     def test_a_cached_session_outside_every_home_is_not_listed(self):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
@@ -399,7 +636,7 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
 
 
-    def test_explanation_passages_are_packed_by_characters_and_never_cut_short(self):
+    def explaining_typesafe(self):
         received = []
 
         class TypeSafe(http.server.BaseHTTPRequestHandler):
@@ -430,10 +667,30 @@ class PickerBehavior(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        return received
+
+    def test_explanation_passages_cover_every_message_and_all_of_a_long_one(self):
+        received = self.explaining_typesafe()
+        long_reply = " ".join(f"word{n:03d}" for n in range(125))
+        self.session("ledger", "Ledger migration", user("migrate the ledger"), tool("Bash"),
+                     claude("I changed ledger.go to batch the writes."), user("now add a test for the ledger"),
+                     claude(long_reply))
+        self.open_picker()
+        self.keys("where did we migrate the ledger", "C-r")
+        deadline = time.time() + 10
+        while not received and time.time() < deadline:
+            time.sleep(0.1)
+        passages = " ".join(received[0][k] for k in received[0] if k != "none")
+        for said in ("I changed ledger.go", "now add a test for the ledger", "word000", "word124"):
+            self.assertIn(said, passages)
+        self.assertTrue(all(len(received[0][k]) <= 400 for k in received[0]))
+
+    def test_explanation_passages_are_packed_by_characters_and_never_cut_short(self):
+        received = self.explaining_typesafe()
         paragraphs = [("Миграция реестра " * 9)[:150]] * 2 + ["р" * 199 + "a", "р" * 199 + "b"]
         self.session("ledger", "Ledger migration", user("migrate the ledger"), tool("Bash"),
                      claude("\n\n".join(paragraphs)))
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
         self.open_picker()
         self.keys("where did we migrate the ledger", "C-r")
         deadline = time.time() + 10
@@ -494,12 +751,16 @@ class PickerColors(PtyPicker):
         self.assertIn(self.TINT, self.read(until=self.TINT))
 
     def test_the_picker_appears_in_one_finished_frame_once_colors_are_known(self):
-        waiting = self.read(until=b"\x1b]11;?") + self.read(seconds=0.15)
-        self.assertNotIn(b"Ledger", waiting)
+        asked = self.read(until=b"\x1b]11;?")
         os.write(self.terminal, self.COLORS)
-        first = self.read(until=b"Migrated.")
-        self.assertIn(b"Ledger", first)
-        self.assertIn(self.TINT, first)
+        shown = asked + self.read(until=b"Migrated.")
+        self.assertIn(self.TINT, shown)
+        self.assertNotIn(b"Ledger", asked)
+        self.assertNotIn(b"\x1b[7m", shown[:shown.index(self.TINT)])
+
+    def test_the_picker_leaves_the_cursor_color_to_the_terminal(self):
+        os.write(self.terminal, self.COLORS)
+        self.assertNotIn(b"\x1b]12;", self.read(until=b"Migrated."))
 
 
 class PickerWithoutColor(PtyPicker):
