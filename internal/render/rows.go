@@ -96,7 +96,7 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	t := RowText{Title: Flat(r.Session.Title)}
 	if r.Status == session.WaitingLabel {
 		t.Waiting = r.Status
-	} else if r.Status != "" {
+	} else if r.Status != "" && r.Open == nil {
 		t.Context = append(t.Context, r.Status)
 	}
 	t.Context = append(t.Context, when(r), Flat(r.Session.Project()))
@@ -110,7 +110,7 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 func metaParts(r session.Row, shown Tags) []string {
 	s := r.Session
 	parts := []string{Flat(s.Project())}
-	if r.Status != "" {
+	if r.Status == session.WaitingLabel || r.Status != "" && r.Open == nil {
 		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(r))

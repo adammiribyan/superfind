@@ -85,6 +85,18 @@ func TestAnOpenSessionSaysSoUnlessItWaitsOnYou(t *testing.T) {
 	if got := RowContext(RowTextOf(row, Tags{}), ""); got != "active now · shop" {
 		t.Errorf("row context without a process %q", got)
 	}
+	row.Open, row.Status = held, "unfinished"
+	if got := RowContext(RowTextOf(row, Tags{}), ""); got != "open · shop" {
+		t.Errorf("row context of an open unfinished session %q", got)
+	}
+	header := PreviewHeader(PreviewRequest{Width: 80}, row, Tags{}, nil)
+	if want := "shop · open · 0 prompts" + Reset; header[1] != want {
+		t.Errorf("preview header of an open unfinished session %q, want %q", header[1], want)
+	}
+	row.Status = session.WaitingLabel
+	if got := PreviewHeader(PreviewRequest{Width: 80}, row, Tags{}, nil)[1]; got != "shop · "+session.WaitingLabel+" · open · 0 prompts"+Reset {
+		t.Errorf("preview header of an open waiting session %q", got)
+	}
 }
 
 func TestNarrowListsDropAgentThenProject(t *testing.T) {
