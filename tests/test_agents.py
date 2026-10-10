@@ -4,7 +4,7 @@ import subprocess
 import unittest
 
 from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, GROK_OPENER, GROK_SYSTEM, SuperfindBehavior, claude, codex_meta, codex_reply,
-                            codex_user, grok_reply, grok_user, uid, user)
+                            codex_user, grok_reply, grok_user, tool, uid, user)
 
 
 KEY = "sk-ant-api03-" + "Q" * 40
@@ -101,13 +101,16 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertIn(said, self.show(uid(6)))
 
     def test_show_sends_nothing_anywhere(self):
-        self.checkout()
+        self.session(uid(1), user("the checkout double-charges on slow networks", cwd="/work/billing"), tool("Edit"),
+                     claude("Use an idempotency key derived from the cart id."), title="Checkout double-charges")
         requests = self.record_typesafe(answer=lambda questions: [])
         log = self.logging_claude()
         self.show(uid(1))
         self.show(uid(1), "--json")
         self.assertEqual(requests, [])
         self.assertFalse(log.exists())
+        self.run_superfind("ask", "charging", "twice")
+        self.assertEqual(len(requests), 1, "the recording server sees a real request")
 
     def test_a_unique_id_prefix_finds_the_session_in_show_command_and_preview(self):
         path = self.checkout()
@@ -167,7 +170,7 @@ class ScriptsAndAgents(SuperfindBehavior):
         for arg in (".", "..", "~"):
             result = self.run_superfind("show", arg)
             self.assertEqual(result.returncode, 1, arg)
-            self.assertNotIn("no session with id", result.stderr)
+            self.assertIn(f"{arg} is not inside a Claude, Codex, or Grok home", result.stderr)
 
     def test_an_unknown_id_says_so(self):
         self.checkout()
