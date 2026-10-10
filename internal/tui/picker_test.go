@@ -300,3 +300,19 @@ func TestTheEnterHintSaysGoToItForASessionOpenInATmuxPane(t *testing.T) {
 		}
 	}
 }
+
+func TestEnterOnASessionThatOpenedSinceTheLastLookSaysWhereItIsOpen(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	m := openPicker(t)
+	for i := range m.shown {
+		m.shown[i].Open = nil
+	}
+	m, msg := press(m, tea.KeyEnter)
+	if _, quit := msg.(tea.QuitMsg); quit || m.quitting || m.chosen != nil {
+		t.Fatalf("enter on a session opened since the last look quit=%v chosen=%v, want the picker still open with nothing chosen", quit || m.quitting, m.chosen)
+	}
+	if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
+		t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open in another terminal window", screen)
+	}
+}

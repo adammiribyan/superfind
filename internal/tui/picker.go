@@ -709,12 +709,10 @@ func (m picker) enter() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	chosen := *r
-	if chosen.Open != nil {
-		state, ok := open.Find(agent.Places())[open.KeyOf(chosen.Agent.ID, chosen.Session.ID)]
-		chosen.Open = nil
-		if ok {
-			chosen.Open = &state
-		}
+	state, ok := open.Find(agent.Places())[open.KeyOf(chosen.Agent.ID, chosen.Session.ID)]
+	chosen.Open = nil
+	if ok {
+		chosen.Open = &state
 	}
 	if onEnter(chosen.Open, m.inTmux) == sayWhere {
 		m.notice = "Already open in another terminal window."
