@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"errors"
+	"io/fs"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,7 +38,7 @@ var Agents = []*Agent{
 
 func stem(path string) string { return strings.TrimSuffix(filepath.Base(path), ".jsonl") }
 
-func (a *Agent) defaultHome() string {
+func (a *Agent) DefaultHome() string {
 	if h := os.Getenv(a.homeVar); h != "" {
 		return h
 	}
@@ -61,7 +64,9 @@ func (a *Agent) homes() []string {
 	var dirs []string
 	for _, c := range candidates {
 		d := Resolve(c)
-		if info, err := os.Stat(filepath.Join(d, marker)); err == nil && info.IsDir() && !seen[d] {
+		info, err := os.Stat(filepath.Join(d, marker))
+		exists := (err == nil && info.IsDir()) || (err != nil && !errors.Is(err, fs.ErrNotExist) && dirExists(d))
+		if exists && !seen[d] {
 			seen[d] = true
 			dirs = append(dirs, d)
 		}
@@ -71,9 +76,48 @@ func (a *Agent) homes() []string {
 
 var globMeta = strings.NewReplacer(`\`, `\\`, "*", `\*`, "?", `\?`, "[", `\[`)
 
-func (a *Agent) Sessions(home string) []string {
-	matches, _ := filepath.Glob(filepath.Join(globMeta.Replace(home), a.glob))
-	return matches
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func (a *Agent) Sessions(home string) ([]string, []error) {
+	var paths []string
+	var unreadable []error
+	var walk func(dir string, parts []string)
+	walk = func(dir string, parts []string) {
+		var names []string
+		if strings.ContainsAny(parts[0], "*?[") {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
+					unreadable = append(unreadable, err)
+				}
+				return
+			}
+			for _, e := range entries {
+				if matched, _ := filepath.Match(parts[0], e.Name()); matched {
+					names = append(names, e.Name())
+				}
+			}
+		} else {
+			names = []string{parts[0]}
+		}
+		for _, name := range names {
+			path := filepath.Join(dir, name)
+			if len(parts) == 1 {
+				if _, err := os.Lstat(path); err == nil {
+					paths = append(paths, path)
+				}
+			} else if info, err := os.Stat(path); err == nil && info.IsDir() {
+				walk(path, parts[1:])
+			} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				unreadable = append(unreadable, err)
+			}
+		}
+	}
+	walk(home, strings.Split(a.glob, "/"))
+	return paths, unreadable
 }
 
 func (a *Agent) Stat(path string) (FileID, float64, error) {
@@ -131,8 +175,13 @@ func Locate(path string, in []Place) (Place, bool) {
 }
 
 func Home() string {
-	h, _ := os.UserHomeDir()
-	return h
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	if u, err := user.Current(); err == nil {
+		return u.HomeDir
+	}
+	return ""
 }
 
 func Resolve(path string) string {

@@ -95,7 +95,7 @@ Often you remember what a session was about but not the words it used. Type a de
 
 For example, "where did we stop charging people twice" finds "Checkout button double-charges on slow networks", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
-Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails or finds nothing, superfind asks Claude Haiku instead. The picker doesn't show which one answered.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so instead of trying Claude.
 
 Measured on 21 test searches, each phrased differently from the session it should find, over two or three runs:
 
@@ -111,7 +111,7 @@ Claude puts the right session first slightly more often. Jev is two to three tim
 
 With Jev, the preview also shows the passage that best matches your search for the top five results. It appears shortly after the results.
 
-Without a TypeSafe key, ask uses Claude Haiku through your Claude Code login, whichever agent made the sessions, so it needs Claude Code installed and counts toward your Claude plan. To use Jev instead, get a key from [TypeSafe](https://docs.typesafe.ai) and set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/superfind/env`:
+Without a TypeSafe key, ask uses Claude Haiku through your Claude Code login, whichever agent made the sessions, so it needs Claude Code installed and counts toward your Claude plan. Claude Code runs from an empty folder, without your settings, memory, MCP servers, or CLAUDE.md files. To use Jev instead, get a key from [TypeSafe](https://docs.typesafe.ai) and set `TYPESAFE_API_KEY` in your environment, or put this line in `~/.config/superfind/env`:
 
 ```sh
 TYPESAFE_API_KEY=your-key
@@ -129,7 +129,7 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 ## What leaves your machine
 
-Asking sends the ranker your description and, for each session except one-line "hi" sessions, its title, project, age, last request, and one short passage: to TypeSafe with a key, to Anthropic without one, and to Anthropic as well when TypeSafe fails or finds nothing. With a key, explanations also send up to 120 short passages from each of the top five sessions to TypeSafe. Labeling sends the ending (its last six turns, clipped) of each session written in the last two weeks to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
+Asking sends the ranker your description and, for each session except one-line "hi" sessions, its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions and one-line "hi" sessions are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
 
 superfind has no telemetry, analytics, or update checks. The requests above are the only ones it makes, so without a TypeSafe key, nothing leaves your machine until you ask.
 
@@ -154,12 +154,13 @@ superfind command <session>  # print the command that resumes a session
 superfind pick               # open the picker, then print the chosen session's title and resume command
 superfind index              # build or refresh the index
 superfind label              # mark sessions waiting on you (needs a TypeSafe key)
+superfind help <command>     # explain one command; --help works too
 superfind --version
 ```
 
 `search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and the row as the picker shows it. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it to `preview` or `command`.
 
-The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set. Each run re-reads only the sessions that changed, and the picker opens from the index while it refreshes in the background. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
+The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set, and only your account can read it. Each run re-reads only the sessions that changed, and the picker opens from the index while it refreshes in the background. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 
 ## Settings
 

@@ -11,6 +11,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The cache moves to `~/.cache/superfind/`, the settings file to `~/.config/superfind/env`, and the environment variables to `SUPERFIND_CLAUDE_DIRS`, `SUPERFIND_CODEX_DIRS`, and `SUPERFIND_GROK_DIRS`. Nothing is migrated: to upgrade from hop, replace `eval "$(hop init zsh)"` with `eval "$(superfind init zsh)"` (or the bash line), move `~/.config/hop/env` to `~/.config/superfind/env`, and delete `~/.cache/hop/`. The first run rebuilds the index.
 - The code is split into internal packages behind a thin `main.go`. `go install` works as before.
 - The picker header and the "Resuming" line no longer show Claude's asterisk.
+- With a TypeSafe key, a TypeSafe failure is reported instead of quietly asking Anthropic, and when Jev finds nothing the ask ends with no results.
+- Ask runs Claude Code from an empty folder without your settings, memory, MCP servers, or CLAUDE.md files. On the maintainer's machine this cut a request from 97,770 input tokens to 523.
+- Keyword search uses every word you type: one-letter words match whole words, and common words such as "the" are no longer dropped.
+- Usage mistakes exit 2, and `search` and `ask` reject flags they don't know instead of searching for them.
 
 ### Added
 
@@ -18,10 +22,37 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `agent:claude`, `agent:codex`, and `agent:grok` filter the list. Rows name their agent when sessions come from more than one.
 - `NO_COLOR` turns off every color in the picker and the command output, keeping bold, dim, and reverse video.
 - The README reports label accuracy on hand-labeled Codex and Grok sessions.
+- `--help`, `-h`, `superfind help <command>`, and `<command> --help`.
+- On a machine with no sessions, superfind says where it looked.
 
 ### Removed
 
 - `HOP_PLAIN_COLORS`. Use `NO_COLOR` instead.
+
+### Fixed
+
+- A damaged or empty search index is rebuilt instead of failing or finding nothing.
+- A pasted log no longer becomes a 20,000-character title: titles are clipped to 200 characters and last requests to 400.
+- Words wrapped in escape codes are searchable, and a stray escape sequence no longer hides the rest of a conversation from search.
+- A session folder that can't be read keeps its sessions and is reported, instead of looking empty.
+- A FIFO or a symlink to `/dev/zero` among the sessions no longer hangs every command, and a line over 16 MB is skipped.
+- A prompt that starts with HTML or JSX is still read as a prompt.
+- A Grok session whose `summary.json` is half-written is listed, and read again once it is complete.
+- Previewing a huge pasted word no longer takes time quadratic in its length.
+- Pressing Ctrl-C during `superfind ask`, or quitting the picker while it asks, stops Claude Code.
+- A line that cut a word starting with a wide character came out one column too wide.
+- A failed copy in `install.sh` keeps the installed superfind.
+- With `HOME` unset, the cache goes to your home folder instead of the current folder.
+- The picker leaves the terminal's cursor color alone, and redraws after the terminal shrinks to one cell and back.
+- Labels that arrive while `is:waiting` is typed show up, and filters keep the matched passage in the preview.
+- `command` and `preview` accept the path `search` printed, even under a symlinked folder.
+- A write that fails, such as to a full disk, exits 1.
+
+### Security
+
+- The cache folder is readable only by your account, and an existing install is tightened on the next run. Before, any local account could read indexed conversations.
+- Session text can no longer send escape sequences, control characters, or bidi overrides to your terminal.
+- A session whose id starts with `-` is never listed, so it can't become an option to the agent's command.
 
 ## [0.8.1] - 2026-10-09
 

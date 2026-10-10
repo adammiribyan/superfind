@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"image/color"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -131,8 +134,9 @@ type explainDone struct {
 type colorsSettled struct{}
 
 type indexed struct {
-	rows []session.Row
-	err  error
+	rows     []session.Row
+	problems []error
+	err      error
 }
 
 type labelsTick struct{}
@@ -160,6 +164,7 @@ type picker struct {
 
 	cursor, offset int
 	width, height  int
+	screenHeight   int
 	colors         theme
 
 	recent      bool
@@ -170,8 +175,10 @@ type picker struct {
 	explained   map[string]string
 	message     string
 
+	asks     *asks
 	chosen   *session.Row
 	quitting bool
+	reindex  bool
 }
 
 func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
@@ -183,6 +190,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		all: session.RecentFirst(session.Annotate(rows)), db: db, tags: render.TagsFor(rows), label: render.PickerLabel(rows, agent.Places()),
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
+		asks: &asks{},
 	}
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
@@ -200,12 +208,19 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	return m
 }
 
+func index() tea.Msg {
+	rows, problems, err := session.Index(nil)
+	return indexed{rows, problems, err}
+}
+
+func rebuild() tea.Msg {
+	rows, problems, err := session.Rebuild(nil)
+	return indexed{rows, problems, err}
+}
+
 func (m picker) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		func() tea.Msg {
-			rows, err := session.Index(nil)
-			return indexed{rows, err}
-		},
+		index,
 		tea.Tick(colorTimeout, func(time.Time) tea.Msg { return colorsSettled{} }),
 		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
@@ -242,9 +257,7 @@ func (m *picker) styleInput() {
 	styles.Focused.Prompt = m.colors.accent
 	styles.Focused.Text = lipgloss.NewStyle()
 	styles.Focused.Placeholder = m.colors.muted
-	if m.colors.noColor {
-		styles.Cursor.Color = nil
-	}
+	styles.Cursor.Color = nil
 	m.input.SetStyles(styles)
 }
 
@@ -260,7 +273,20 @@ func (m picker) focused() *session.Row {
 	return nil
 }
 
+type asks struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running sync.WaitGroup
+}
+
+func (a *asks) stop() {
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
 func (m *picker) forgetAsk() {
+	m.asks.stop()
 	m.askSeq++
 	m.asking, m.askedFor, m.explained = false, "", nil
 }
@@ -282,10 +308,13 @@ func (m *picker) filter() {
 	default:
 		shown, err := session.Search(m.db, query, m.all)
 		m.shown = shown
+		if errors.Is(err, session.ErrDamaged) {
+			m.db, m.shown, m.reindex = nil, m.all, true
+		}
 		switch {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
-		case len(m.shown) == 0:
+		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
 	}
@@ -372,11 +401,15 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 		m.message = m.problem
 		return m, nil
 	}
+	m.asks.stop()
+	m.asks.ctx, m.asks.cancel = context.WithCancel(context.Background())
 	m.askSeq++
 	m.asking, m.message = true, ""
-	seq, db := m.askSeq, m.db
+	seq, db, ctx, running := m.askSeq, m.db, m.asks.ctx, &m.asks.running
+	running.Add(1)
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
-		paths, err := ask.Ask(db, query, rows)
+		defer running.Done()
+		paths, err := ask.Ask(ctx, db, query, rows)
 		return askDone{seq, query, paths, err}
 	})
 }
@@ -412,6 +445,7 @@ func (m picker) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.screenHeight = msg.Height
 		m.width, m.height = max(msg.Width-2*marginSide, 1), max(msg.Height-marginTop, 1)
 		m.input.SetWidth(max(m.layout().listWidth-14, 4))
 		return m.afterMove()
@@ -438,9 +472,21 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			focused = r.Path
 		}
 		m.all, m.tags, m.label = session.RecentFirst(session.Annotate(msg.rows)), render.TagsFor(msg.rows), render.PickerLabel(msg.rows, agent.Places())
+		if msg.err == nil {
+			if db, err := session.OpenSearch(); err == nil {
+				if m.db != nil && !m.asking {
+					m.db.Close()
+				}
+				m.db, m.dbProblem = db, ""
+			}
+		}
 		m.problem = m.dbProblem
 		if msg.err != nil {
 			m.problem = "Sessions may be out of date: " + msg.err.Error()
+		} else if unreadable := session.Unreadable(msg.problems); unreadable != "" {
+			m.problem = unreadable
+		} else if len(m.all) == 0 && m.problem == "" {
+			m.problem = render.NoSessions()
 		}
 		if m.askedFor != "" {
 			m.shown = session.InOrder(m.all, pathsOf(m.shown))
@@ -460,9 +506,20 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, next
 		}
 		m.statusSeen = info.ModTime()
+		focused := ""
+		if r := m.focused(); r != nil {
+			focused = r.Path
+		}
 		m.all = session.Annotate(m.all)
-		m.shown = session.InOrder(m.all, pathsOf(m.shown))
-		updated, load := m.loadPreview()
+		if m.askedFor == "" {
+			m.filter()
+		} else {
+			_, m.shown = session.Narrow(m.input.Value(), session.InOrder(m.all, pathsOf(m.shown)))
+		}
+		if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
+			m.cursor = i
+		}
+		updated, load := m.afterMove()
 		return updated, tea.Batch(next, load)
 	case bodyLoaded:
 		delete(m.loading, msg.key)
@@ -496,9 +553,9 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "" || len(top) == 0 {
 			return updated, load
 		}
-		seq, db, query := msg.seq, m.db, msg.query
+		seq, db, query, ctx := msg.seq, m.db, msg.query, m.asks.ctx
 		return updated, tea.Batch(load, func() tea.Msg {
-			return explainDone{seq, ask.Explain(db, key, query, top)}
+			return explainDone{seq, ask.Explain(ctx, db, key, query, top)}
 		})
 	case explainDone:
 		if msg.seq == m.askSeq {
@@ -560,6 +617,10 @@ func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.search()
+	if m.reindex {
+		m.reindex = false
+		cmd = tea.Batch(cmd, rebuild)
+	}
 	updated, load := m.afterMove()
 	return updated, tea.Batch(cmd, load)
 }
@@ -608,7 +669,9 @@ func (m picker) inputBox(width int) []string {
 func (m picker) footer(width int) string {
 	muted := m.colors.muted
 	pairs := [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
-	if len(m.shown) == 0 {
+	if len(m.all) == 0 {
+		pairs = [][2]string{{"esc", "quit"}}
+	} else if len(m.shown) == 0 {
 		pairs = [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
 	line, used := "", 1
@@ -686,12 +749,13 @@ func (m picker) View() tea.View {
 	default:
 		screen = append(column, "", m.footer(m.width))
 	}
-	screen = screen[:min(len(screen), m.height)]
+	screen = append(make([]string, marginTop), screen[:min(len(screen), m.height)]...)
+	screen = screen[:min(len(screen), m.screenHeight)]
 	side := strings.Repeat(" ", marginSide)
-	for i := range screen {
+	for i := marginTop; i < len(screen); i++ {
 		screen[i] = side + screen[i]
 	}
-	view := tea.NewView(strings.Repeat("\n", marginTop) + strings.Join(screen, "\n"))
+	view := tea.NewView(strings.Join(screen, "\n"))
 	view.AltScreen = true
 	if c := m.input.Cursor(); c != nil && !m.asking && m.height > 1 {
 		c.Position.X += 2 + marginSide
@@ -724,7 +788,18 @@ func Pick() (*session.Row, error) {
 	if render.NoColor {
 		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
 	}
-	final, err := tea.NewProgram(newPicker(session.CachedRows(), db, problem), options...).Run()
+	start := newPicker(session.CachedRows(), db, problem)
+	final, err := tea.NewProgram(start, options...).Run()
+	start.asks.stop()
+	stopped := make(chan struct{})
+	go func() {
+		start.asks.running.Wait()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+	}
 	if err != nil {
 		return nil, err
 	}
