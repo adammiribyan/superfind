@@ -1179,6 +1179,11 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("Upgraded.", self.superfind("preview", "--width", "60", str(path), "--recent"))
         self.assertIn("Upgraded.", self.superfind("preview", str(path), "--query", "--help"))
 
+    def test_pick_refuses_options_it_does_not_understand(self):
+        result = self.run_superfind("pick", "--rnu")
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, "superfind pick: there is no --rnu option. See superfind help pick.\n")
+
     def test_indexing_one_session_says_session(self):
         self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
         self.assertEqual(self.superfind("index"), "1 session indexed\n")

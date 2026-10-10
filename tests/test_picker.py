@@ -57,11 +57,12 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False,
+                    pick="pick"):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
-        command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        command = f"env -i {env} {SUPERFIND} {pick} > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
@@ -455,6 +456,29 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("Escape")
         self.assertEqual(self.result(), (1, ""))
+
+    def fake_claude(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+
+    def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\n"))
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+
+    def test_run_cancelled_with_escape_runs_nothing(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
 
     def test_tab_switches_the_preview_to_the_recent_conversation(self):
         self.three_sessions()

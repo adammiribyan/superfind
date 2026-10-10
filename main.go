@@ -33,8 +33,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
   superfind               open the picker (after shell setup; see superfind init); sfd is short for it
   superfind init zsh|bash print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc
                           or  eval "$(superfind init bash)"  to ~/.bashrc
-  superfind pick          open the picker; prints the chosen session's title, then the command
-                          that resumes it
+  superfind pick [--run]  open the picker; prints the chosen session's title, then the command
+                          that resumes it, or with --run, runs that command
   superfind search WORDS  print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent
@@ -62,11 +62,14 @@ Add one line to your shell's startup file:
 Then superfind with no arguments, sfd, or Ctrl-X c opens the picker. Choosing a session cds
 into its folder and runs its agent's resume command, which lands in your shell history.
 `,
-	"pick": `superfind pick
+	"pick": `superfind pick [--run]
 
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+  --run           run the command instead of printing it, for a terminal with no shell to hand
+                  it to, such as one a desktop keybinding opens
 `,
 	"search": `superfind search WORDS
 
@@ -475,6 +478,13 @@ func run(args []string) {
 		}
 		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "pick":
+		resume := false
+		for _, arg := range args[1:] {
+			if arg != "--run" {
+				usageError("superfind pick: there is no " + arg + " option. See superfind help pick.")
+			}
+			resume = true
+		}
 		chosen, err := tui.Pick()
 		if err != nil {
 			fail(err.Error())
@@ -483,8 +493,16 @@ func run(args []string) {
 			exit(1)
 			return
 		}
-		fmt.Fprintln(stdout, handoffTitle(*chosen))
-		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
+		command := agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID)
+		if !resume {
+			fmt.Fprintln(stdout, handoffTitle(*chosen))
+			fmt.Fprintln(stdout, command)
+			return
+		}
+		fmt.Fprintln(stdout, "Resuming "+render.Bold+handoffTitle(*chosen)+render.Reset)
+		output.Flush()
+		err = syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
+		fail("superfind pick: couldn't run " + command + ": " + err.Error())
 	default:
 		unknownCommand(args[0])
 	}
