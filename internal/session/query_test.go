@@ -125,6 +125,21 @@ func TestADayWhoseMidnightIsSkippedStartsAtItsFirstHour(t *testing.T) {
 	}
 }
 
+func TestADayThatNeverBeganOrBeganOffTheHourStartsAtItsFirstInstant(t *testing.T) {
+	cases := []struct{ zone, date, want string }{
+		{"Pacific/Apia", "2011-12-30", "2011-12-31 00:00:00 +14"},
+		{"Africa/Monrovia", "1972-01-07", "1972-01-07 00:44:30 +00"},
+		{"Europe/Berlin", "2026-10-25", "2026-10-25 00:00:00 +02"},
+	}
+	for _, c := range cases {
+		zone := inZone(t, c.zone)
+		got := parseAt("after:"+c.date, time.Date(2026, 10, 10, 12, 0, 0, 0, zone)).After
+		if got.In(zone).Format("2006-01-02 15:04:05 -07") != c.want {
+			t.Errorf("%s in %s starts at %s, want %s", c.date, c.zone, got.In(zone).Format("2006-01-02 15:04:05 -07"), c.want)
+		}
+	}
+}
+
 func TestDatesFarAheadStillCompareAsDates(t *testing.T) {
 	rows := []Row{{Path: "now", Session: Session{Mtime: float64(time.Now().Unix())}}}
 	if got := pathsOf(Parse("after:2300-01-01").Rows(rows, false)); got != nil {
@@ -268,6 +283,51 @@ func TestInHereLeavesOutHomeReachedThroughASymlink(t *testing.T) {
 	t.Chdir(filepath.Join(root, "alias"))
 	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"app", "home", "alias", "alias-slash"}) {
 		t.Errorf("from the alias itself: %v", got)
+	}
+}
+
+func TestInHereLeavesOutHomeReachedThroughALinkInOtherLetterCase(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(filepath.Join(home, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !sameFolder(strings.ToUpper(home), home) {
+		t.Skip("this file system tells letter case apart")
+	}
+	if err := os.Symlink(strings.ToUpper(home), filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	rows := []Row{
+		{Path: "app", Session: Session{Cwd: filepath.Join(home, "app")}},
+		{Path: "alias", Session: Session{Cwd: filepath.Join(root, "alias")}},
+	}
+	t.Chdir(filepath.Join(root, "alias", "app"))
+	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"app"}) {
+		t.Errorf("from alias/app: %v, want [app]", got)
+	}
+}
+
+func TestInHereFindsAFolderDeeperThanThePathLimit(t *testing.T) {
+	deep, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(deep)
+	for len(deep) < 1200 {
+		name := strings.Repeat("d", 100)
+		if err := os.Mkdir(name, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(name)
+		deep = filepath.Join(deep, name)
+	}
+	t.Setenv("PWD", "")
+	os.Unsetenv("PWD")
+	rows := []Row{{Path: "deep", Session: Session{Cwd: deep}}}
+	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"deep"}) {
+		t.Errorf("from a %d-byte folder: %v, want [deep]", len(deep), got)
 	}
 }
 

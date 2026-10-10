@@ -153,12 +153,20 @@ func moment(value string, now time.Time) (time.Time, bool) {
 }
 
 func startOfDay(y int, m time.Month, d int) time.Time {
-	y, m, d = time.Date(y, m, d, 12, 0, 0, 0, time.UTC).Date()
-	t := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
-	for t.Day() != d {
-		t = t.Add(time.Hour)
+	day := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	reached := func(at int64) bool {
+		y, m, d := time.Unix(at, 0).In(time.Local).Date()
+		return !time.Date(y, m, d, 0, 0, 0, 0, time.UTC).Before(day)
 	}
-	return t
+	lo, hi := day.Add(-36*time.Hour).Unix(), day.Add(36*time.Hour).Unix()
+	for lo < hi {
+		if mid := lo + (hi-lo)/2; reached(mid) {
+			hi = mid
+		} else {
+			lo = mid + 1
+		}
+	}
+	return time.Unix(lo, 0).In(time.Local)
 }
 
 func (q Query) Rows(rows []Row, everyKind bool) []Row {
@@ -208,19 +216,20 @@ func hereMatcher() func(string) bool {
 		return f
 	}
 	var here []string
-	if pwd := os.Getenv("PWD"); filepath.IsAbs(pwd) && sameFolder(pwd, ".") {
-		here = append(here, forms(pwd)...)
+	if wd, err := os.Getwd(); err == nil {
+		here = append(here, forms(wd)...)
 	}
 	if wd, err := syscall.Getwd(); err == nil {
 		here = append(here, forms(wd)...)
 	}
-	ends := append([]string{"/"}, forms(agent.Home())...)
+	home := agent.Home()
+	ends := append([]string{"/"}, forms(home)...)
 	return func(cwd string) bool {
 		if cwd == "" {
 			return false
 		}
 		own := forms(cwd)
-		end := slices.ContainsFunc(own, func(c string) bool { return slices.Contains(ends, c) })
+		end := slices.ContainsFunc(own, func(c string) bool { return slices.Contains(ends, c) }) || sameFolder(cwd, home)
 		for _, c := range own {
 			for _, p := range here {
 				if c == p || inside(c, p) || inside(p, c) && !end {
