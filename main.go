@@ -39,7 +39,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           that resumes it
   superfind last [FILTERS] [--json]
                           resume the newest session from this folder (after shell setup);
-                          elsewhere print its title and the command that resumes it
+                          without the shell setup, or in a script, print its title and the
+                          command that resumes it
   superfind search WORDS [--json]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
