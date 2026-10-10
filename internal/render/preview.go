@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/session"
 )
 
 func speaker(role string, a *agent.Agent) string {
@@ -47,7 +47,8 @@ func PreviewHeader(req PreviewRequest, r session.Row, shown Tags, db *sql.DB) []
 	}
 	found := OneLine(plainPassage(req.Explained), width)
 	if found == "" && db != nil {
-		found = session.Snippet(db, req.Path, req.Query, Bold+Accent, Reset)
+		words, _ := session.Narrow(req.Query, nil)
+		found = session.Snippet(db, req.Path, words, Bold+Accent, Reset)
 	}
 	header := []string{
 		Bold + OneLine(s.Title, width) + Reset,

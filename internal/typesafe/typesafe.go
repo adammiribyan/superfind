@@ -2,6 +2,7 @@ package typesafe
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -27,7 +28,7 @@ func Key() string {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	places = append(places, filepath.Join(home, ".config", "hop", "env"))
+	places = append(places, filepath.Join(home, ".config", "superfind", "env"))
 	for _, p := range places {
 		if raw, err := os.ReadFile(p); err == nil {
 			if m := envKey.FindSubmatch(raw); m != nil {
@@ -93,13 +94,13 @@ func asciiJSON(v any) []byte {
 	return []byte(out.String())
 }
 
-func Jev(key string, state any, questions map[string]any) (map[string]Answer, error) {
+func Jev(ctx context.Context, key string, state any, questions map[string]any) (map[string]Answer, error) {
 	body := asciiJSON(map[string]any{"model": "jev-latest", "state": state, "questions": questions})
 	url := jevURL
 	if override := os.Getenv("TYPESAFE_URL"); override != "" {
 		url = override
 	}
-	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +109,7 @@ func Jev(key string, state any, questions map[string]any) (map[string]Answer, er
 	req.Header.Set("User-Agent", UserAgent)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("couldn't reach TypeSafe: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {

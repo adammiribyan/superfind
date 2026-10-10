@@ -5,11 +5,12 @@ repo=$(cd "$(dirname "$0")" && pwd)
 bin="$HOME/.local/bin"
 
 command -v go >/dev/null || { echo "go missing: install Go 1.26 or newer from https://go.dev/dl" >&2; exit 1; }
-(cd "$repo" && go build -o bin/hop .)
+(cd "$repo" && go build -o bin/superfind .)
 mkdir -p "$bin"
-rm -f "$bin/hop"
-cp "$repo/bin/hop" "$bin/hop"
-echo "installed $bin/hop ($("$bin/hop" --version))"
+trap 'rm -f "$bin/.superfind.$$"' EXIT
+cp "$repo/bin/superfind" "$bin/.superfind.$$"
+mv -f "$bin/.superfind.$$" "$bin/superfind"
+echo "installed $bin/superfind ($("$bin/superfind" --version))"
 
 case "$(basename "${SHELL:-}")" in
   zsh) shell=zsh rc="$HOME/.zshrc" ;;
@@ -20,13 +21,13 @@ case "$(basename "${SHELL:-}")" in
   *) shell="" rc="" ;;
 esac
 if [ -n "$shell" ]; then
-  setup="eval \"\$(\"\$HOME/.local/bin/hop\" init $shell)\""
+  setup="eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\""
   if ! grep -qF "$setup" "$rc" 2>/dev/null; then
     printf '\n%s\n' "$setup" >> "$rc"
-    echo "added hop to $rc"
+    echo "added superfind to $rc"
   fi
 else
-  echo "hop supports zsh and bash; add  eval \"\$(hop init zsh)\"  or  eval \"\$(hop init bash)\"  to your shell's startup file"
+  echo "superfind supports zsh and bash; add  eval \"\$(superfind init zsh)\"  or  eval \"\$(superfind init bash)\"  to your shell's startup file"
 fi
 
 ghostty_mac="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
@@ -41,4 +42,4 @@ if [ -f "$ghostty_xdg" ] || [ -f "$ghostty_mac" ] || [ -d /Applications/Ghostty.
   fi
 fi
 
-echo "done: open a new shell, then press Ctrl-X c or run hop"
+echo "done: open a new shell, then press Ctrl-X c or run superfind"

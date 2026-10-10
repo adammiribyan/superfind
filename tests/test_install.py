@@ -11,12 +11,12 @@ GO_CACHES = {name: subprocess.run(["go", "env", name], capture_output=True, text
              for name in ("GOCACHE", "GOMODCACHE", "GOTOOLCHAIN")} if shutil.which("go") else {}
 
 
-@unittest.skipUnless(shutil.which("go"), "the installer builds hop with Go")
+@unittest.skipUnless(shutil.which("go"), "the installer builds superfind with Go")
 class Installer(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
-        self.clone = self.home / "src" / "hop"
+        self.clone = self.home / "src" / "superfind"
         shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env"))
 
     def install(self, shell):
@@ -31,19 +31,32 @@ class Installer(unittest.TestCase):
     def test_installing_for_zsh_adds_one_setup_line_and_a_second_run_changes_nothing(self):
         self.assertEqual(self.install("zsh").returncode, 0)
         first = self.startup_file("zsh").read_text()
-        self.assertEqual(first, '\neval "$("$HOME/.local/bin/hop" init zsh)"\n')
+        self.assertEqual(first, '\neval "$("$HOME/.local/bin/superfind" init zsh)"\n')
         self.assertEqual(self.install("zsh").returncode, 0)
         self.assertEqual(self.startup_file("zsh").read_text(), first)
 
     def test_installing_for_bash_sets_up_bash(self):
         self.assertEqual(self.install("bash").returncode, 0)
-        self.assertEqual(self.startup_file("bash").read_text(), '\neval "$("$HOME/.local/bin/hop" init bash)"\n')
+        self.assertEqual(self.startup_file("bash").read_text(), '\neval "$("$HOME/.local/bin/superfind" init bash)"\n')
 
-    def test_hop_keeps_working_after_the_clone_is_deleted(self):
+    def test_a_failed_copy_leaves_the_installed_superfind_working(self):
+        self.assertEqual(self.install("zsh").returncode, 0)
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "cp").write_text('#!/bin/sh\n: > "$2"\nexit 1\n')
+        (stub / "cp").chmod(0o755)
+        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES}
+        self.assertNotEqual(subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True).returncode, 0)
+        installed = self.home / ".local" / "bin"
+        self.assertEqual(sorted(p.name for p in installed.iterdir()), ["superfind"])
+        result = subprocess.run([str(installed / "superfind"), "--version"], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout.startswith("superfind ")), (0, True))
+
+    def test_superfind_keeps_working_after_the_clone_is_deleted(self):
         self.install("zsh")
         shutil.rmtree(self.clone)
-        result = subprocess.run([str(self.home / ".local" / "bin" / "hop"), "--version"], capture_output=True, text=True)
-        self.assertEqual((result.returncode, result.stdout.startswith("hop ")), (0, True))
+        result = subprocess.run([str(self.home / ".local" / "bin" / "superfind"), "--version"], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout.startswith("superfind ")), (0, True))
 
     @unittest.skipIf(Path("/Applications/Ghostty.app").exists() or shutil.which("ghostty"),
                      "Ghostty is installed on this machine")

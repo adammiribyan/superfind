@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 type statusKind struct {
@@ -91,7 +92,7 @@ func judgeStatus(key string, r Row) (string, float64, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	answers, err := typesafe.Jev(key, end, map[string]any{"status": map[string]any{
+	answers, err := typesafe.Jev(context.Background(), key, end, map[string]any{"status": map[string]any{
 		"type": "choice",
 		"instructions": r.Agent.Phrase("This is the end of a coding session between a developer and {agent}. " +
 			"In what state did the session end?"),
@@ -115,11 +116,11 @@ type statusEntry struct {
 }
 
 func statuses() map[string]statusEntry {
-	known := map[string]statusEntry{}
-	if raw, err := os.ReadFile(CachePath("status.json")); err == nil {
-		json.Unmarshal(raw, &known)
+	var known map[string]statusEntry
+	if raw, err := os.ReadFile(CachePath("status.json")); err == nil && json.Unmarshal(raw, &known) == nil && known != nil {
+		return known
 	}
-	return known
+	return map[string]statusEntry{}
 }
 
 func statusLabel(r Row, known map[string]statusEntry) string {

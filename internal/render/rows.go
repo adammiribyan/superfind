@@ -8,16 +8,25 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/session"
 )
 
 const (
-	Accent = "\033[34m"
-	Dim    = "\033[2m"
-	Bold   = "\033[1m"
-	Reset  = "\033[0m"
+	Dim   = "\033[2m"
+	Bold  = "\033[1m"
+	Reset = "\033[0m"
 )
+
+var NoColor = os.Getenv("NO_COLOR") != ""
+
+var Accent = "\033[34m"
+
+func init() {
+	if NoColor {
+		Accent = Bold
+	}
+}
 
 type Tags struct {
 	agents bool
@@ -57,7 +66,7 @@ func PickerLabel(rows []session.Row, in []agent.Place) string {
 	}
 	if len(rows) == 0 {
 		for _, p := range in {
-			if len(p.Agent.Sessions(p.Home)) > 0 {
+			if paths, _ := p.Agent.Sessions(p.Home); len(paths) > 0 {
 				present[p.Agent] = true
 			}
 		}
@@ -70,19 +79,27 @@ func PickerLabel(rows []session.Row, in []agent.Place) string {
 	return "Sessions"
 }
 
+func NoSessions() string {
+	homes := make([]string, len(agent.Agents))
+	for i, a := range agent.Agents {
+		homes[i] = tilde(a.DefaultHome())
+	}
+	return "No sessions yet in " + strings.Join(homes[:len(homes)-1], ", ") + ", or " + homes[len(homes)-1] + "."
+}
+
 type RowText struct {
 	Title, Waiting string
 	Context        []string
 }
 
 func RowTextOf(r session.Row, shown Tags) RowText {
-	t := RowText{Title: strings.Join(strings.Fields(r.Session.Title), " ")}
+	t := RowText{Title: Flat(r.Session.Title)}
 	if r.Status == session.WaitingLabel {
 		t.Waiting = r.Status
 	} else if r.Status != "" {
 		t.Context = append(t.Context, r.Status)
 	}
-	t.Context = append(t.Context, when(r.Session), r.Session.Project())
+	t.Context = append(t.Context, when(r.Session), Flat(r.Session.Project()))
 	if r.FolderGone {
 		t.Context = append(t.Context, "folder removed")
 	}
@@ -92,13 +109,13 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 
 func metaParts(r session.Row, shown Tags) []string {
 	s := r.Session
-	parts := []string{s.Project()}
+	parts := []string{Flat(s.Project())}
 	if r.Status != "" {
 		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(s))
 	if s.Branch != "" && s.Branch != "HEAD" {
-		parts = append(parts, s.Branch)
+		parts = append(parts, Flat(s.Branch))
 	}
 	noun := "prompts"
 	if s.Prompts == 1 {
@@ -111,8 +128,8 @@ func metaParts(r session.Row, shown Tags) []string {
 var hexColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 func SecondaryFromEnv() string {
-	hx := os.Getenv("HOP_SECONDARY")
-	if !hexColor.MatchString(hx) {
+	hx := os.Getenv("SUPERFIND_SECONDARY")
+	if NoColor || !hexColor.MatchString(hx) {
 		return Dim
 	}
 	r, _ := strconv.ParseUint(hx[1:3], 16, 8)

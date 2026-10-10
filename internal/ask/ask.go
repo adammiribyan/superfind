@@ -6,19 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
+	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
-	"github.com/adammiribyan/hop/internal/render"
-	"github.com/adammiribyan/hop/internal/session"
-	"github.com/adammiribyan/hop/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/session"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 const (
@@ -69,7 +73,7 @@ func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []st
 	return kept, cards, nil
 }
 
-func jevRank(key, query string, rows []session.Row, cards []string) ([]string, error) {
+func jevRank(ctx context.Context, key, query string, rows []session.Row, cards []string) ([]string, error) {
 	if len(cards) == 0 {
 		return nil, nil
 	}
@@ -87,7 +91,7 @@ func jevRank(key, query string, rows []session.Row, cards []string) ([]string, e
 				criteria = append(criteria, typesafe.Option{Key: "s" + strconv.Itoa(i), Meaning: cards[i]})
 			}
 			criteria = append(criteria, typesafe.Option{Key: "none", Meaning: "None of these sessions is where the developer did this work."})
-			answers, err := typesafe.Jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
+			answers, err := typesafe.Jev(ctx, key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type": "choice",
 				"instructions": "A developer is searching their past AI coding sessions with `search`. " +
 					"Which session is the one where they did the work the search describes?",
@@ -104,9 +108,11 @@ func jevRank(key, query string, rows []session.Row, cards []string) ([]string, e
 				failure = errors.New("TypeSafe returned no shortlist")
 				return
 			}
+			none, answered := probabilities["none"]
 			var picks []int
-			for k, p := range probabilities {
-				if k == "none" {
+			for _, k := range slices.Sorted(maps.Keys(probabilities)) {
+				p := probabilities[k]
+				if k == "none" || (answered && p < none) {
 					continue
 				}
 				i, err := strconv.Atoi(strings.TrimPrefix(k, "s"))
@@ -146,7 +152,10 @@ func jevRank(key, query string, rows []session.Row, cards []string) ([]string, e
 			},
 		}
 	}
-	second, err := typesafe.Jev(key, map[string]any{"search": query, "sessions": sessions}, questions)
+	if len(first) == 0 {
+		return nil, nil
+	}
+	second, err := typesafe.Jev(ctx, key, map[string]any{"search": query, "sessions": sessions}, questions)
 	if err != nil {
 		return nil, err
 	}
@@ -175,85 +184,110 @@ var errNoAnswer = errors.New("no answer")
 
 var rankList = regexp.MustCompile(`\[[\d,\s]*\]`)
 
-func claudeRank(query string, kept []session.Row, cards []string) ([]string, error) {
+func claudeRank(ctx context.Context, query string, kept []session.Row, cards []string) ([]string, error) {
 	var request strings.Builder
 	request.WriteString("Search: " + query + "\n\nSessions:\n")
 	for i, c := range cards {
 		fmt.Fprintf(&request, "%d. %s\n", i, c)
 	}
-	base := []string{"-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
-		"--output-format", "json", "--system-prompt", askPrompt}
-	for _, args := range [][]string{append(append([]string{}, base...), "--bare"), base} {
-		out, err := runClaude(args, request.String())
-		if err != nil {
-			continue
-		}
-		var reply struct {
-			Result string `json:"result"`
-		}
-		if json.Unmarshal(out, &reply) != nil {
-			continue
-		}
-		var ranked []int
-		if json.Unmarshal([]byte(rankList.FindString(reply.Result)), &ranked) != nil {
-			continue
-		}
-		var paths []string
-		for _, i := range ranked {
-			if i >= 0 && i < len(kept) {
-				paths = append(paths, kept[i].Path)
-			}
-		}
-		return paths, nil
+	out, err := runClaude(ctx, []string{"-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
+		"--setting-sources=", "--strict-mcp-config", "--output-format", "json", "--system-prompt", askPrompt}, request.String())
+	if err != nil {
+		return nil, err
 	}
-	return nil, errNoAnswer
+	var reply struct {
+		Result string `json:"result"`
+	}
+	var ranked []int
+	if json.Unmarshal(out, &reply) != nil || json.Unmarshal([]byte(rankList.FindString(reply.Result)), &ranked) != nil {
+		return nil, errNoAnswer
+	}
+	var paths []string
+	for _, i := range ranked {
+		if i >= 0 && i < len(kept) {
+			paths = append(paths, kept[i].Path)
+		}
+	}
+	return paths, nil
 }
 
-func runClaude(args []string, input string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), claudeTimeout)
+func runClaude(ctx context.Context, args []string, input string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, claudeTimeout)
 	defer cancel()
+	dir, err := os.MkdirTemp("", "superfind-ask-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
 	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	cmd.Stdin = strings.NewReader(input)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 	return cmd.Output()
 }
 
 type Failure struct{ reason string }
 
-func (a Failure) Error() string { return "Deep search failed: " + a.reason + "." }
+func (a Failure) Error() string { return "Ask failed: " + a.reason + "." }
 
-func Ask(db *sql.DB, query string, rows []session.Row) ([]string, error) {
+func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) ([]string, error) {
 	kept, cards, err := askCards(db, query, rows)
 	if err != nil {
 		return nil, Failure{"the search index couldn't be read (" + err.Error() + ")"}
 	}
-	key := typesafe.Key()
-	if key != "" {
-		if ranked, err := jevRank(key, query, kept, cards); err == nil && len(ranked) > 0 {
-			return ranked, nil
+	if len(cards) == 0 {
+		return nil, nil
+	}
+	if key := typesafe.Key(); key != "" {
+		ranked, err := jevRank(ctx, key, query, kept, cards)
+		if err != nil && ctx.Err() == nil {
+			return nil, Failure{err.Error()}
 		}
+		return ranked, ctx.Err()
 	}
-	paths, err := claudeRank(query, kept, cards)
-	if err == nil {
-		return paths, nil
+	paths, err := claudeRank(ctx, query, kept, cards)
+	if err != nil && ctx.Err() == nil {
+		return nil, Failure{"Claude Code didn't answer"}
 	}
-	if key != "" {
-		return nil, Failure{"TypeSafe and Claude didn't answer"}
-	}
-	return nil, Failure{"Claude Code didn't answer"}
+	return paths, ctx.Err()
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)
+
+const passageRunes = 400
+
+func windows(text string) []string {
+	var out []string
+	r := []rune(text)
+	for len(r) > passageRunes {
+		cut := passageRunes
+		for i := passageRunes; i > passageRunes/2; i-- {
+			if r[i] == ' ' {
+				cut = i
+				break
+			}
+		}
+		out = append(out, string(r[:cut]))
+		for r = r[cut:]; len(r) > 0 && r[0] == ' '; r = r[1:] {
+		}
+	}
+	return append(out, string(r))
+}
 
 func passagesOf(body, query string) []string {
 	var pieces []string
 	current := ""
 	for _, paragraph := range paragraphBreak.Split(body, -1) {
-		paragraph = strings.Join(strings.Fields(paragraph), " ")
-		if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(paragraph) > 400 {
-			pieces = append(pieces, current)
-			current = ""
+		for _, part := range windows(strings.Join(strings.Fields(paragraph), " ")) {
+			if current != "" && utf8.RuneCountInString(current)+1+utf8.RuneCountInString(part) > passageRunes {
+				pieces = append(pieces, current)
+				current = ""
+			}
+			current = strings.TrimSpace(current + " " + part)
 		}
-		current = strings.TrimSpace(current + " " + paragraph)
 	}
 	if current != "" {
 		pieces = append(pieces, current)
@@ -274,16 +308,10 @@ func passagesOf(body, query string) []string {
 		return false
 	}
 	sort.SliceStable(pieces, func(a, b int) bool { return mentions(pieces[a]) && !mentions(pieces[b]) })
-	pieces = pieces[:min(len(pieces), 120)]
-	for i, p := range pieces {
-		if r := []rune(p); len(r) > 400 {
-			pieces[i] = string(r[:400])
-		}
-	}
-	return pieces
+	return pieces[:min(len(pieces), 120)]
 }
 
-func Explain(db *sql.DB, key, query string, paths []string) map[string]string {
+func Explain(ctx context.Context, db *sql.DB, key, query string, paths []string) map[string]string {
 	bodies := map[string]string{}
 	for _, p := range paths {
 		var body string
@@ -307,7 +335,7 @@ func Explain(db *sql.DB, key, query string, paths []string) map[string]string {
 				criteria = append(criteria, typesafe.Option{Key: "p" + strconv.Itoa(i), Meaning: piece})
 			}
 			criteria = append(criteria, typesafe.Option{Key: "none", Meaning: "No passage shows this work."})
-			answers, err := typesafe.Jev(key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
+			answers, err := typesafe.Jev(ctx, key, map[string]any{"search": query}, map[string]any{"which": map[string]any{
 				"type":         "choice",
 				"instructions": "Which passage from this coding session best shows the work described by `search`?",
 				"criteria":     criteria,

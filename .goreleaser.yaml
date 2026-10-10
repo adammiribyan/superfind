@@ -1,12 +1,29 @@
 version: 2
 
+project_name: superfind
+
 builds:
-  - env:
+  - id: superfind
+    env:
       - CGO_ENABLED=0
     goos: [darwin, linux]
     goarch: [amd64, arm64]
     flags: [-trimpath]
     ldflags: [-s -w]
+
+notarize:
+  macos:
+    - enabled: '{{ or (not .IsSnapshot) (isEnvSet "MACOS_SIGN_P12") }}'
+      ids: [superfind]
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
 
 archives:
   - formats: [tar.gz]
@@ -16,22 +33,19 @@ checksum:
   name_template: checksums.txt
 
 homebrew_casks:
-  - name: hop
-    binaries: [hop]
-    homepage: https://github.com/adammiribyan/hop
-    description: Find any past AI coding session and resume it in the terminal you're in
+  - name: superfind
+    binaries: [superfind]
+    homepage: https://github.com/adammiribyan/superfind
+    description: Terminal picker for resuming Claude Code, Codex, and Grok sessions
     repository:
       owner: adammiribyan
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/hop"]
-          end
+    skip_upload: "true"
 
 release:
   github:
     owner: adammiribyan
-    name: hop
+    name: superfind
+  draft: true
+  replace_existing_draft: true

@@ -10,8 +10,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/adammiribyan/hop/internal/agent"
-	"github.com/adammiribyan/hop/internal/session"
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/session"
 )
 
 const (
@@ -27,19 +27,34 @@ var (
 
 func displayWidth(s string) int { return ansi.StringWidth(s) }
 
+func Flat(s string) string { return strings.Join(strings.Fields(agent.Printable(s)), " ") }
+
 func cutToWidth(s string, width int) (string, string) {
 	used := 0
-	for i, r := range s {
-		w := ansi.StringWidth(string(r))
+	for i := 0; i < len(s); {
+		cluster, w := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
 		if used+w > width {
 			if i == 0 {
-				return string(r), s[utf8.RuneLen(r):]
+				return cluster, s[len(cluster):]
 			}
 			return s[:i], s[i:]
 		}
 		used += w
+		i += len(cluster)
 	}
 	return s, ""
+}
+
+func widthUpTo(s string, limit int) int {
+	used := 0
+	for i := 0; i < len(s); {
+		cluster, w := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
+		if used += w; used > limit {
+			break
+		}
+		i += len(cluster)
+	}
+	return used
 }
 
 func clipText(line string, width int) string {
@@ -51,7 +66,7 @@ func clipText(line string, width int) string {
 }
 
 func OneLine(text string, width int) string {
-	text = strings.Join(strings.Fields(text), " ")
+	text = Flat(text)
 	if displayWidth(text) <= width {
 		return text
 	}
@@ -164,18 +179,18 @@ func wrap(text string, width int, first, rest string) []string {
 		}
 		var line []string
 		used := 0
-		for len(chunks) > 0 && used+displayWidth(chunks[0]) <= room {
+		for len(chunks) > 0 && used+widthUpTo(chunks[0], room-used) <= room {
 			used += displayWidth(chunks[0])
 			line = append(line, chunks[0])
 			chunks = chunks[1:]
 		}
-		if len(chunks) > 0 && displayWidth(chunks[0]) > room {
+		if len(chunks) > 0 && widthUpTo(chunks[0], room) > room {
 			space := room - used
 			if room < 1 {
 				space = 1
 			}
 			head, tail := cutToWidth(chunks[0], space)
-			if space <= 0 {
+			if space <= 0 || (used > 0 && displayWidth(head) > space) {
 				head, tail = "", chunks[0]
 			}
 			if h := strings.LastIndex(head, "-"); h > 0 && strings.Trim(head[:h], "-") != "" {
@@ -227,7 +242,7 @@ func splitLines(text string) []string {
 func render(text string, width int) []string {
 	var lines []string
 	fenced := false
-	for _, line := range splitLines(text) {
+	for _, line := range splitLines(agent.Printable(text)) {
 		stripped := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(stripped, "```"):
