@@ -86,7 +86,7 @@ Add filters to narrow the list. They work with or without other words, and the s
 
 | Filter | Shows |
 |---|---|
-| `in:here` | Sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. Your home folder and the root folder contain only the sessions started right there. |
+| `in:here` | Sessions started in the folder you're in, in a folder inside it, or in a folder that contains it, so a session started at the root of a repository counts from any of its subfolders. Your home folder and the root folder count as a folder that contains yours only for sessions started right there. |
 | `branch:main` | Sessions that ended on that branch. Letter case doesn't matter. |
 | `after:2026-10-09` | Sessions last active on or after that day, in your time zone. |
 | `before:2026-10-09` | Sessions last active before that day. `after:2026-10-09 before:2026-10-10` is that one day. |
@@ -94,7 +94,7 @@ Add filters to narrow the list. They work with or without other words, and the s
 | `is:waiting` | With a TypeSafe key, sessions with that mark; `is:unfinished` works the same way (see [Waiting on you](#waiting-on-you)). |
 | `is:agent` | Only sessions that another program started, which are left out otherwise (see [Sessions it finds](#sessions-it-finds)). |
 
-`after:` and `before:` also take `today`, `yesterday`, or a time ago counted back from now: `12h`, `3d`, or `2w`. Two values of `branch:`, `agent:`, or `is:` show sessions that match either. Different filters must all match, so `in:here branch:main after:yesterday` lists this folder's sessions on `main` that were active since yesterday began. A filter that superfind can't read, such as `after:2026-1` while you type, is left out, and the line under the search box says what it takes.
+`after:` and `before:` also take `today`, `yesterday`, or a time ago counted back from now: `12h`, `3d`, or `2w`. Two `branch:` or two `agent:` filters show sessions that match either, and so do `is:waiting` and `is:unfinished` together. Different filters must all match, so `in:here branch:main after:yesterday` lists this folder's sessions on `main` that were active since yesterday began. A filter that superfind can't read, such as `after:2026-1` while you type, is left out, and the line under the search box says what it takes. An `agent:` or `is:` value it doesn't know is left out quietly, except in `last`.
 
 Each row shows a session's title, then its project, its agent when your sessions come from more than one, and how long ago it was active, each in its own column. A label such as **waiting on you** follows the title. In a narrow window the agent column goes first, then the project column. Sessions from the folder you're in, or from a folder that contains it, come first and leave the project blank. Your home folder and the root folder count only for sessions started right there. Everything else follows, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
@@ -200,9 +200,9 @@ superfind command "$id"               # the command that resumes it
 superfind last --json                 # the newest session in this folder, as JSON
 ```
 
-`search`, `ask`, and `last` take the filters in the [Use](#use) section, such as `in:here`, `branch:main`, and `after:yesterday`. A filter that superfind can't read is a usage mistake: the command prints what the filter takes and exits 2, and `ask` sends nothing anywhere.
+`search`, `ask`, and `last` take the filters in the [Use](#use) section, such as `in:here`, `branch:main`, and `after:yesterday`. A filter that superfind can't read is a usage mistake: the command prints what the filter takes and exits 2, and `ask` sends nothing anywhere. `last` also refuses an `agent:` or `is:` value it doesn't know, such as `agent:codx`, because it would otherwise resume a session from any agent.
 
-`superfind last` in a script or an agent's shell prints the session's title on one line and the command that resumes it on the next, and resumes nothing; the shell setup resumes only when both its input and its output are a terminal. `superfind last --json` prints that one session as a JSON object, in the format below. It considers the same sessions as `superfind last` without `--json`, so sessions that another program started count only with `is:agent`.
+`in:here` and `last` use the folder superfind runs in, so a script picks the folder by starting superfind there, even when it doesn't update `PWD`. `superfind last` in a script or an agent's shell prints the session's title on one line and the command that resumes it on the next, and resumes nothing; the shell setup resumes only when both its input and its output are a terminal. `superfind last --json` prints that one session as a JSON object, in the format below. It considers the same sessions as `superfind last` without `--json`, so sessions that another program started count only with `is:agent`.
 
 ### Search results as JSON
 
