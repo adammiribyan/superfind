@@ -6,10 +6,12 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - Without a TypeSafe key, sessions that ended on an interruption, mid-command, or on a request the agent never answered are marked **unfinished**, and `is:unfinished` finds them. superfind reads this from the session file and sends nothing. **waiting on you** still needs a key, and with a key Jev still decides both labels.
 
 ### Changed
 
+- `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - The index is rebuilt once after upgrading, to record how each session ended.
 - A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.
 
@@ -242,7 +244,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
-[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/adammiribyan/superfind/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/adammiribyan/superfind/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/adammiribyan/superfind/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/adammiribyan/superfind/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/adammiribyan/superfind/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/adammiribyan/superfind/compare/v0.7.2...v0.7.3
