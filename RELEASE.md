@@ -176,9 +176,9 @@ The `signing` check is not required on purpose. It runs only on pull requests th
 
 1. Open https://github.com/adammiribyan/superfind/settings
 2. General → Social preview → Edit → Upload an image.
-3. Use a 1280×640 PNG under 1 MB.
+3. Upload `assets/social-preview.png`. It is 1280×640 and under 1 MB, which is what GitHub asks for.
 
-There is no 1280×640 image in `~/Downloads/superfind-mark` yet. The lockup there is 1540×260, and GitHub would crop it badly. Make one first, or do this step later; nothing else depends on it.
+To check it took, run `curl -sL https://github.com/adammiribyan/superfind | grep -o '<meta property="og:image"[^>]*>'`. The URL should be on repository-images.githubusercontent.com; opengraph.githubassets.com means GitHub is still generating its own card.
 
 ## 7. Tag v0.9.0
 
