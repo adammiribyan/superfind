@@ -617,6 +617,7 @@ class PickerBehavior(unittest.TestCase):
         time.sleep(0.5)
         self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
         self.keys(f"cd {self.home / 'app'}", "Enter")
+        self.keys("IFS=:", "Enter")
         self.keys("superfind last --json", "Enter")
         self.wait_for('"schema":1')
         time.sleep(0.5)

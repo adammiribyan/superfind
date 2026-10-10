@@ -197,17 +197,21 @@ const zshSetup = `_superfind_run() {
 }
 
 _superfind_resume() {
-  print -r -- $'Resuming \e[1m'"${1%%$'\n'*}"$'\e[0m'
+  print -r -- $'Resuming \e[1m'"${1%%%%$'\n'*}"$'\e[0m'
   print -s -- "${1#*$'\n'}"
   eval "${1#*$'\n'}"
 }
 
 superfind() {
-  if (( $# )) && [[ $1 != last || " $* " == *" -"* || ! -t 0 || ! -t 1 ]]; then
+  local out arg
+  if [[ $1 == last && -t 0 && -t 1 ]]; then
+    for arg in "${@:2}"; do
+      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    done
+  elif (( $# )); then
     _superfind_run "$@"
     return
   fi
-  local out
   out=$(_superfind_run "${@:-pick}") || return
   _superfind_resume "$out"
 }
@@ -244,11 +248,15 @@ _superfind_resume() {
 }
 
 superfind() {
-  if (( $# )) && [[ $1 != last || " $* " == *" -"* || ! -t 0 || ! -t 1 ]]; then
+  local out arg
+  if [[ $1 == last && -t 0 && -t 1 ]]; then
+    for arg in "${@:2}"; do
+      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    done
+  elif (( $# )); then
     _superfind_run "$@"
     return
   fi
-  local out
   out=$(_superfind_run "${@:-pick}") || return
   _superfind_resume "$out"
 }
