@@ -81,7 +81,7 @@ func codexBlockPrompt(text string) string {
 	if strings.HasPrefix(text, answersOpen) {
 		return codexAnswers(text)
 	}
-	if wholeElement(text) {
+	if wholeElement(text) || bareTag.MatchString(text) {
 		return ""
 	}
 	text = withoutWrappers(text)

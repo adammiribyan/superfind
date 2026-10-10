@@ -1585,6 +1585,12 @@ class SuperfindBehavior(unittest.TestCase):
         cache = json.loads((self.home / ".cache" / "superfind" / "index.json").read_text())
         self.assertEqual(sorted(e["session"]["words"] < 10 for e in cache["files"].values()), [True, True])
 
+    def test_a_prompt_that_is_only_markup_or_an_unclosed_custom_tag_is_kept(self):
+        self.session("a1", user("<div>"), tool("Bash"), claude("That is an opening div tag."))
+        self.session("b2", user("<my-element> is not rendering, why?"), tool("Bash"), claude("It is not registered."))
+        self.session("c3", user("<system-reminder>a wrapper that never closes"), claude("Noted."))
+        self.assertEqual(sorted(self.titles()), ["<div>", "<my-element> is not rendering, why?"])
+
 
 if __name__ == "__main__":
     unittest.main()
