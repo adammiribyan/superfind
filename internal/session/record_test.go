@@ -1,10 +1,12 @@
 package session
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 )
 
 func idRows(ids ...string) []Row {
@@ -139,5 +141,57 @@ func TestRecordKindNamesWhoStartedTheSession(t *testing.T) {
 	rows := kindRows()
 	if a, b := RecordOf(rows[0], agent.Printable).Kind, RecordOf(rows[1], agent.Printable).Kind; a != "interactive" || b != "agent" {
 		t.Fatalf("kinds %q %q", a, b)
+	}
+}
+
+func TestARecordSaysWhichProcessHoldsTheSession(t *testing.T) {
+	r := Row{Session: Session{ID: "id1", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p"}
+	field := func(r Row) string {
+		raw, _ := json.Marshal(RecordOf(r, agent.Printable))
+		var fields map[string]json.RawMessage
+		json.Unmarshal(raw, &fields)
+		return string(fields["open"])
+	}
+	if got := field(r); got != "null" {
+		t.Errorf("closed: open = %s", got)
+	}
+	r.Open = &open.State{PID: 4242, Status: "busy", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
+	if got, want := field(r), `{"pid":4242,"status":"busy","tmux":{"pane":"%3","session":"work","window":1}}`; got != want {
+		t.Errorf("open: open = %s, want %s", got, want)
+	}
+	r.Open = &open.State{PID: 7}
+	if got, want := field(r), `{"pid":7,"status":"","tmux":null}`; got != want {
+		t.Errorf("open outside tmux: open = %s, want %s", got, want)
+	}
+}
+
+func TestIsOpenKeepsOnlySessionsAnAgentHolds(t *testing.T) {
+	rows := []Row{
+		{Session: Session{ID: "held", Title: "held"}, Agent: agent.Named("claude"), Path: "/a", Open: &open.State{PID: 1}},
+		{Session: Session{ID: "closed", Title: "closed"}, Agent: agent.Named("codex"), Path: "/b"},
+		{Session: Session{ID: "script", Title: "script", ByAgent: true}, Agent: agent.Named("codex"), Path: "/c", Open: &open.State{PID: 2}},
+	}
+	cases := []struct {
+		query string
+		every bool
+		want  string
+		words string
+	}{
+		{"is:open", false, "held", ""},
+		{"IS:OPEN ledger", false, "held", "ledger"},
+		{"is:open", true, "held,script", ""},
+		{"is:open is:agent", false, "script", ""},
+		{"is:open agent:codex", false, "", ""},
+		{"", true, "held,closed,script", ""},
+	}
+	for _, c := range cases {
+		narrow := Narrow
+		if c.every {
+			narrow = NarrowEvery
+		}
+		words, kept := narrow(c.query, rows)
+		if ids(kept) != c.want || words != c.words {
+			t.Errorf("query %q every=%v: rows %q words %q, want rows %q words %q", c.query, c.every, ids(kept), words, c.want, c.words)
+		}
 	}
 }

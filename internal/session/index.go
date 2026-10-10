@@ -574,11 +574,13 @@ func NarrowEvery(query string, rows []Row) (string, []Row) { return narrow(query
 func narrow(query string, rows []Row, everyKind bool) (string, []Row) {
 	var words, statuses []string
 	var from []*agent.Agent
-	byAgent := false
+	byAgent, open := false, false
 	for _, w := range strings.Fields(query) {
 		switch {
 		case AsksForAgents(w):
 			byAgent = true
+		case strings.EqualFold(w, OpenFilter):
+			open = true
 		case strings.HasPrefix(w, "is:"):
 			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
 				statuses = append(statuses, label)
@@ -600,10 +602,10 @@ func narrow(query string, rows []Row, everyKind bool) (string, []Row) {
 		}
 		return !r.Session.ByAgent
 	}
-	if len(statuses) > 0 || len(from) > 0 || byAgent || !everyKind {
+	if len(statuses) > 0 || len(from) > 0 || byAgent || open || !everyKind {
 		var kept []Row
 		for _, r := range rows {
-			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) && keptKind(r) {
+			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) && keptKind(r) && (!open || r.Open != nil) {
 				kept = append(kept, r)
 			}
 		}

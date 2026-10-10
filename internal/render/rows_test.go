@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/session"
 )
 
@@ -50,6 +51,35 @@ func TestCellsNameOneStatusAndLeaveTheProjectBlankHere(t *testing.T) {
 		if got := CellsOf(c.row, Tags{}); got != c.want {
 			t.Errorf("CellsOf(%s) = %+v, want %+v", c.row.Session.Title, got, c.want)
 		}
+	}
+}
+
+func TestAnOpenSessionSaysSoUnlessItHasALabel(t *testing.T) {
+	claude := &agent.Agent{ID: "claude"}
+	held := &open.State{PID: 4242, Status: "busy"}
+	cases := []struct {
+		row  session.Row
+		want Cells
+	}{
+		{session.Row{Agent: claude, Open: held, Session: session.Session{Title: "a", Cwd: "/work/shop", Mtime: session.Now()}},
+			Cells{Title: "a", Status: "open", Project: "shop", Age: "1m"}},
+		{session.Row{Agent: claude, Open: held, FolderGone: true, Session: session.Session{Title: "b", Cwd: "/work/shop", Mtime: session.Now() - 3*86400}},
+			Cells{Title: "b", Status: "open", Project: "shop", Age: "3d"}},
+		{session.Row{Agent: claude, Open: held, Status: "unfinished", Session: session.Session{Title: "c", Cwd: "/work/shop", Mtime: session.Now()}},
+			Cells{Title: "c", Status: "unfinished", Project: "shop", Age: "1m"}},
+	}
+	for _, c := range cases {
+		if got := CellsOf(c.row, Tags{}); got != c.want {
+			t.Errorf("CellsOf(%s) = %+v, want %+v", c.row.Session.Title, got, c.want)
+		}
+	}
+	row := session.Row{Agent: claude, Open: held, Session: session.Session{Title: "a", Cwd: "/work/shop", Mtime: session.Now()}}
+	if got := RowContext(RowTextOf(row, Tags{}), ""); got != "open · shop" {
+		t.Errorf("row context %q", got)
+	}
+	row.Open = nil
+	if got := RowContext(RowTextOf(row, Tags{}), ""); got != "active now · shop" {
+		t.Errorf("row context without a process %q", got)
 	}
 }
 

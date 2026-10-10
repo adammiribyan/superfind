@@ -164,12 +164,12 @@ func TestTheStrongestClaimWinsBusyThenIdleThenTheLowestPid(t *testing.T) {
 }
 
 func TestTmuxPanesAreKeyedByTheirTerminal(t *testing.T) {
-	devices := map[string]proc.TTY{"/dev/ttys014": {16, 14}, "/dev/pts/3": {136, 3}}
+	devices := map[string]proc.TTY{"/dev/ttys014": {Major: 16, Minor: 14}, "/dev/pts/3": {Major: 136, Minor: 3}}
 	terminalOf := func(path string) (proc.TTY, bool) { tty, ok := devices[path]; return tty, ok }
 	out := []byte("/dev/ttys014\t%3\t2\twork\n/dev/pts/3\t%12\t0\tmy\tsession\n/dev/gone\t%4\t1\tx\nbroken line\n")
 	got := parsePanes(out, terminalOf)
-	want := map[proc.TTY]Pane{{16, 14}: {ID: "%3", Session: "work", Window: 2}, {136, 3}: {ID: "%12", Session: "my\tsession", Window: 0}}
-	if len(got) != len(want) || got[proc.TTY{16, 14}] != want[proc.TTY{16, 14}] || got[proc.TTY{136, 3}] != want[proc.TTY{136, 3}] {
+	want := map[proc.TTY]Pane{{Major: 16, Minor: 14}: {ID: "%3", Session: "work", Window: 2}, {Major: 136, Minor: 3}: {ID: "%12", Session: "my\tsession", Window: 0}}
+	if len(got) != len(want) || got[proc.TTY{Major: 16, Minor: 14}] != want[proc.TTY{Major: 16, Minor: 14}] || got[proc.TTY{Major: 136, Minor: 3}] != want[proc.TTY{Major: 136, Minor: 3}] {
 		t.Fatalf("got %+v", got)
 	}
 }

@@ -99,7 +99,7 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	} else if r.Status != "" {
 		t.Context = append(t.Context, r.Status)
 	}
-	t.Context = append(t.Context, when(r.Session), Flat(r.Session.Project()))
+	t.Context = append(t.Context, when(r), Flat(r.Session.Project()))
 	if r.FolderGone {
 		t.Context = append(t.Context, "folder removed")
 	}
@@ -113,7 +113,7 @@ func metaParts(r session.Row, shown Tags) []string {
 	if r.Status != "" {
 		parts = append(parts, r.Status)
 	}
-	parts = append(parts, when(s))
+	parts = append(parts, when(r))
 	if s.Branch != "" && s.Branch != "HEAD" {
 		parts = append(parts, Flat(s.Branch))
 	}
@@ -164,6 +164,8 @@ func CellsOf(r session.Row, t Tags) Cells {
 	switch {
 	case r.Status != "":
 		c.Status = r.Status
+	case r.Open != nil:
+		c.Status = "open"
 	case r.Session.Active():
 		c.Status = "active now"
 	case r.FolderGone:
