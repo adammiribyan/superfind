@@ -3,6 +3,15 @@ set -eu
 
 releases=https://github.com/adammiribyan/superfind/releases
 
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+fetch() {
+  curl --proto '=https' --tlsv1.2 -fsSL --retry 3 "$@"
+}
+
 build() {
   command -v go >/dev/null || { echo "go missing: install Go 1.26 or newer from https://go.dev/dl" >&2; exit 1; }
   (cd "$1" && go build -o bin/superfind .)
@@ -25,7 +34,7 @@ download() {
     exit 1
   fi
 
-  version=${SUPERFIND_VERSION:-$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$releases/latest")}
+  version=${SUPERFIND_VERSION:-$(fetch -I -o /dev/null -w '%{url_effective}' "$releases/latest")}
   version=${version##*/}
   version=${version#v}
   case "$version" in
@@ -35,8 +44,8 @@ download() {
 
   archive="superfind_${version}_${os}_${arch}.tar.gz"
   echo "downloading superfind $version for $os $arch"
-  curl -fsSL -o "$tmp/$archive" "$releases/download/v$version/$archive"
-  curl -fsSL -o "$tmp/checksums.txt" "$releases/download/v$version/checksums.txt"
+  fetch -o "$tmp/$archive" "$releases/download/v$version/$archive"
+  fetch -o "$tmp/checksums.txt" "$releases/download/v$version/checksums.txt"
   want=$(awk -v f="$archive" '$2 == f { print $1 }' "$tmp/checksums.txt")
   if command -v sha256sum >/dev/null; then
     got=$(sha256sum "$tmp/$archive" | cut -d' ' -f1)
@@ -66,10 +75,15 @@ main() {
     checkout) build "$(cd "$here" && pwd)" ;;
     release) download ;;
   esac
+  installed=$("$binary" --version) || fail "the new superfind does not run on this machine; nothing was installed"
+  other=$(command -v superfind || true)
   mkdir -p "$bin"
   cp "$binary" "$bin/.superfind.$$"
   mv -f "$bin/.superfind.$$" "$bin/superfind"
-  echo "installed $bin/superfind ($("$bin/superfind" --version))"
+  echo "installed $bin/superfind ($installed)"
+  if [ -n "$other" ] && [ "$other" != "$bin/superfind" ]; then
+    echo "note: another superfind is installed at $other"
+  fi
 
   case "$(basename "${SHELL:-}")" in
     zsh) shell=zsh rc="$HOME/.zshrc" ;;
@@ -79,14 +93,18 @@ main() {
       ;;
     *) shell="" rc="" ;;
   esac
-  if [ -n "$shell" ]; then
-    setup="eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\""
-    if ! grep -qF "$setup" "$rc" 2>/dev/null; then
-      printf '\n%s\n' "$setup" >> "$rc"
-      echo "added superfind to $rc"
-    fi
+  if [ -z "$shell" ]; then
+    echo "superfind sets up zsh and bash. To use it from one of them, add a line to that shell's startup file:"
+    echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init zsh)\"     # in ~/.zshrc"
+    echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init bash)\"    # in ~/.bashrc, or ~/.bash_profile on macOS"
+    echo "done: run $bin/superfind to see what it does"
+    return
+  fi
+  if grep -Eq '^[^#]*superfind"? init' "$rc" 2>/dev/null; then
+    echo "$rc already sets up superfind; left it as it is"
   else
-    echo "superfind supports zsh and bash; add  eval \"\$(superfind init zsh)\"  or  eval \"\$(superfind init bash)\"  to your shell's startup file"
+    printf '\n%s\n' "eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\"" >> "$rc"
+    echo "added superfind to $rc"
   fi
 
   ghostty_mac="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
