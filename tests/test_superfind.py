@@ -753,15 +753,21 @@ class SuperfindBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text('#!/bin/sh\nprintf "%s|%s" "$(pwd)" "$*"\n')
         (stub / "claude").chmod(0o755)
-        script = (f"{SUPERFIND} init fish | source; function _superfind_run; printf '%s\\n' Fix $resume; end; superfind")
-        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], capture_output=True, text=True,
-                                env={**self.env, "PATH": f"{stub}:/usr/bin:/bin",
+        (stub / "superfind").write_text("#!/bin/sh\nprintf '%s\\n' Fix \"$resume\"\n")
+        (stub / "superfind").chmod(0o755)
+        setup = self.superfind("init", "fish").replace(str(Path(SUPERFIND).resolve()), "/gone/superfind")
+        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", f"printf %s $setup | source; superfind"],
+                                capture_output=True, text=True,
+                                env={**self.env, "PATH": f"{stub}:/usr/bin:/bin", "setup": setup,
                                      "resume": self.superfind("command", str(path)).rstrip("\n")})
         self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
 
     @unittest.skipUnless(shutil.which("fish"), "needs fish")
     def test_fish_does_nothing_when_the_picker_hands_it_nothing(self):
-        script = f"{SUPERFIND} init fish | source; function _superfind_run; end; superfind; echo status $status"
+        quiet = self.home / "quiet-superfind"
+        quiet.write_text("#!/bin/sh\nexit 0\n")
+        quiet.chmod(0o755)
+        script = f"{SUPERFIND} init fish | string replace -- {SUPERFIND} {quiet} | source; superfind; echo status $status"
         result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], stdin=subprocess.DEVNULL, capture_output=True,
                                 text=True, env=self.env)
         self.assertEqual((result.stdout, result.stderr), ("status 0\n", ""))
@@ -804,8 +810,8 @@ class SuperfindBehavior(unittest.TestCase):
 
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
-            self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
-        self.assertIn(f"        {Path(SUPERFIND).resolve()} $argv", self.superfind("init", "fish"))
+            self.assertIn(f"_sf_run=({Path(SUPERFIND).resolve()})", self.superfind("init", shell))
+        self.assertIn(f"    set -l _sf_run {Path(SUPERFIND).resolve()}\n", self.superfind("init", "fish"))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
         class Malformed(http.server.BaseHTTPRequestHandler):
@@ -1862,15 +1868,17 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("migrate"), ["Tables"])
 
     @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash") and shutil.which("fish"), "needs zsh, bash, and fish")
-    def test_the_shell_functions_work_when_copied_without_their_variables(self):
-        dump = {"zsh": 'eval "$1" 2>/dev/null; typeset -f superfind sfd _superfind_run _superfind_resume',
-                "bash": 'eval "$1" 2>/dev/null; declare -f superfind sfd _superfind_run _superfind_resume',
-                "fish": "printf %s $argv[2] | source; functions _superfind_run _superfind_resume superfind sfd"}
+    def test_the_shell_functions_work_when_copied_without_their_variables_or_underscore_helpers(self):
+        dump = {"zsh": "eval \"$1\" 2>/dev/null; typeset +f | grep -vE '^_[^_]' | while read f; do typeset -f \"$f\"; done",
+                "bash": "eval \"$1\" 2>/dev/null; declare -F | cut -d' ' -f3 | grep -vE '^_[^_]' | while read f; do "
+                        "printf 'eval %q > /dev/null 2>&1\\n' \"$(declare -f \"$f\")\"; done",
+                "fish": "printf %s $argv[2] | source; for f in (functions -n | string match -v -r '^_[^_]'); functions $f; end"}
         session = self.session("a1", user("fix the ledger", cwd=str(self.home)), tool("Bash"), claude("Fixed."), title="Ledger fix")
         stub = self.home / "stub"
         stub.mkdir()
         (stub / "claude").write_text(f"#!/bin/sh\ntouch {self.home}/resumed\n")
         (stub / "claude").chmod(0o755)
+        resume = self.superfind("command", str(session)).rstrip("\n")
         for name in ("zsh", "bash", "fish"):
             shell = [shutil.which(name)] + (["--no-config"] if name == "fish" else [])
             setup = self.superfind("init", name)
@@ -1902,6 +1910,20 @@ class SuperfindBehavior(unittest.TestCase):
             result = subprocess.run([*shell, "-c", f"source {snapshot}; superfind --version"],
                                     env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, (name, result.stderr))
+            only = self.home / "only" / name
+            only.mkdir(parents=True)
+            (only / "superfind").write_text(f"#!/bin/sh\nprintf '%s\\n' 'Ledger fix' {shlex.quote(resume)}\n")
+            (only / "superfind").chmod(0o755)
+            (only / "claude").write_text(f"#!/bin/sh\nprintf %s \"$run|$out|$arg\" > {self.home}/resumed\n")
+            (only / "claude").chmod(0o755)
+            for command in ("superfind", "sfd"):
+                result = subprocess.run([*shell, "-c", f"source {snapshot}; {command}"], env={
+                    "PATH": str(only), "HOME": str(self.home), "run": "mine", "out": "mine", "arg": "mine"},
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                self.assertEqual((result.returncode, ANSI.sub("", result.stdout)), (0, "Resuming Ledger fix\n"),
+                                 (name, command, result.stderr))
+                self.assertEqual((self.home / "resumed").read_text(), "mine|mine|mine", (name, command))
+                (self.home / "resumed").unlink()
 
 
 if __name__ == "__main__":

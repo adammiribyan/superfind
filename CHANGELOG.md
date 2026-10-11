@@ -52,6 +52,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
+- `superfind` and `sfd` work in Claude Code's Bash tool when your shell setup comes from `superfind init`. Claude Code copies your shell functions into its own shell but leaves out functions whose names start with one underscore, so every `superfind` command there failed with "command not found: _superfind_run". The `superfind` function no longer calls a helper, in zsh, bash, and fish.
 - When two folders share one sessions folder through a link, as Omarchy's agent accounts do, each session is listed once. If `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME` points at one of them, sessions resume as that account. Before, each session showed twice, and one copy resumed as the other account.
 - A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 - superfind works inside a sandbox that can't write to its cache, such as Codex's `read-only` mode. Every command used to fail there with "locking the index: operation not permitted". Now it reads the index as it was last written and changes nothing in the cache. `search` and `ask` say on stderr when sessions changed since then, because they match the words those sessions held at the last index. `index` and `label` exit 1 there. With no usable index, superfind says to run `superfind index` once outside the sandbox or to set `XDG_CACHE_HOME`.
