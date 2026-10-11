@@ -103,7 +103,9 @@ before it.
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same is: and agent: filters as search, and prints the same fields.
-With --json, it prints one JSON object per session, as search --json does.
+With --json, it prints one JSON object per session, as search --json does. Its match is a
+passage with some of your words, not counting common ones like the, when the conversation
+doesn't hold them all. It shows where a session touches your words, not how well it fits.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
