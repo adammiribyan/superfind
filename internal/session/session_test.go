@@ -144,7 +144,7 @@ func FuzzAnySearchTextIsAQueryTheIndexAccepts(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, query string) {
 		if _, _, err := matches(db, query); err != nil {
-			t.Fatalf("searching for %q (%s) failed: %v", query, ftsQuery(query), err)
+			t.Fatalf("searching for %q (%s) failed: %v", query, joined(phrasesOf(query), " "), err)
 		}
 	})
 }

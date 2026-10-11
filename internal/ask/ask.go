@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	claudeTimeout = 90 * time.Second
-	jevChunk      = 120
-	jevShortlist  = 15
-	ExplainTop    = 5
+	claudeTimeout     = 90 * time.Second
+	jevChunk          = 120
+	cardPassageTokens = 40
+	jevShortlist      = 15
+	ExplainTop        = 5
 )
 
 const askPrompt = "You rank a developer's past coding sessions by how relevant they are to a search. Each session is one " +
@@ -49,21 +50,14 @@ func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []st
 	if err != nil {
 		return nil, nil, err
 	}
-	var anyWord []string
-	for _, w := range session.MeaningfulWords(query) {
-		anyWord = append(anyWord, `"`+w+`"*`)
-	}
-	var matched [][2]string
-	if len(anyWord) > 0 {
-		matched, err = session.QueryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
-			strings.Join(anyWord, " OR "))
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	for _, pair := range append(openings, matched...) {
+	for _, pair := range openings {
 		passages[pair[0]] = pair[1]
 	}
+	matched, err := session.PassagesOfAny(db, session.MeaningfulWords(query), cardPassageTokens)
+	if err != nil {
+		return nil, nil, err
+	}
+	maps.Copy(passages, matched)
 	cards := make([]string, len(kept))
 	for i, r := range kept {
 		s := r.Session
