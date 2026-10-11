@@ -913,18 +913,20 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("3/3")
         self.assertNotIn("Stray session", self.screen())
 
-    def test_ctrl_r_asks_and_says_why_it_failed_when_no_ranker_can_answer(self):
+    def test_ctrl_r_without_a_ranker_shows_sessions_with_your_words_and_says_why(self):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "C-r")
-        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask needs a TypeSafe key or Claude Code.", timeout=10)
+        self.assertIn("Sessions with your words", self.screen())
+        self.assertEqual(self.titles(), ["Checkout double charge"])
         self.assertFalse(Path(f"{self.out}.code").exists())
 
     def test_alt_enter_also_asks_in_terminals_that_send_it(self):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "M-Enter")
-        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask needs a TypeSafe key or Claude Code.", timeout=10)
 
 
     def explaining_typesafe(self):

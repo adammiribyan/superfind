@@ -11,6 +11,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Changed
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+- When no ranker answers, ask lists the sessions that contain your words instead of failing, and says why. That happens without a TypeSafe key or Claude Code, or when TypeSafe or Claude Code fails. In the picker the box is titled "Sessions with your words". `superfind ask` prints the reason on stderr and exits 0 instead of 1. Nothing more leaves your machine. On 21 test searches it put the right session in the top 3 11 times, in about 5 ms, where Jev and Claude Haiku did 18 to 19 times on the same snapshot.
 
 ## [0.10.0] - 2026-10-10
 

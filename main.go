@@ -104,6 +104,9 @@ Print the sessions that best fit what you describe, even when they used other wo
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same is: and agent: filters as search, and prints the same fields.
 With --json, it prints one JSON object per session, as search --json does.
+
+When no ranker answers, it prints the sessions that contain any of your words instead, ranked
+by how well they match, says why on stderr, and exits 0.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
@@ -556,7 +559,7 @@ func run(args []string) {
 			return
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-		paths, err := ask.Ask(ctx, db, query, eligible)
+		answer, err := ask.Ask(ctx, db, query, eligible)
 		interrupted := ctx.Err() != nil
 		stop()
 		if interrupted {
@@ -566,11 +569,17 @@ func run(args []string) {
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
+		switch {
+		case answer.Fallback != "" && len(answer.Paths) == 0:
+			fmt.Fprintln(stderr, answer.Fallback+" No session contains these words.")
+		case answer.Fallback != "":
+			fmt.Fprintln(stderr, answer.Fallback+" These sessions contain your words instead.")
+		}
 		if asJSON {
-			writeRecords(session.InOrder(rows, paths), db, query)
+			writeRecords(session.InOrder(rows, answer.Paths), db, query)
 			return
 		}
-		printRows(session.InOrder(rows, paths), shown)
+		printRows(session.InOrder(rows, answer.Paths), shown)
 	case "label":
 		key := typesafe.Key()
 		if key == "" {
