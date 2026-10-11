@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
@@ -34,20 +35,47 @@ const (
 	promptRunes = 400
 )
 
+const (
+	maskWindow = 4 << 10
+	maskMargin = 1 << 10
+)
+
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
+	if cut, over := cutAt(s, n); over {
+		return s[:cut] + "…"
+	}
+	return s
+}
+
+func cutAt(s string, n int) (int, bool) {
 	cut, clusters := 0, 0
 	for i := 0; i < len(s); clusters++ {
 		if clusters == n-1 {
 			cut = i
 		}
 		if clusters == n {
-			return s[:cut] + "…"
+			return cut, true
 		}
 		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
 		i += len(cluster)
 	}
-	return s
+	return len(s), false
+}
+
+func clipMasked(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	for window := maskWindow; window < len(s); window *= 4 {
+		end := window
+		for end < len(s) && !utf8.RuneStart(s[end]) {
+			end++
+		}
+		head := mask.Secrets(s[:end])
+		if cut, over := cutAt(head, n); over && cut <= len(head)-maskMargin {
+			return head[:cut] + "…"
+		}
+	}
+	return clip(mask.Secrets(s), n)
 }
 
 func parse(f found) (parsed, bool, error) {
@@ -72,8 +100,8 @@ func parse(f found) (parsed, bool, error) {
 	p.body = agent.Searchable(strings.Join(t.Messages, "\n"))
 	p.entry.Session = &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
-		Title:      clip(mask.Secrets(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt)), titleRunes),
-		LastPrompt: clip(mask.Secrets(cmp.Or(t.LastPrompt, latestPrompt)), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
+		Title:      clipMasked(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
+		LastPrompt: clipMasked(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
 		Words: len(strings.Fields(p.body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
 	}
 	return p, t.Incomplete, nil

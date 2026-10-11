@@ -12,6 +12,8 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/adammiribyan/superfind/internal/mask"
 )
 
 func TestTheCacheStaysPutWithoutHOME(t *testing.T) {
@@ -226,5 +228,23 @@ func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
 				t.Errorf("with key %q, the %s session is labeled %q, want %q", key, name(r), r.Status, want[name(r)])
 			}
 		}
+	}
+}
+
+func TestMaskingOnlyTheStartOfALongTextClipsItAsMaskingAllOfItWould(t *testing.T) {
+	key := "sk-ant-api03-" + strings.Repeat("k", 40)
+	for _, n := range []int{titleRunes, promptRunes} {
+		for _, at := range []int{0, n - 30, n - 3, n + 2, n * 4, maskWindow - 20, maskWindow + 5} {
+			for _, tail := range []int{0, 100, maskWindow, 5 * maskWindow} {
+				s := strings.Repeat("ab ", at/3) + `password="correct horse battery staple" ` + key + " " + strings.Repeat("é", tail)
+				if got, want := clipMasked(s, n), clip(mask.Secrets(s), n); got != want {
+					t.Fatalf("n=%d at=%d tail=%d: got %q, want %q", n, at, tail, got, want)
+				}
+			}
+		}
+	}
+	long := strings.Repeat("x", 3*maskWindow) + " password=hunter2hunter2 " + strings.Repeat("y ", maskWindow)
+	if got, want := clipMasked(long, promptRunes), clip(mask.Secrets(long), promptRunes); got != want {
+		t.Fatalf("a single word longer than the window: got %q, want %q", got, want)
 	}
 }
