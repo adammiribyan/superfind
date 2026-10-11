@@ -160,7 +160,7 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 			continue
 		}
 		if long != nil || tooLong {
-			if !tooLong {
+			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
 				raw = append(long, raw...)
 			} else {
 				raw = nil
