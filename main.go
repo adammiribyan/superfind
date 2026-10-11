@@ -86,6 +86,9 @@ into its folder and runs its agent's resume command, which lands in your shell h
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+Type filters in the search box to narrow the list, such as in:here, branch:main,
+after:yesterday, or agent:codex; superfind help search lists them all.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
@@ -95,10 +98,12 @@ only for sessions started right there.
 Very short sessions count only when nothing else fits, and sessions another program started
 are left out unless you add is:agent.
 
-With the shell setup from superfind init, superfind last cds into the session's folder and
-resumes it, as choosing it in the picker does. Anywhere else, such as a script or an agent's
-shell, it prints the session's title on the first line and the command that resumes it on the
-second, as superfind pick does. Exit 1 when no session fits.
+With the shell setup from superfind init, when its input and output are a terminal and no
+option starting with - is given, superfind last cds into the session's folder and resumes it,
+as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
+it prints the session's title on the first line and the command that resumes it on the second,
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
+know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
                   after:yesterday
@@ -124,6 +129,9 @@ unless you ask for them with is:agent.
                   before:2026-10-10 is October 9
   --json          print one JSON object per session instead, including the ones another
                   program started, each with its kind and the passage that matched
+
+Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
+different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with --, put --
