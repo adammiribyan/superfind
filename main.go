@@ -89,8 +89,9 @@ The shell setup from superfind init runs that command for you.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
-Resume the newest session started in this folder, a folder inside it, or a folder that holds
-it, with no keys to press. Your home folder and / count only for sessions started right there.
+Resume the newest session started in this folder or in a folder that holds it, with no keys to
+press. Sessions started in a folder inside this one don't count. Your home folder and / count
+only for sessions started right there.
 Very short sessions count only when nothing else fits, and sessions another program started
 are left out unless you add is:agent.
 
@@ -113,8 +114,8 @@ unless you ask for them with is:agent.
   is:waiting      only sessions waiting on you; is:unfinished works the same way
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
-  in:here         only sessions from this folder, a folder inside it, or a folder that holds
-                  it; your home folder and / count only for sessions started right there
+  in:here         only sessions from this folder or a folder that holds it, not from folders
+                  inside it; your home folder and / count only for sessions started right there
   branch:main     only sessions that ended on that branch, in any letter case; several
                   branch: filters mean any of them
   after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
@@ -310,9 +311,9 @@ func runLast(args []string) {
 	r, ok := session.Last(q, session.Annotate(mustIndex("last")))
 	switch {
 	case !ok && text == "":
-		fail("superfind last: no session started in this folder or a folder inside it.")
+		fail("superfind last: no session started in this folder or a folder that holds it.")
 	case !ok:
-		fail("superfind last: no session that fits these filters started in this folder or a folder inside it.")
+		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "")
 	default:

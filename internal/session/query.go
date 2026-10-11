@@ -232,7 +232,7 @@ func hereMatcher() func(string) bool {
 		end := slices.ContainsFunc(own, func(c string) bool { return slices.Contains(ends, c) }) || sameFolder(cwd, home)
 		for _, c := range own {
 			for _, p := range here {
-				if c == p || inside(c, p) || inside(p, c) && !end {
+				if c == p || inside(p, c) && !end {
 					return true
 				}
 			}

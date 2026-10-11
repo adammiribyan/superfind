@@ -641,11 +641,11 @@ class PickerBehavior(unittest.TestCase):
         deadline = time.time() + 5
         while not Path(f"{self.out}.resumed").exists() and time.time() < deadline:
             time.sleep(0.1)
-        folder = self.home / "app" / "sub"
-        self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume sub\n")
+        folder = self.home / "app"
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume app\n")
         self.keys("pwd", "Enter")
         self.wait_for("Resuming")
-        self.assertIn("Resuming Invoice layout", self.screen())
+        self.assertIn("Resuming Ledger migration", self.screen())
         self.wait_for(f"\n{folder}\n")
 
     def test_typing_superfind_last_in_zsh_resumes_the_newest_session_here_in_that_shell(self):
@@ -986,7 +986,7 @@ class PickerBehavior(unittest.TestCase):
             self.keys("C-u", query)
             self.assertEqual(self.titles(), [row.split("\t")[4] for row in printed.splitlines()], query)
         self.keys("C-u", "in:here")
-        self.assertEqual(self.titles(), ["Ledger migration", "Old ledger fix", "Invoice layout"])
+        self.assertEqual(self.titles(), ["Ledger migration", "Old ledger fix"])
 
     def test_a_half_typed_filter_keeps_the_list_says_what_it_takes_and_cannot_ask(self):
         stub = self.home / "stub"

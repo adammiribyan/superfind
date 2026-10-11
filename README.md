@@ -86,7 +86,7 @@ Add filters to narrow the list. They work with or without other words, and the s
 
 | Filter | Shows |
 |---|---|
-| `in:here` | Sessions started in the folder you're in, in a folder inside it, or in a folder that contains it, so a session started at the root of a repository counts from any of its subfolders. Your home folder and the root folder count as a folder that contains yours only for sessions started right there. |
+| `in:here` | Sessions started in the folder you're in, or in a folder that contains it, so a session started at the root of a repository counts from any of its subfolders. Sessions started in a folder inside yours don't count. Your home folder and the root folder count as a folder that contains yours only for sessions started right there. |
 | `branch:main` | Sessions that ended on that branch. Letter case doesn't matter. |
 | `after:2026-10-09` | Sessions last active on or after that day, in your time zone. |
 | `before:2026-10-09` | Sessions last active before that day. `after:2026-10-09 before:2026-10-10` is that one day. |
@@ -106,7 +106,7 @@ A session written in the last two minutes shows **active now**, because it's pro
 
 ### Resume the last session here
 
-`superfind last`, or `sfd last`, resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker and no keys. It does what Enter does: it prints `Resuming` and the title, `cd`s into the session's folder, and runs its agent's resume command. Filters narrow the choice: `sfd last agent:codex` resumes the newest Codex session here, and `sfd last branch:main` the newest one on `main`. Very short sessions count only when nothing else is here, and sessions that another program started count only with `is:agent`.
+`superfind last`, or `sfd last`, resumes the newest session started in the folder you're in, or in a folder that contains it, with no picker and no keys. Sessions started in a folder inside yours don't count. It does what Enter does: it prints `Resuming` and the title, `cd`s into the session's folder, and runs its agent's resume command. Filters narrow the choice: `sfd last agent:codex` resumes the newest Codex session here, and `sfd last branch:main` the newest one on `main`. Very short sessions count only when nothing else is here, and sessions that another program started count only with `is:agent`.
 
 Without the shell setup, or when its output goes to a pipe or a file, `superfind last` prints the session's title and the command that resumes it, as `superfind pick` does, and resumes nothing. When no session fits, it says so and exits 1.
 
