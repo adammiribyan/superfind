@@ -1352,6 +1352,11 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn('"serach"', result.stderr)
             self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, and label", result.stderr)
 
+    def test_pick_refuses_options_it_does_not_understand(self):
+        result = self.run_superfind("pick", "--rnu")
+        self.assertEqual((result.returncode, result.stdout), (2, ""))
+        self.assertEqual(result.stderr, "superfind pick: there is no --rnu option. See superfind help pick.\n")
+
     def test_preview_refuses_options_it_does_not_understand(self):
         path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
         for args, reason in ((("--width", "abc"), "--width needs a number"), (("--width", "0"), "--width needs a number"),
