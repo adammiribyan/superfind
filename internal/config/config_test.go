@@ -58,3 +58,52 @@ func TestTheVariableWinsOverTheFileEvenWhenEmpty(t *testing.T) {
 		t.Errorf("missing setting: Lookup = %q, %v; want \"\", false", value, set)
 	}
 }
+
+func TestSetReplacesOneLineAndKeepsTheRestByteForByte(t *testing.T) {
+	for _, c := range []struct {
+		before, value, after string
+	}{
+		{"", "off", "SUPERFIND_TELEMETRY=off\n"},
+		{"TYPESAFE_API_KEY=abc\n", "off", "TYPESAFE_API_KEY=abc\nSUPERFIND_TELEMETRY=off\n"},
+		{"TYPESAFE_API_KEY=abc", "off", "TYPESAFE_API_KEY=abc\nSUPERFIND_TELEMETRY=off\n"},
+		{"SUPERFIND_TELEMETRY=on\nTYPESAFE_API_KEY=abc\n", "off", "SUPERFIND_TELEMETRY=off\nTYPESAFE_API_KEY=abc\n"},
+		{"  export SUPERFIND_TELEMETRY = on # later\nTYPESAFE_API_KEY=abc\n", "off", "SUPERFIND_TELEMETRY=off\nTYPESAFE_API_KEY=abc\n"},
+		{"SUPERFIND_TELEMETRY=off\nX=1\nSUPERFIND_TELEMETRY=on\n", "off", "SUPERFIND_TELEMETRY=off\nX=1\n"},
+		{"# SUPERFIND_TELEMETRY=off\r\nTYPESAFE_API_KEY=abc\r\n", "off", "# SUPERFIND_TELEMETRY=off\r\nTYPESAFE_API_KEY=abc\r\nSUPERFIND_TELEMETRY=off\n"},
+		{"SUPERFIND_TELEMETRY=off\nTYPESAFE_API_KEY=abc\n", "", "TYPESAFE_API_KEY=abc\n"},
+		{"TYPESAFE_API_KEY=abc\n", "", "TYPESAFE_API_KEY=abc\n"},
+		{"", "", ""},
+	} {
+		if got := rewrite(c.before, "SUPERFIND_TELEMETRY", c.value); got != c.after {
+			t.Errorf("rewrite(%q, %q) = %q, want %q", c.before, c.value, got, c.after)
+		}
+	}
+}
+
+func TestSetWritesAPrivateFileThatLookupReads(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.Unsetenv("SUPERFIND_TEST_SETTING")
+	if err := Set("SUPERFIND_TEST_SETTING", "off"); err != nil {
+		t.Fatal(err)
+	}
+	if value, set := Lookup("SUPERFIND_TEST_SETTING"); value != "off" || !set {
+		t.Errorf("after Set, Lookup = %q, %v; want off, true", value, set)
+	}
+	info, err := os.Stat(filepath.Join(home, ".config", "superfind", "env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Errorf("env file mode %o, want 600", mode)
+	}
+	if err := Set("SUPERFIND_TEST_SETTING", ""); err != nil {
+		t.Fatal(err)
+	}
+	if value, set := Lookup("SUPERFIND_TEST_SETTING"); value != "" || set {
+		t.Errorf("after removing the line, Lookup = %q, %v; want \"\", false", value, set)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(home, ".config", "superfind", "env")); string(raw) != "" {
+		t.Errorf("env file holds %q, want it empty", raw)
+	}
+}

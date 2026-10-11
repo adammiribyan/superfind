@@ -23,7 +23,7 @@ class Installer(unittest.TestCase):
         shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env", "demo"))
 
     def install(self, shell, **extra):
-        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES, **extra}
+        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **extra}
         return subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True, text=True)
 
     def omarchy(self, bindings, text="o.bind(\"SUPER + SHIFT + CTRL + A\", \"Agent\", \"omarchy-launch-tui claude\")\n"):
@@ -150,7 +150,7 @@ class Installer(unittest.TestCase):
         stub.mkdir()
         (stub / "cp").write_text('#!/bin/sh\n: > "$2"\nexit 1\n')
         (stub / "cp").chmod(0o755)
-        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES}
+        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         self.assertNotEqual(subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True).returncode, 0)
         installed = self.home / ".local" / "bin"
         self.assertEqual(sorted(p.name for p in installed.iterdir()), ["superfind"])
@@ -232,7 +232,7 @@ class ReleaseInstaller(unittest.TestCase):
     def install(self, *, stdin=False, cwd=None, machine="x86_64", **env):
         env = {"HOME": str(self.home), "PATH": f"{self.stubs}:/usr/bin:/bin", "SHELL": "/bin/zsh",
                "RELEASES_DIR": str(self.releases), "LATEST_TAG": "v0.10.0",
-               "FAKE_SYSTEM": "Linux", "FAKE_MACHINE": machine, **env}
+               "FAKE_SYSTEM": "Linux", "FAKE_MACHINE": machine, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **env}
         if stdin:
             with open(self.script) as script:
                 return subprocess.run(["sh"], stdin=script, cwd=cwd or self.root, env=env, capture_output=True, text=True)

@@ -1,13 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCheckin } from "../src/checkin.ts";
-import { GOOD, ID, world } from "./fakes.ts";
+import { GOOD, ID, UPGRADED, world } from "./fakes.ts";
 
 test("a good check-in is rebuilt from the allowlist, dropping unknown fields and events", () => {
   const body = { ...GOOD, home: "/Users/someone", events: [{ name: "search", query: "secret" }, "junk"] };
   assert.deepEqual(parseCheckin(JSON.stringify(body)), {
     checkin: { schema: 1, id: ID, version: "0.12.0", os: "darwin", arch: "arm64", method: "script", events: [] },
   });
+});
+
+test("an upgraded event keeps only its allowed props, and a malformed one is dropped", () => {
+  const events = [
+    { ...UPGRADED, path: "/Users/someone/.local/bin/superfind", props: { ...UPGRADED.props, from: "0.11.0" } },
+    { ...UPGRADED, props: { method: "script", outcome: "exploded" } },
+    { ...UPGRADED, props: { method: "npm", outcome: "installed" } },
+    { ...UPGRADED, props: { outcome: "installed" } },
+    { ...UPGRADED, props: "installed" },
+    { ...UPGRADED, id: "not-a-uuid" },
+    { ...UPGRADED, id: undefined },
+    { ...UPGRADED, hours_ago: -1 },
+    { ...UPGRADED, hours_ago: 3.5 },
+    { ...UPGRADED, hours_ago: "3" },
+    { ...UPGRADED, hours_ago: 24 * 366 + 1 },
+    { ...UPGRADED, name: "search" },
+    { ...UPGRADED, hours_ago: 0, props: { method: "homebrew", outcome: "unchanged" } },
+  ];
+  const parsed = parseCheckin(JSON.stringify({ ...GOOD, events }));
+  assert.deepEqual("checkin" in parsed ? parsed.checkin.events : parsed, [
+    { name: "upgraded", id: UPGRADED.id, hours_ago: 3, props: { method: "script", outcome: "installed" } },
+    { name: "upgraded", id: UPGRADED.id, hours_ago: 0, props: { method: "homebrew", outcome: "unchanged" } },
+  ]);
 });
 
 test("a check-in without events is accepted with none", () => {
