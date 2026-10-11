@@ -12,6 +12,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 
+### Fixed
+
+- The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added
