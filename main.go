@@ -23,7 +23,6 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
-	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
@@ -50,7 +49,6 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
-                          is:open shows sessions an agent has open right now,
                           is:agent shows sessions another program started, and in:here,
                           branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
                           and last activity
@@ -100,18 +98,24 @@ into its folder and runs its agent's resume command, which lands in your shell h
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+Type filters in the search box to narrow the list, such as in:here, branch:main,
+after:yesterday, or agent:codex; superfind help search lists them all.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
-Resume the newest session started in this folder, a folder inside it, or a folder that holds
-it, with no keys to press. Your home folder and / count only for sessions started right there.
+Resume the newest session started in this folder or in a folder that holds it, with no keys to
+press. Sessions started in a folder inside this one don't count. Your home folder and / count
+only for sessions started right there.
 Very short sessions count only when nothing else fits, and sessions another program started
 are left out unless you add is:agent.
 
-With the shell setup from superfind init, superfind last cds into the session's folder and
-resumes it, as choosing it in the picker does. Anywhere else, such as a script or an agent's
-shell, it prints the session's title on the first line and the command that resumes it on the
-second, as superfind pick does. Exit 1 when no session fits.
+With the shell setup from superfind init, when its input and output are a terminal and no
+option starting with - is given, superfind last cds into the session's folder and resumes it,
+as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
+it prints the session's title on the first line and the command that resumes it on the second,
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
+know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
                   after:yesterday
@@ -126,11 +130,10 @@ program started, such as codex exec, claude -p, or another Claude Code session, 
 unless you ask for them with is:agent.
 
   is:waiting      only sessions waiting on you; is:unfinished works the same way
-  is:open         only sessions an agent has open right now
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
-  in:here         only sessions from this folder, a folder inside it, or a folder that holds
-                  it; your home folder and / count only for sessions started right there
+  in:here         only sessions from this folder or a folder that holds it, not from folders
+                  inside it; your home folder and / count only for sessions started right there
   branch:main     only sessions that ended on that branch, in any letter case; several
                   branch: filters mean any of them
   after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
@@ -140,11 +143,19 @@ unless you ask for them with is:agent.
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
-  --limit N       print only the first N sessions
+  --limit N       print only the first N sessions (default: all)
+
+Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
+different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with -, put --
 before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
+
+  superfind search --json --limit 1 retry | jq -r .id   the best match's id
+  superfind search --json retry | jq -s 'map(.title)'   every match, as one array
+  superfind search --json retry | wc -l                 how many match (jq length counts
+                                                        each object's fields instead)
 `,
 	"ask": `superfind ask WORDS [--json] [--limit N]
 
@@ -152,8 +163,10 @@ Print the sessions that best fit what you describe, even when they used other wo
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same filters as search, such as agent:codex or in:here, and prints
 the same fields.
-With --json, it prints one JSON object per line, as search --json does. --limit N prints
-only the first N sessions.
+With --json, it prints one JSON object per line, as search --json does. Its match is a
+passage with some of your words, not counting common ones like the, when the conversation
+doesn't hold them all. It shows where a session touches your words, not how well it fits.
+--limit N prints only the first N sessions.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
@@ -191,8 +204,10 @@ superfind search prints first.
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
 Print the sessions on this machine that made a commit, or that changed a file, from any agent,
-best first, in the same fields as search. Each line's summary starts with what the session did.
-Run it inside the git repository, or pass a file in one.
+best first, in the same fields as search. Each line's summary starts with what the session did,
+such as made this commit, made a commit it squashed, opened #19, or edited it 3 times.
+To resume one, run the command that superfind command prints for its id. Run blame inside the
+git repository, or pass a file in one.
 
   COMMIT       a commit, such as a hash, HEAD~2, or a branch. Lists the session that ran its
                git commit, then any that opened its pull request, named by a (#N) suffix or a
@@ -207,11 +222,11 @@ Run it inside the git repository, or pass a file in one.
                session did in match
 
 A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it.
-It reads the commands and edits each agent recorded, so it misses a commit made by hand in a
-terminal or on another machine, and one whose message and hash the session never recorded. A
-message counts when it matches, ignoring case and punctuation, has at least 12 letters and
-digits, and the session ran it from a folder in the repository or one that no longer exists.
+started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+hand in a terminal or on another machine, and one whose message and hash the session never
+recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
+letters and digits, and the session ran it from a folder in the repository or one that no
+longer exists. Grok records no times, so its edits count as recent whenever its session is.
 `,
 	"index": `superfind index
 
@@ -333,6 +348,13 @@ function _superfind_resume
 end
 
 function superfind
+    set -l rest $argv
+    set -e rest[1]
+    if test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $rest
+        set -l out (_superfind_run $argv); or return
+        _superfind_resume $out
+        return
+    end
     if set -q argv[1]
         _superfind_run $argv
         return
@@ -396,12 +418,12 @@ func runLast(args []string) {
 	if q.Words != "" {
 		usageError("superfind last: takes filters, such as agent:codex or branch:main, not words. To search this folder, use superfind search in:here WORDS.")
 	}
-	r, ok := session.Last(q, annotated("last", session.Index))
+	r, ok := session.Last(q, session.Annotate(mustIndex("last")))
 	switch {
 	case !ok && text == "":
-		fail("superfind last: no session started in this folder or a folder inside it.")
+		fail("superfind last: no session started in this folder or a folder that holds it.")
 	case !ok:
-		fail("superfind last: no session that fits these filters started in this folder or a folder inside it.")
+		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
 	default:
@@ -411,10 +433,7 @@ func runLast(args []string) {
 
 func handoffTitle(r session.Row) string {
 	title := render.Flat(r.Session.Title)
-	switch {
-	case r.Open != nil:
-		title += render.Reset + render.Dim + " · already open in another window"
-	case r.Session.Active():
+	if r.Session.Active() {
 		title += render.Reset + render.Dim + " · may still be open in another window"
 	}
 	return title
@@ -444,13 +463,6 @@ func mustOpenSearch() *sql.DB {
 }
 
 func mustIndex(command string) []session.Row { return mustRefresh(command, session.Index) }
-
-func annotated(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
-	held := make(chan map[open.Key]open.State, 1)
-	go func() { held <- open.Find(agent.Places()) }()
-	rows := mustRefresh(command, refresh)
-	return session.Annotate(rows, <-held)
-}
 
 func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
 	noticed := false
@@ -500,7 +512,7 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 		fail("superfind " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
-	rows = annotated(command, session.Index)
+	rows = session.Annotate(mustIndex(command))
 	for _, want := range located {
 		for _, r := range rows {
 			if r.Path == want.Path {
@@ -515,7 +527,7 @@ func findSession(command, arg string) (session.Row, bool, []session.Row) {
 	if strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
 		return sessionAt(command, arg)
 	}
-	rows := annotated(command, session.Index)
+	rows := session.Annotate(mustIndex(command))
 	matches, exact := session.ByID(rows, arg)
 	if len(matches) == 0 {
 		if strings.HasSuffix(arg, ".jsonl") {
@@ -626,7 +638,7 @@ func runBlame(args []string) {
 	if t.Note != "" {
 		fmt.Fprintln(stderr, "superfind blame: "+t.Note)
 	}
-	rows := annotated("blame", session.Index)
+	rows := session.Annotate(mustIndex("blame"))
 	found, problems := blame.Blame(t, rows)
 	if unreadable := session.Unreadable(problems); unreadable != "" {
 		fmt.Fprintln(stderr, "superfind blame: "+unreadable)
@@ -793,11 +805,11 @@ func run(args []string) {
 		if asJSON {
 			find = session.SearchEvery
 		}
-		rows := annotated("search", session.Index)
+		rows := session.Annotate(mustIndex("search"))
 		db := mustOpenSearch()
 		found, err := find(db, query, rows)
 		if errors.Is(err, session.ErrDamaged) {
-			rows = annotated("search", session.Rebuild)
+			rows = session.Annotate(mustRefresh("search", session.Rebuild))
 			db = mustOpenSearch()
 			found, err = find(db, query, rows)
 		}
@@ -813,7 +825,7 @@ func run(args []string) {
 	case "ask":
 		words, asJSON, limit := searchWords("ask", args[1:])
 		q := mustParse("ask", words)
-		rows := annotated("ask", session.Index)
+		rows := session.Annotate(mustIndex("ask"))
 		shown := render.TagsFor(session.SameKind(rows, q.Agents))
 		db := mustOpenSearch()
 		query, eligible := q.Words, q.Rows(rows, asJSON)

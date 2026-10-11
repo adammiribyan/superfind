@@ -96,10 +96,10 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	t := RowText{Title: Flat(r.Session.Title)}
 	if r.Status == session.WaitingLabel {
 		t.Waiting = r.Status
-	} else if r.Status != "" && r.Open == nil {
+	} else if r.Status != "" {
 		t.Context = append(t.Context, r.Status)
 	}
-	t.Context = append(t.Context, when(r), Flat(r.Session.Project()))
+	t.Context = append(t.Context, when(r.Session), Flat(r.Session.Project()))
 	if r.FolderGone {
 		t.Context = append(t.Context, "folder removed")
 	}
@@ -110,10 +110,10 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 func metaParts(r session.Row, shown Tags) []string {
 	s := r.Session
 	parts := []string{Flat(s.Project())}
-	if r.Status == session.WaitingLabel || r.Status != "" && r.Open == nil {
+	if r.Status != "" {
 		parts = append(parts, r.Status)
 	}
-	parts = append(parts, when(r))
+	parts = append(parts, when(s))
 	if s.Branch != "" && s.Branch != "HEAD" {
 		parts = append(parts, Flat(s.Branch))
 	}
@@ -162,10 +162,6 @@ func CellsOf(r session.Row, t Tags) Cells {
 	c := Cells{Title: Flat(r.Session.Title), Project: Flat(r.Session.Project()), Agent: strings.Join(t.of(r), " "),
 		Age: Age(r.Session.Mtime), Waiting: r.Status == session.WaitingLabel}
 	switch {
-	case r.Status == session.WaitingLabel:
-		c.Status = r.Status
-	case r.Open != nil:
-		c.Status = "open"
 	case r.Status != "":
 		c.Status = r.Status
 	case r.Session.Active():

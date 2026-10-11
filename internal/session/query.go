@@ -17,7 +17,6 @@ import (
 type Query struct {
 	Words    string
 	Agents   bool
-	Open     bool
 	Here     bool
 	Statuses []string
 	From     []*agent.Agent
@@ -47,12 +46,10 @@ var filters = map[string]filter{
 		switch {
 		case v == "agent":
 			q.Agents = true
-		case v == "open":
-			q.Open = true
 		case label != "":
 			q.Statuses = append(q.Statuses, label)
 		}
-		return v == "agent" || v == "open" || label != ""
+		return v == "agent" || label != ""
 	}},
 	"agent": {hint: "agent: takes " + orList(agentIDs()) + ".", lenient: true, parse: func(q *Query, v string, _ time.Time) bool {
 		a := agent.Named(strings.ToLower(v))
@@ -116,7 +113,7 @@ func isValues() []string {
 			values = append(values, k.name)
 		}
 	}
-	return append(values, strings.TrimPrefix(AgentFilter, "is:"), strings.TrimPrefix(OpenFilter, "is:"))
+	return append(values, strings.TrimPrefix(AgentFilter, "is:"))
 }
 
 func agentIDs() []string {
@@ -191,8 +188,6 @@ func (q Query) keeps(r Row, everyKind bool) bool {
 	switch {
 	case q.Agents && !s.ByAgent, !q.Agents && !everyKind && s.ByAgent:
 		return false
-	case q.Open && r.Open == nil:
-		return false
 	case len(q.Statuses) > 0 && !slices.Contains(q.Statuses, r.Status):
 		return false
 	case len(q.From) > 0 && !slices.Contains(q.From, r.Agent):
@@ -237,7 +232,7 @@ func hereMatcher() func(string) bool {
 		end := slices.ContainsFunc(own, func(c string) bool { return slices.Contains(ends, c) }) || sameFolder(cwd, home)
 		for _, c := range own {
 			for _, p := range here {
-				if c == p || inside(c, p) || inside(p, c) && !end {
+				if c == p || inside(p, c) && !end {
 					return true
 				}
 			}

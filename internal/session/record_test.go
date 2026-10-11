@@ -1,12 +1,10 @@
 package session
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/adammiribyan/superfind/internal/agent"
-	"github.com/adammiribyan/superfind/internal/open"
 )
 
 func idRows(ids ...string) []Row {
@@ -141,79 +139,5 @@ func TestRecordKindNamesWhoStartedTheSession(t *testing.T) {
 	rows := kindRows()
 	if a, b := RecordOf(rows[0], agent.Printable).Kind, RecordOf(rows[1], agent.Printable).Kind; a != "interactive" || b != "agent" {
 		t.Fatalf("kinds %q %q", a, b)
-	}
-}
-
-func TestARecordSaysWhichProcessHoldsTheSession(t *testing.T) {
-	r := Row{Session: Session{ID: "id1", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p"}
-	field := func(r Row) string {
-		raw, _ := json.Marshal(RecordOf(r, agent.Printable))
-		var fields map[string]json.RawMessage
-		json.Unmarshal(raw, &fields)
-		return string(fields["open"])
-	}
-	if got := field(r); got != "null" {
-		t.Errorf("closed: open = %s", got)
-	}
-	r.Open = &open.State{PID: 4242, Status: "busy", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
-	if got, want := field(r), `{"pid":4242,"status":"busy","tmux":{"pane":"%3","session":"work","window":1}}`; got != want {
-		t.Errorf("open: open = %s, want %s", got, want)
-	}
-	r.Open = &open.State{PID: 7}
-	if got, want := field(r), `{"pid":7,"status":"","tmux":null}`; got != want {
-		t.Errorf("open outside tmux: open = %s, want %s", got, want)
-	}
-}
-
-func TestIsOpenKeepsOnlySessionsAnAgentHolds(t *testing.T) {
-	rows := []Row{
-		{Session: Session{ID: "held", Title: "held"}, Agent: agent.Named("claude"), Path: "/a", Open: &open.State{PID: 1}},
-		{Session: Session{ID: "closed", Title: "closed"}, Agent: agent.Named("codex"), Path: "/b"},
-		{Session: Session{ID: "script", Title: "script", ByAgent: true}, Agent: agent.Named("codex"), Path: "/c", Open: &open.State{PID: 2}},
-	}
-	cases := []struct {
-		query string
-		every bool
-		want  string
-		words string
-	}{
-		{"is:open", false, "held", ""},
-		{"IS:OPEN ledger", false, "held", "ledger"},
-		{"is:open", true, "held,script", ""},
-		{"is:open is:agent", false, "script", ""},
-		{"is:open agent:codex", false, "", ""},
-		{"", true, "held,closed,script", ""},
-	}
-	for _, c := range cases {
-		narrow := Narrow
-		if c.every {
-			narrow = NarrowEvery
-		}
-		words, kept := narrow(c.query, rows)
-		if ids(kept) != c.want || words != c.words {
-			t.Errorf("query %q every=%v: rows %q words %q, want rows %q words %q", c.query, c.every, ids(kept), words, c.want, c.words)
-		}
-	}
-}
-
-func TestAnnotatingAgainForgetsAProcessThatExited(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	rows := []Row{{Session: Session{ID: "id1", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p"}}
-	held := map[open.Key]open.State{{Agent: "claude", ID: "id1"}: {PID: 4242, Status: "idle"}}
-	rows = Annotate(rows, held)
-	if rows[0].Open == nil || *rows[0].Open != (open.State{PID: 4242, Status: "idle"}) {
-		t.Fatalf("first annotate: open = %+v", rows[0].Open)
-	}
-	if rows = Annotate(rows, map[open.Key]open.State{}); rows[0].Open != nil {
-		t.Fatalf("after the process exited: open = %+v", rows[0].Open)
-	}
-}
-
-func TestAnUppercaseSessionIDMatchesTheProcessHoldingIt(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	rows := []Row{{Session: Session{ID: "0F6CAB12-3A4B-4C5D-8E9F-001122334455", Cwd: "/w"}, Agent: agent.Named("grok"), Path: "/p"}}
-	held := map[open.Key]open.State{{Agent: "grok", ID: "0f6cab12-3a4b-4c5d-8e9f-001122334455"}: {PID: 7}}
-	if got := Annotate(rows, held)[0].Open; got == nil || *got != (open.State{PID: 7}) {
-		t.Fatalf("open = %+v", got)
 	}
 }

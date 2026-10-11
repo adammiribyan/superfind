@@ -36,9 +36,9 @@ func TestUnknownIsAndAgentValuesAreDroppedButRemembered(t *testing.T) {
 		t.Fatalf("got %+v", q)
 	}
 	cases := map[string]string{
-		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, agent, or open.",
+		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, or agent.",
 		"agent:codx is:bogus": "can't read agent:codx. agent: takes claude, codex, or grok.",
-		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, agent, or open.",
+		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, or agent.",
 	}
 	for query, want := range cases {
 		if q := Parse(query); q.Unknown == nil || q.Unknown.Error() != want || q.Problem != nil {
@@ -200,7 +200,7 @@ func TestBranchKeepsAnyOfTheNamedBranchesIgnoringCase(t *testing.T) {
 	}
 }
 
-func TestInHereKeepsThisFolderTheFoldersInsideItAndTheFoldersAboveIt(t *testing.T) {
+func TestInHereKeepsThisFolderAndTheFoldersAboveItButNotTheOnesInsideIt(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	for _, dir := range []string{"home/app/sub", "home/application", "elsewhere"} {
@@ -232,13 +232,13 @@ func TestInHereKeepsThisFolderTheFoldersInsideItAndTheFoldersAboveIt(t *testing.
 		pwd  string
 		want []string
 	}{
-		{filepath.Join(home, "app"), []string{"app", "sub", "linked-sub", "real-app", "parent"}},
+		{filepath.Join(home, "app"), []string{"app", "real-app", "parent"}},
 		{filepath.Join(home, "app", "sub"), []string{"app", "sub", "linked-sub", "real-app", "parent"}},
-		{filepath.Join(root, "link"), []string{"app", "sub", "linked-sub", "real-app", "parent"}},
+		{filepath.Join(root, "link"), []string{"app", "real-app", "parent"}},
 		{filepath.Join(real, "link", "sub"), []string{"app", "sub", "linked-sub", "real-app", "parent"}},
-		{home, []string{"app", "sub", "linked-sub", "real-app", "application", "home", "parent"}},
+		{home, []string{"home", "parent"}},
 		{filepath.Join(root, "elsewhere"), []string{"elsewhere", "parent"}},
-		{"/", []string{"app", "sub", "linked-sub", "real-app", "application", "home", "root", "elsewhere", "parent"}},
+		{"/", []string{"root"}},
 	}
 	for _, c := range cases {
 		t.Chdir(c.pwd)
@@ -281,7 +281,7 @@ func TestInHereLeavesOutHomeReachedThroughASymlink(t *testing.T) {
 		}
 	}
 	t.Chdir(filepath.Join(root, "alias"))
-	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"app", "home", "alias", "alias-slash"}) {
+	if got := pathsOf(Parse("in:here").Rows(rows, false)); !slices.Equal(got, []string{"home", "alias", "alias-slash"}) {
 		t.Errorf("from the alias itself: %v", got)
 	}
 }
@@ -345,7 +345,7 @@ func TestLastPicksTheNewestRealSessionHere(t *testing.T) {
 		{Path: "sub", Session: Session{Cwd: filepath.Join(app, "web"), Mtime: 300, Prompts: 5}},
 		{Path: "exec", Session: Session{Cwd: app, Mtime: 450, Prompts: 5, ByAgent: true}},
 	}
-	for query, want := range map[string]string{"": "sub", "is:agent": "exec", "after:2026-01-01": ""} {
+	for query, want := range map[string]string{"": "older", "is:agent": "exec", "after:2026-01-01": ""} {
 		r, ok := Last(Parse(query), rows)
 		if r.Path != want || ok != (want != "") {
 			t.Errorf("%q: %q %v, want %q", query, r.Path, ok, want)

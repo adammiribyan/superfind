@@ -2,7 +2,6 @@ import http.server
 import json
 import os
 import re
-import shlex
 import shutil
 import socketserver
 import subprocess
@@ -139,7 +138,6 @@ CODEX_ENVIRONMENT = "<environment_context>\n  <cwd>/tmp</cwd>\n</environment_con
 class SuperfindBehavior(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.home, True)
         self.projects = self.home / ".claude" / "projects" / "-work-billing"
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
@@ -324,64 +322,6 @@ class SuperfindBehavior(unittest.TestCase):
         os.utime(running, (now, now))
         self.judged(running, "waiting")
         self.assertEqual(self.rows(""), ["Ledger migration  active now · tmp"])
-
-    def records(self, *search):
-        self.superfind("index")
-        return {r["id"]: r for r in map(json.loads, self.superfind("search", "--json", *search).splitlines())}
-
-    def claude_pid_file(self, pid, session_id, started_at, name=None):
-        folder = self.home / ".claude" / "sessions"
-        folder.mkdir(exist_ok=True)
-        (folder / (name or f"{pid}.json")).write_text(json.dumps(
-            {"pid": pid, "sessionId": session_id, "cwd": "/tmp", "startedAt": started_at, "status": "busy"}))
-
-    def private_tmux(self, command="exec sleep 300"):
-        folder = tempfile.mkdtemp(prefix="sfo", dir="/tmp")
-        self.addCleanup(shutil.rmtree, folder, True)
-        server = os.path.join(folder, "s")
-        tmux = lambda *args: subprocess.run(["tmux", "-S", server, *args], capture_output=True, text=True, check=True).stdout
-        tmux("new-session", "-d", "-s", "work", "-x", "80", "-y", "20", command)
-        self.addCleanup(subprocess.run, ["tmux", "-S", server, "kill-server"], capture_output=True)
-        pid, pane, socket, window = tmux("display-message", "-p", "-t", "work",
-                                         "#{pane_pid}\t#{pane_id}\t#{socket_path}\t#{window_index}").strip().split("\t")
-        return int(pid), pane, socket, int(window)
-
-    @unittest.skipUnless(shutil.which("tmux"), "an open session's pane is read from tmux")
-    def test_a_session_an_agent_holds_open_says_so_with_its_tmux_pane(self):
-        pid, pane, socket, window = self.private_tmux()
-        self.session(uid(1), user("deploy the ledger migration"), tool("Bash"), claude("Deployed."), title="Ledger migration")
-        self.session(uid(2), user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
-        self.session(uid(3), user("tidy the readme"), tool("Edit"), claude("Tidied."), title="Readme tidy")
-        now_ms = int(time.time() * 1000)
-        self.claude_pid_file(pid, uid(1), now_ms)
-        os.mkfifo(self.home / ".claude" / "sessions" / f"{pid}.deadbeef.key")
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        self.claude_pid_file(dead.pid, uid(2), now_ms)
-        self.claude_pid_file(os.getpid(), uid(3), 978307200000)
-        self.env["TMUX"] = f"{socket},0,0"
-        records = self.records()
-        self.assertEqual(records[uid(1)]["open"], {"pid": pid, "status": "busy",
-                                                   "tmux": {"pane": pane, "session": "work", "window": window}})
-        self.assertEqual([records[uid(2)]["open"], records[uid(3)]["open"]], [None, None])
-        self.assertEqual(list(self.records("is:open")), [uid(1)])
-        self.assertEqual(self.rows("is:open"), ["Ledger migration  open · tmp"])
-        self.env["TMUX"] = f"{self.home}/no-such-socket,0,0"
-        self.assertEqual(self.records()[uid(1)]["open"], {"pid": pid, "status": "busy", "tmux": None})
-
-    @unittest.skipUnless(shutil.which("tmux"), "codex runs in a terminal, here a tmux pane")
-    def test_a_codex_session_resumed_by_id_is_open_while_codex_runs(self):
-        stubs = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, stubs, True)
-        stub = Path(stubs) / "codex"
-        stub.symlink_to(shutil.which("dash") or "/bin/sh")
-        self.codex_session(uid(7), codex_meta(), codex_user("fix the build"), codex_reply("Fixed."))
-        self.codex_session(uid(8), codex_meta(), codex_user("fix the tests"), codex_reply("Fixed."))
-        pid, pane, socket, window = self.private_tmux(f"exec {shlex.quote(str(stub))} -c 'read line' resume {uid(7)}")
-        self.env["TMUX"] = f"{socket},0,0"
-        records = self.records()
-        self.assertEqual([records[uid(7)]["open"], records[uid(8)]["open"]],
-                         [{"pid": pid, "status": "", "tmux": {"pane": pane, "session": "work", "window": window}}, None])
 
     def test_bold_text_that_wraps_never_shows_its_markers(self):
         path = self.session("a1", user("summarize the incident for the team"), tool("Read"),
@@ -578,7 +518,7 @@ class SuperfindBehavior(unittest.TestCase):
     def break_search_index(self):
         import sqlite3
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
 
     def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
@@ -1542,7 +1482,7 @@ class SuperfindBehavior(unittest.TestCase):
         path = self.projects / "a1.jsonl"
         with open(path, "w") as f:
             f.write(user("rotate the signing keys") + "\n")
-            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "x" * 40_000_000}) + "\n")
+            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "needle " + "x" * 40_000_000}) + "\n")
             f.write(claude("Rotated.") + "\n")
         measure = ("import resource, subprocess, sys; subprocess.run(sys.argv[1:], capture_output=True); "
                    "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)")
@@ -1551,6 +1491,7 @@ class SuperfindBehavior(unittest.TestCase):
         megabytes = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
         self.assertLess(megabytes, 250)
         self.assertEqual(self.titles(), ["rotate the signing keys"])
+        self.assertEqual(self.titles("needle"), [])
 
     def test_a_null_label_cache_is_treated_as_empty(self):
         path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
@@ -1852,6 +1793,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = subprocess.run([*shell, "-c", f"source {snapshot}; superfind --version"],
                                     env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, (name, result.stderr))
+
 
 if __name__ == "__main__":
     unittest.main()

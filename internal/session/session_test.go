@@ -221,7 +221,7 @@ func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
 		},
 	} {
 		t.Setenv("TYPESAFE_API_KEY", key)
-		for _, r := range Annotate(rows, nil) {
+		for _, r := range Annotate(rows) {
 			if r.Status != want[name(r)] {
 				t.Errorf("with key %q, the %s session is labeled %q, want %q", key, name(r), r.Status, want[name(r)])
 			}

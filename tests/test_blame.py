@@ -274,6 +274,17 @@ class Blame(SuperfindBehavior):
         self.assertEqual([json.loads(r)["id"] for r in result.stdout.splitlines()], [uid(1)])
         self.assertEqual(result.stderr, "superfind blame: line 2 isn't committed yet, so this lists the sessions that edited the file\n")
 
+    def test_blame_on_a_line_runs_no_textconv_helper(self):
+        marker = self.home / "ran"
+        helper = self.home / "helper.sh"
+        helper.write_text(f"#!/bin/sh\ntouch {marker}\ncat \"$1\"\n")
+        helper.chmod(0o755)
+        self.git("config", "diff.shown.textconv", str(helper))
+        self.commit("feat: charge in cents", {"charge.go": "cents\n", ".gitattributes": "*.go diff=shown\n"}, self.now)
+        self.claude_at(1, claude_tool(self.now, "b1", "Bash", command='git commit -qm "feat: charge in cents"'), title="Cents")
+        self.assertEqual(self.found("charge.go:1"), [(uid(1), "made this commit")])
+        self.assertFalse(marker.exists())
+
     def test_blame_says_what_it_cannot_blame(self):
         self.commit("feat: charge in cents", {"charge.go": "cents\n"}, self.now)
         (self.work / "docs").mkdir()
@@ -288,6 +299,7 @@ class Blame(SuperfindBehavior):
             result = self.blame(*args, cwd=cwd)
             self.assertEqual((result.returncode, result.stderr), (code, message), args)
         self.assertIn("FILE:LINE    blames the commit that last changed that line", self.superfind("help", "blame"))
+        self.assertIn("To resume one, run the command that superfind command prints for its id.", self.superfind("help", "blame"))
         self.assertIn("superfind blame FILE|FILE:LINE|COMMIT [--json]", self.superfind("--help"))
 
 

@@ -73,13 +73,13 @@ class Recall(SuperfindBehavior):
         self.worked("other", self.place("elsewhere/other"))
         self.worked("home", self.home)
 
-    def test_in_here_keeps_this_folder_the_folders_inside_it_and_the_folders_above_it(self):
+    def test_in_here_keeps_this_folder_and_the_folders_above_it_but_not_the_ones_inside_it(self):
         self.folders()
         app, sub = self.place("work/app"), self.place("work/app/sub")
-        self.assertEqual(self.ids("in:here", here=app), ["app", "sub", "work"])
+        self.assertEqual(self.ids("in:here", here=app), ["app", "work"])
         self.assertEqual(self.ids("IN:HERE", here=sub, pwd=f"{sub}/"), ["app", "sub", "work"])
-        self.assertEqual(self.ids("in:here", here=self.place("work")), ["app", "application", "sub", "work"])
-        self.assertEqual(self.ids("in:here", here=Path("/")), ["app", "application", "home", "other", "sub", "work"])
+        self.assertEqual(self.ids("in:here", here=self.place("work")), ["work"])
+        self.assertEqual(self.ids("in:here", here=Path("/")), [])
         self.assertEqual(self.ids("in:here", here=self.home), ["home"])
         (self.home / "shop").mkdir()
         self.assertEqual(self.ids("in:here", here=self.home / "shop"), [])
@@ -115,9 +115,11 @@ class Recall(SuperfindBehavior):
         (real / "web").mkdir(parents=True)
         (self.home / "link").symlink_to(self.home / "src")
         self.worked("real", real.resolve())
-        self.worked("linked", self.home / "link" / "app" / "web")
+        self.worked("linked", self.home / "link" / "app")
+        self.worked("web", self.home / "link" / "app" / "web")
         self.assertEqual(self.ids("in:here", here=self.home / "link" / "app"), ["linked", "real"])
         self.assertEqual(self.ids("in:here", here=real), ["linked", "real"])
+        self.assertEqual(self.ids("in:here", here=real / "web"), ["linked", "real", "web"])
 
     def test_branch_keeps_sessions_that_ended_on_any_named_branch(self):
         self.worked("main", self.app, branch="main")
@@ -207,16 +209,16 @@ class Recall(SuperfindBehavior):
         self.session("hi", user("hi", cwd=str(self.app)), claude("Hello."))
         self.worked("other", self.place("elsewhere/other"))
         self.by_agent("sdk", self.app)
-        self.assertEqual(self.last(), (0, self.handoff(sub, "Invoice names"), ""))
+        app = self.projects / "app.jsonl"
+        self.assertEqual(self.last(), (0, self.handoff(app.resolve(), "fix the ledger"), ""))
         [record] = [json.loads(row) for row in self.last("--json")[1].splitlines()]
         self.assertEqual((record["id"], record["kind"], record["match"], record["resume"]),
-                         ("sub", "interactive", "", self.superfind("command", str(sub)).strip()))
+                         ("app", "interactive", "", self.superfind("command", str(app)).strip()))
         self.assertEqual([json.loads(row)["id"] for row in self.last("--json", "is:agent")[1].splitlines()], ["sdk"])
         self.assertEqual(self.last("branch:nope")[:2], (1, ""))
         hi = self.projects / "hi.jsonl"
         self.assertEqual(self.last(here=self.place("work/app/sub/deeper"))[1], self.handoff(sub, "Invoice names"))
-        for name in ("app", "sub"):
-            (self.projects / f"{name}.jsonl").unlink()
+        app.unlink()
         self.assertEqual(self.last()[1], self.handoff(hi.resolve(), "hi"))
 
     def test_last_takes_the_agent_and_every_other_filter(self):
@@ -236,9 +238,9 @@ class Recall(SuperfindBehavior):
 
     def test_last_with_nothing_here_or_words_or_an_unknown_option_says_so(self):
         self.worked("other", self.place("elsewhere/other"))
-        self.assertEqual(self.last(), (1, "", "superfind last: no session started in this folder or a folder inside it.\n"))
+        self.assertEqual(self.last(), (1, "", "superfind last: no session started in this folder or a folder that holds it.\n"))
         self.assertEqual(self.last("agent:codex"),
-                         (1, "", "superfind last: no session that fits these filters started in this folder or a folder inside it.\n"))
+                         (1, "", "superfind last: no session that fits these filters started in this folder or a folder that holds it.\n"))
         for args in (("ledger",), ("agent:codex", "ledger"), ("--", "--json")):
             self.assertEqual(self.last(*args), (2, "", "superfind last: takes filters, such as agent:codex or branch:main, not words. "
                                                        "To search this folder, use superfind search in:here WORDS.\n"), args)
@@ -247,8 +249,8 @@ class Recall(SuperfindBehavior):
     def test_last_refuses_an_agent_or_is_value_it_does_not_know_instead_of_dropping_it(self):
         self.worked("app", self.app)
         cases = {("agent:codx",): "can't read agent:codx. agent: takes claude, codex, or grok.",
-                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, agent, or open.",
-                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, agent, or open."}
+                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, or agent.",
+                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, or agent."}
         for args, sentence in cases.items():
             self.assertEqual(self.last(*args), (2, "", f"superfind last: {sentence}\n"), args)
         self.assertEqual(self.ids("agent:bogus", "ledger"), ["app"])
