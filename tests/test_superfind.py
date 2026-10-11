@@ -1325,7 +1325,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 15)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 16)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3
