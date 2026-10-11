@@ -163,6 +163,12 @@ func ReadTrail(a *Agent, path string, threads ...string) (Trail, error) {
 	return t, errors.Join(problems...)
 }
 
+type PartUnread struct{ err error }
+
+func (p *PartUnread) Error() string { return p.err.Error() }
+
+func (p *PartUnread) Unwrap() error { return p.err }
+
 func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
 	r, err := a.reader(path, Transcript{Last: Replied})
 	if err != nil {
@@ -176,11 +182,13 @@ func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
 		return true
 	})
 	t := r.done()
-	if a.parts != nil {
+	if a.parts != nil && err == nil {
 		parts, problem := a.parts(path)
-		err = errors.Join(err, problem)
 		for _, p := range parts {
-			err = errors.Join(err, eachLine(p, a.trail(&trail)))
+			problem = errors.Join(problem, eachLine(p, a.trail(&trail)))
+		}
+		if problem != nil {
+			err = &PartUnread{problem}
 		}
 	}
 	return t, trail, err

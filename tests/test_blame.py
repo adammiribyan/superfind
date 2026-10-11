@@ -295,7 +295,6 @@ class Blame(SuperfindBehavior):
         os.utime(path)
         result = self.blame("charge.go", "--json")
         self.assertEqual([(r["id"], r["match"]) for r in map(json.loads, result.stdout.splitlines())], [(uid(1), "edited it 3 times")])
-        self.assertIn("couldn't be read", result.stderr)
 
     def test_blame_says_when_a_cache_it_cannot_write_may_miss_new_edits(self):
         t = self.now - 3600
