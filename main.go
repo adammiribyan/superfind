@@ -145,8 +145,10 @@ superfind search prints first.
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
 Print the sessions on this machine that made a commit, or that changed a file, from any agent,
-best first, in the same fields as search. Each line's summary starts with what the session did.
-Run it inside the git repository, or pass a file in one.
+best first, in the same fields as search. Each line's summary starts with what the session did,
+such as made this commit, made a commit it squashed, opened #19, or edited it 3 times.
+To resume one, run the command that superfind command prints for its id. Run blame inside the
+git repository, or pass a file in one.
 
   COMMIT       a commit, such as a hash, HEAD~2, or a branch. Lists the session that ran its
                git commit, then any that opened its pull request, named by a (#N) suffix or a
@@ -165,7 +167,7 @@ started it. It reads the commands and edits each agent recorded, so it misses a 
 hand in a terminal or on another machine, and one whose message and hash the session never
 recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
 letters and digits, and the session ran it from a folder in the repository or one that no
-longer exists.
+longer exists. Grok records no times, so its edits count as recent whenever its session is.
 `,
 	"index": `superfind index
 
