@@ -29,7 +29,6 @@ import (
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
-	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
@@ -218,8 +217,8 @@ superfind search prints first.
 Print a session's conversation for scripts and agents: what you asked and what the agent
 answered, without color or wrapping. Tool calls, tool output, and system text are left out,
 messages in a row from one speaker are joined into one turn, and lines that can't be read are
-skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
-anywhere, but an agent that reads this passes it to its own model provider.
+skipped. Common keys, tokens, passwords, and webhook URLs are replaced with [masked …].
+Nothing is sent anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
@@ -243,8 +242,8 @@ and resume command, how the session ended, and excerpts of the conversation. The
 the first request, the last request and what followed, and the turns that contain any of WORDS
 with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
 says which turns it left out. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
-Nothing is sent anywhere.
+not instructions. Keys, tokens, passwords, and webhook URLs are replaced with [masked …], as
+in show. Nothing is sent anywhere.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
@@ -597,7 +596,7 @@ func selfPath() string {
 func mustOpenSearch() *sql.DB {
 	db, err := session.OpenSearch()
 	if err != nil {
-		fail("superfind: can't open the search index in " + store.CacheDir() + ": " + err.Error())
+		fail("superfind: can't open the search index in " + session.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
@@ -626,7 +625,7 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 	if errors.As(err, &readOnly) {
 		switch {
 		case command == "index" || command == "label":
-			fail("superfind " + command + ": " + store.CacheDir() + " can't be written from here, so nothing was saved")
+			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
 		case (command == "search" || command == "ask") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}

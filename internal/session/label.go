@@ -9,9 +9,9 @@ import (
 	"math"
 	"os"
 	"sync"
+	"syscall"
 
 	"github.com/adammiribyan/superfind/internal/agent"
-	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
@@ -117,7 +117,7 @@ type statusEntry struct {
 
 func statuses() map[string]statusEntry {
 	var known map[string]statusEntry
-	if raw, err := os.ReadFile(store.CachePath("status.json")); err == nil && json.Unmarshal(raw, &known) == nil && known != nil {
+	if raw, err := os.ReadFile(CachePath("status.json")); err == nil && json.Unmarshal(raw, &known) == nil && known != nil {
 		return known
 	}
 	return map[string]statusEntry{}
@@ -153,11 +153,14 @@ func statusLabel(r Row, known map[string]statusEntry, keyless bool) string {
 }
 
 func Label(key string, rows []Row) error {
-	unlock, held, err := store.TryLock(store.CachePath("status.lock"))
-	if err != nil || !held {
+	lock, err := os.OpenFile(CachePath("status.lock"), os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
 		return err
 	}
-	defer unlock()
+	defer lock.Close()
+	if syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		return nil
+	}
 	known := statuses()
 	pruned := false
 	for path := range known {
@@ -214,7 +217,7 @@ func Label(key string, rows []Row) error {
 	if err != nil {
 		return err
 	}
-	if err := store.WriteAtomically(store.CachePath("status.json"), data); err != nil {
+	if err := writeAtomically(CachePath("status.json"), data); err != nil {
 		return fmt.Errorf("saving labels: %w", err)
 	}
 	if len(failures) > 0 {

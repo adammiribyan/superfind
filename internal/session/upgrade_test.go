@@ -6,14 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/adammiribyan/superfind/internal/store"
 )
 
 func searchBytes() int64 {
 	var total int64
 	for _, suffix := range []string{"", "-wal"} {
-		if info, err := os.Stat(store.CachePath("search.db" + suffix)); err == nil {
+		if info, err := os.Stat(CachePath("search.db" + suffix)); err == nil {
 			total += info.Size()
 		}
 	}
@@ -48,7 +46,7 @@ func writeSession(t *testing.T, home string, i int, said string) {
 }
 
 func upgrade(t *testing.T) []Row {
-	if err := os.WriteFile(store.CachePath("index.json"), []byte(`{"version":1,"files":{}}`), 0o600); err != nil {
+	if err := os.WriteFile(CachePath("index.json"), []byte(`{"version":1,"files":{}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	rows, _, err := Index(nil)

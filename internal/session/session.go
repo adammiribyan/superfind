@@ -78,6 +78,15 @@ func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 
 func Now() float64 { return float64(time.Now().UnixNano()) / 1e9 }
 
+func CacheDir() string {
+	if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
+		return filepath.Join(x, "superfind")
+	}
+	return filepath.Join(agent.Home(), ".cache", "superfind")
+}
+
+func CachePath(name string) string { return filepath.Join(CacheDir(), name) }
+
 func IsHere(s Session) bool {
 	if s.Cwd == "" {
 		return false

@@ -11,9 +11,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
-	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestTheCacheStaysPutWithoutHOME(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("HOME", "")
+	os.Unsetenv("HOME")
+	if dir := CacheDir(); !filepath.IsAbs(dir) {
+		t.Fatalf("with HOME unset the cache would go to %q, inside whatever folder superfind runs from", dir)
+	}
+}
 
 func TestASessionIsHereFromItsFolderAndEverySubfolder(t *testing.T) {
 	session := Session{Cwd: "/tmp/app"}
@@ -196,8 +204,8 @@ func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
 	verdicts[unsure] = statusEntry{verdicts[unsure].FileID, "waiting", 0.6}
 	verdicts[earlier] = statusEntry{agent.FileID{ModNanos: 1, Size: 1}, "finished", 0.95}
 	data, _ := json.Marshal(verdicts)
-	os.MkdirAll(store.CacheDir(), 0o755)
-	if err := os.WriteFile(store.CachePath("status.json"), data, 0o644); err != nil {
+	os.MkdirAll(CacheDir(), 0o755)
+	if err := os.WriteFile(CachePath("status.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]map[string]string{

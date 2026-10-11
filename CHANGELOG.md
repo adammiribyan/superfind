@@ -3,6 +3,12 @@
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
 
+## [Unreleased]
+
+### Fixed
+
+- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
+
 ## [0.11.0] - 2026-10-11
 
 ### Added

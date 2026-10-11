@@ -32,7 +32,6 @@ import (
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
-	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
@@ -258,7 +257,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 		m.problem, m.indexing = "Indexing your sessions…", true
 	}
 	m.filter()
-	if info, err := os.Stat(store.CachePath("status.json")); err == nil {
+	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
 		m.statusSeen = info.ModTime()
 	}
 	m.colors.noColor = render.NoColor
@@ -622,7 +621,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterMove()
 	case labelsTick:
 		next := tea.Batch(tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }), findHeld)
-		info, err := os.Stat(store.CachePath("status.json"))
+		info, err := os.Stat(session.CachePath("status.json"))
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
 		}

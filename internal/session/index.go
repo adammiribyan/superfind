@@ -17,13 +17,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
-	"github.com/adammiribyan/superfind/internal/store"
 )
 
 const cacheVersion = 15
@@ -82,7 +82,7 @@ type cacheFile struct {
 }
 
 func loadCache() map[string]cacheEntry {
-	raw, err := os.ReadFile(store.CachePath("index.json"))
+	raw, err := os.ReadFile(CachePath("index.json"))
 	if err != nil {
 		return map[string]cacheEntry{}
 	}
@@ -91,6 +91,37 @@ func loadCache() map[string]cacheEntry {
 		return map[string]cacheEntry{}
 	}
 	return c.Files
+}
+
+func makeCacheDir() error {
+	if err := os.MkdirAll(CacheDir(), 0o700); err != nil {
+		return err
+	}
+	os.Chmod(CacheDir(), 0o700)
+	return nil
+}
+
+func writeAtomically(path string, data []byte) error {
+	if err := makeCacheDir(); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+func unwritable(err error) bool {
+	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
 
 type ReadOnly struct {
@@ -104,7 +135,22 @@ func (r ReadOnly) Error() string {
 		noun = "session"
 	}
 	return fmt.Sprintf("results may miss what changed in %d %s since %s, because the index in %s can't be updated from here",
-		r.Changed, noun, r.Since.Local().Format("Jan 2 15:04"), store.CacheDir())
+		r.Changed, noun, r.Since.Local().Format("Jan 2 15:04"), CacheDir())
+}
+
+func lockFile(name string) (func(), error) {
+	if err := makeCacheDir(); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(CachePath(name), os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
 }
 
 func saveCache(files map[string]cacheEntry) error {
@@ -112,7 +158,7 @@ func saveCache(files map[string]cacheEntry) error {
 	if err != nil {
 		return err
 	}
-	return store.WriteAtomically(store.CachePath("index.json"), data)
+	return writeAtomically(CachePath("index.json"), data)
 }
 
 func CachedRows() []Row {
@@ -129,16 +175,16 @@ func CachedRows() []Row {
 const docsModule = "fts5(path UNINDEXED, title, body, tokenize='porter unicode61')"
 
 func OpenSearch() (*sql.DB, error) {
-	if err := store.MakeDir(store.CacheDir()); err != nil {
+	if err := makeCacheDir(); err != nil {
 		return nil, err
 	}
-	path, err := filepath.Abs(store.CachePath("search.db"))
+	path, err := filepath.Abs(CachePath("search.db"))
 	if err != nil {
 		return nil, err
 	}
 	settings := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	readOnly := store.Unwritable(err)
+	readOnly := unwritable(err)
 	switch {
 	case readOnly:
 		if _, err = os.Stat(path); err != nil {
@@ -191,7 +237,7 @@ func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
 
 func discardSearch() {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		os.Remove(store.CachePath("search.db" + suffix))
+		os.Remove(CachePath("search.db" + suffix))
 	}
 }
 
@@ -258,8 +304,8 @@ func Index(announce func(stale int)) ([]Row, []error, error) { return index(anno
 func Rebuild(announce func(stale int)) ([]Row, []error, error) { return index(announce, true) }
 
 func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
-	unlock, err := store.Lock(store.CachePath("index.lock"))
-	readOnly := store.Unwritable(err)
+	unlock, err := lockFile("index.lock")
+	readOnly := unwritable(err)
 	if err != nil && !readOnly {
 		return nil, nil, fmt.Errorf("locking the index: %w", err)
 	}
@@ -268,7 +314,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	if rebuild && readOnly {
 		return nil, nil, fmt.Errorf("%w, and it can't be rebuilt from here. Run superfind index where %s can be written",
-			ErrDamaged, store.CacheDir())
+			ErrDamaged, CacheDir())
 	}
 	if rebuild {
 		discardSearch()
@@ -277,7 +323,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	if !searchHolds(old, readOnly) {
 		if readOnly {
 			return nil, nil, fmt.Errorf("there's no usable index in %s, and it can't be written from here. "+
-				"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written", store.CacheDir())
+				"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written", CacheDir())
 		}
 		old = map[string]cacheEntry{}
 	}
@@ -385,7 +431,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	if readOnly {
 		since := time.Time{}
-		if info, err := os.Stat(store.CachePath("index.json")); err == nil {
+		if info, err := os.Stat(CachePath("index.json")); err == nil {
 			since = info.ModTime()
 		}
 		return rows, problems, ReadOnly{len(stale) + len(gone), since}
