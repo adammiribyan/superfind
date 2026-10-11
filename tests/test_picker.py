@@ -1,3 +1,4 @@
+import base64
 import http.server
 import json
 import os
@@ -6,6 +7,7 @@ import re
 import pty
 import select
 import shutil
+import signal
 import struct
 import subprocess
 import tempfile
@@ -1087,6 +1089,7 @@ class PickerBehavior(unittest.TestCase):
 
 class PtyPicker(unittest.TestCase):
     EXTRA_ENV = {}
+    INDEX = True
 
     def setUp(self):
         home = Path(tempfile.mkdtemp()).resolve()
@@ -1097,8 +1100,13 @@ class PtyPicker(unittest.TestCase):
                                           claude("Migrated.") + "\n" + line(type="ai-title", aiTitle="Ledger") + "\n")
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
                "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", **self.EXTRA_ENV}
-        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        if self.INDEX:
+            subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        else:
+            for n in range(400):
+                (projects / f"s{n}.jsonl").write_text(user(f"reconcile ledger batch {n} " * 2000) + "\n" + claude("Done.") + "\n")
         pid, self.terminal = pty.fork()
+        self.pid = pid
         if pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
             os.execve(str(SUPERFIND), [str(SUPERFIND), "pick"], env)
@@ -1165,6 +1173,102 @@ class PickerWithoutColor(PtyPicker):
         self.assertNotIn(b"\x1b]11;?", first)
         self.assertNotIn(b"\x1b[c", first)
         self.assertEqual(colors_in(first), [])
+
+def working(title):
+    return b"\x1b]7501;state=working:app=superfind:title=" + base64.b64encode(title.encode()) + b"\x07"
+
+
+class PickerStatus(PtyPicker):
+    WORKING = working("Asking")
+    CLEAR = b"\x1b]7501;state=clear\x07"
+
+    def setUp(self):
+        stub = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, stub, ignore_errors=True)
+        self.release = stub / "release"
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\n"
+                                     f"while [ ! -e '{self.release}' ]; do sleep 0.05; done\n"
+                                     "echo '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.EXTRA_ENV = {"PATH": f"{stub}:/usr/bin:/bin"}
+        super().setUp()
+
+    def ask(self):
+        seen = self.read(until=b"Migrated.")
+        os.write(self.terminal, b"ledger\x12")
+        seen += self.read(until=self.WORKING)
+        self.assertIn(self.WORKING, seen, "asking never reported working")
+        return seen
+
+    def last_status(self, seen):
+        found = re.findall(rb"\x1b\]7501;[^\x07]*\x07", seen)
+        return found[-1] if found else b""
+
+    def rest(self):
+        seen = self.read(seconds=5)
+        os.close(self.terminal)
+        self.terminal = os.open("/dev/null", os.O_RDWR)
+        return seen
+
+
+class AskStatus(PickerStatus):
+    def test_asking_reports_working_until_the_answer_arrives(self):
+        seen = self.ask()
+        seen += self.read(seconds=1)
+        self.assertNotIn(self.CLEAR, seen, "the status was cleared while the ask was still running")
+        self.release.touch()
+        seen += self.read(until=self.CLEAR)
+        self.assertEqual(self.last_status(seen), self.CLEAR)
+
+
+class StoppedAskStatus(PickerStatus):
+
+    def test_stopping_an_ask_with_esc_clears_its_status(self):
+        self.ask()
+        os.write(self.terminal, b"\x1b")
+        self.assertEqual(self.last_status(self.read(until=self.CLEAR)), self.CLEAR)
+
+    def test_ctrl_c_while_asking_clears_the_status_before_exit(self):
+        self.ask()
+        os.write(self.terminal, b"\x03")
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+    def test_sigterm_while_asking_clears_the_status_before_exit(self):
+        self.ask()
+        os.kill(self.pid, signal.SIGTERM)
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+    def test_choosing_while_asking_clears_the_status_before_the_agent_starts(self):
+        self.ask()
+        os.write(self.terminal, b"\r")
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+
+class IndexingStatus(PtyPicker):
+    INDEX = False
+
+    def test_the_first_index_reports_working_until_it_finishes(self):
+        os.write(self.terminal, PickerColors.COLORS + PickerColors.DEVICE)
+        seen = self.read(until=working("Indexing"), seconds=20)
+        self.assertIn(working("Indexing"), seen, "the first index never reported working")
+        if PickerStatus.CLEAR not in seen.split(working("Indexing"))[-1]:
+            seen += self.read(until=PickerStatus.CLEAR, seconds=60)
+        self.assertEqual(PickerStatus.last_status(self, seen), PickerStatus.CLEAR)
+
+
+class QuietPicker(PtyPicker):
+    def test_a_picker_that_does_no_work_sends_no_status(self):
+        seen = self.read(until=b"Migrated.")
+        os.write(self.terminal, b"\x03")
+        seen += self.read(seconds=2)
+        os.close(self.terminal)
+        self.terminal = os.open("/dev/null", os.O_RDWR)
+        self.assertFalse(b"7501" in seen, "a picker that did no work sent a status")
+
+
+class QuietPickerWithoutColor(QuietPicker):
+    EXTRA_ENV = {"NO_COLOR": "1"}
+
 
 if __name__ == "__main__":
     unittest.main()
