@@ -161,7 +161,9 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Enter")
         self.wait_for("Open in another window.")
         self.keys("Enter")
-        self.assertTrue(self.until(lambda: Path(f"{self.out}.resumed").exists()), "Enter again did not resume a copy")
+        self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\x1b[2m · already open in another window\x1b[m\n"))
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "Enter again did not resume a copy")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
 
     def test_run_checks_again_for_a_session_opened_while_the_picker_was_up(self):
         self.fake_claude()
