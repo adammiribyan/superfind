@@ -85,7 +85,10 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 }()
 
 func Mask(text string) string {
-	text = privateKey.ReplaceAllLiteralString(text, "[masked private key]")
+	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, "[masked private key]")))
+}
+
+func maskKeys(text string) string {
 	var out strings.Builder
 	for {
 		m := anySecret.FindStringSubmatchIndex(text)
@@ -102,12 +105,12 @@ func Mask(text string) string {
 			text = text[m[0]+p.keep:]
 			continue
 		case p.keep < 0:
-			out.WriteString(urlPassword.ReplaceAllString(found, "${1}"+masked+"@"))
+			out.WriteString(maskKeys(urlPassword.FindStringSubmatch(found)[1]) + masked + "@")
 		default:
 			out.WriteString(found[:p.keep] + masked)
 		}
 		text = text[m[1]:]
 	}
 	out.WriteString(text)
-	return maskNamedSecrets(out.String())
+	return out.String()
 }
