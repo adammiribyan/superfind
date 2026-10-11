@@ -1,0 +1,9 @@
+{
+  "name": "superfind-checkin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test 'test/*.test.ts'",
+    "deploy": "npx wrangler@4.149.0 deploy"
+  }
+}
