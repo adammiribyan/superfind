@@ -8,12 +8,5 @@
   "homepage": "https://superfind.dev",
   "repository": "https://github.com/adammiribyan/superfind",
   "license": "Apache-2.0",
-  "keywords": [
-    "sessions",
-    "search",
-    "resume",
-    "handoff",
-    "codex",
-    "grok"
-  ]
+  "keywords": ["sessions", "search", "resume", "handoff", "codex", "grok"]
 }
