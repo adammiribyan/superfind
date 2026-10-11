@@ -6,12 +6,18 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
+- `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
+- `llms.txt` and `llms-full.txt` at the repo root describe superfind's install, commands, JSON fields, and exit codes for AI assistants and agents. `llms-full.txt` is generated from `llms.txt`, the help, and real output, and a test fails when it falls out of date.
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, or in a folder that contains it, as the picker's "here" does; sessions from folders inside it don't count. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
 - `superfind last` resumes the newest session started in the folder you're in, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 
 ### Changed
 
+- `search` and `ask` reject an option that starts with one dash, such as `-n 5`, and exit 2. They used to search for it as a word, so `-n 5` usually found nothing. To search for such a word, put `--` first.
+- `superfind --help` and `superfind help search` say that `--json` prints JSON Lines, one object per line rather than one array, and how to get the first result or one array with `jq`.
+- `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - The index is rebuilt once after upgrading, to record how each session ended.
 - A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.

@@ -110,7 +110,7 @@ superfind search --json |
     [.updated[:10], .agent, .project, .title] | @tsv'
 ```
 
-See `superfind --help` for all commands and `superfind help <command>` for details.
+See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](llms-full.txt).
 
 ## Privacy
 
