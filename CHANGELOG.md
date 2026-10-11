@@ -12,6 +12,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - Codex counts as open only when it was started with `codex resume <id>`, because Codex keeps no list of running sessions.
 - `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
 - `superfind last` resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
+- fish support: `superfind init fish | source` in `~/.config/fish/config.fish` sets up the same `superfind` and `sfd` commands and Ctrl-X c binding as zsh and bash, and `install.sh` adds that line for fish users. It needs fish 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
 
 ### Changed
 
@@ -31,6 +32,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
 - A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
 - `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
+- A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 
 ## [0.10.0] - 2026-10-10
 
