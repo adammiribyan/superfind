@@ -21,6 +21,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -33,7 +34,7 @@ import (
 const (
 	wideColumns    = 100
 	headerLines    = 4
-	colorTimeout   = 300 * time.Millisecond
+	colorTimeout   = time.Second
 	labelsInterval = 1500 * time.Millisecond
 	marginTop      = 1
 	marginSide     = 1
@@ -263,7 +264,8 @@ func (m picker) Init() tea.Cmd {
 		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
 	if !m.colors.noColor {
-		cmds = append(cmds, tea.RequestBackgroundColor, tea.RequestForegroundColor)
+		cmds = append(cmds, tea.Sequence(tea.RequestBackgroundColor, tea.RequestForegroundColor,
+			tea.Raw(ansi.RequestPrimaryDeviceAttributes)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -507,7 +509,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.settleColors()
 			return m.loadPreview()
 		}
-	case colorsSettled:
+	case colorsSettled, uv.PrimaryDeviceAttributesEvent:
 		if !m.colors.settled {
 			m.settleColors()
 			return m.loadPreview()

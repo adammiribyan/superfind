@@ -2,6 +2,7 @@ package show
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -12,8 +13,9 @@ type secretPattern struct {
 	keep int
 }
 
+var privateKey = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`)
+
 var secretPatterns = []secretPattern{
-	{"private key", regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`), 0},
 	{"Anthropic key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`), 0},
 	{"OpenAI key", regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`), 0},
 	{"xAI key", regexp.MustCompile(`\bxai-[A-Za-z0-9]{32,}`), 0},
@@ -73,18 +75,42 @@ func maskNamedSecrets(text string) string {
 	return out.String()
 }
 
-func Mask(text string) string {
-	for _, p := range secretPatterns {
-		text = p.re.ReplaceAllStringFunc(text, func(found string) string {
-			if p.keep > 0 && !strings.ContainsAny(found[p.keep:], "0123456789") {
-				return found
-			}
-			masked := "[masked " + p.kind + "]"
-			if p.keep < 0 {
-				return urlPassword.ReplaceAllString(found, "${1}"+masked+"@")
-			}
-			return found[:p.keep] + masked
-		})
+var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
+	alternatives, groups, group := make([]string, len(secretPatterns)), make([]int, len(secretPatterns)), 1
+	for i, p := range secretPatterns {
+		alternatives[i], groups[i] = "("+p.re.String()+")", group
+		group += 1 + p.re.NumSubexp()
 	}
-	return maskNamedSecrets(text)
+	return regexp.MustCompile(strings.Join(alternatives, "|")), groups
+}()
+
+func Mask(text string) string {
+	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, "[masked private key]")))
+}
+
+func maskKeys(text string) string {
+	var out strings.Builder
+	for {
+		m := anySecret.FindStringSubmatchIndex(text)
+		if m == nil {
+			break
+		}
+		p := secretPatterns[slices.IndexFunc(secretGroups, func(group int) bool { return m[2*group] >= 0 })]
+		found := text[m[0]:m[1]]
+		out.WriteString(text[:m[0]])
+		masked := "[masked " + p.kind + "]"
+		switch {
+		case p.keep > 0 && !strings.ContainsAny(found[p.keep:], "0123456789"):
+			out.WriteString(found[:p.keep])
+			text = text[m[0]+p.keep:]
+			continue
+		case p.keep < 0:
+			out.WriteString(maskKeys(urlPassword.FindStringSubmatch(found)[1]) + masked + "@")
+		default:
+			out.WriteString(found[:p.keep] + masked)
+		}
+		text = text[m[1]:]
+	}
+	out.WriteString(text)
+	return out.String()
 }
