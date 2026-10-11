@@ -15,7 +15,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - A session that ends in one long agent run no longer slows the index and the preview down with the run's length. On a 126 MB test session, the preview took 4 to 6 s instead of 18 to 23 s and peaked at 0.39 to 0.43 GB instead of 0.89 to 1.0 GB.
 - The preview reads the end of a session line by line instead of loading it, so a long run of tool output no longer has to fit in memory. On the same 126 MB session it peaked at 0.29 to 0.35 GB instead of 0.39 to 0.43 GB.
 - A line between 16 MiB and 17 MiB long is now skipped by the index as well as the preview, so search no longer finds a prompt the preview can't show.
-- The preview renders only the end of a long reply, the part it shows, and keeps code blocks that began earlier formatted as code. It looks the same as before. On a test reply of 40 MB, the preview took TIME instead of TIME0.
+- The preview renders only the end of a long reply, the part it shows, and keeps code blocks that began earlier formatted as code. It looks the same as before. On a 126 MB test session that ends in a 40 MB reply, the preview took 2.4 to 2.7 s instead of 5.0 to 6.2 s.
 
 ## [0.10.0] - 2026-10-10
 

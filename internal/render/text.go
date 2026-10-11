@@ -245,7 +245,7 @@ func render(text string, width int) []string { return renderFrom(text, width, fa
 const lineBreaks = "\n\r\v\f\u2028\u2029"
 
 func fencedAfter(text string) bool {
-	fenced, lineStart, scanned := false, 0, 0
+	fenced, blank, scanned := false, true, 0
 	for at := 0; ; at += 3 {
 		found := strings.Index(text[at:], "```")
 		if found < 0 {
@@ -254,11 +254,12 @@ func fencedAfter(text string) bool {
 		at += found
 		if b := strings.LastIndexAny(text[scanned:at], lineBreaks); b >= 0 {
 			_, size := utf8.DecodeRuneInString(text[scanned+b:])
-			lineStart = scanned + b + size
+			scanned, blank = scanned+b+size, true
 		}
+		blank = blank && strings.TrimLeftFunc(text[scanned:at], unicode.IsSpace) == ""
 		scanned = at
-		if strings.TrimLeftFunc(text[lineStart:at], unicode.IsSpace) == "" {
-			fenced = !fenced
+		if blank {
+			fenced, blank = !fenced, false
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 var markdown = []string{
@@ -49,5 +50,19 @@ func TestTheEndOfALongReplyRendersWithoutRenderingAllOfIt(t *testing.T) {
 	}
 	if len(lines) != 19 || lines[17] != "    code line" || lines[18] != "  after the code" {
 		t.Fatalf("got %q", lines[15:])
+	}
+}
+
+func TestFindingTheCodeBlockAtTheCutTakesLinearTime(t *testing.T) {
+	text := strings.Repeat(" ", 1<<20) + strings.Repeat("```", 1<<20) + "\n" + strings.Repeat("x\n", 20000)
+	done := make(chan []string)
+	go func() { done <- renderEnd(text, 80, 18) }()
+	select {
+	case lines := <-done:
+		if lines[len(lines)-1] != "    x" {
+			t.Fatalf("got %q", lines[len(lines)-1])
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("still scanning after 10 s")
 	}
 }
