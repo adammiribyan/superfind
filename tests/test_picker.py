@@ -638,9 +638,7 @@ class PickerBehavior(unittest.TestCase):
         self.assertFalse(Path(f"{self.out}.resumed").exists())
         self.keys("clear", "Enter")
         self.keys("superfind last", "Enter")
-        deadline = time.time() + 5
-        while not Path(f"{self.out}.resumed").exists() and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
         folder = self.home / "app"
         self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume app\n")
         self.keys("pwd", "Enter")
@@ -983,10 +981,11 @@ class PickerBehavior(unittest.TestCase):
         for query in ("in:here", "in:here branch:FIX", "branch:fix after:5d", "in:here ledger"):
             printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, cwd=self.here,
                                      capture_output=True, text=True, check=True).stdout
+            want = [row.split("\t")[4] for row in printed.splitlines()]
             self.keys("C-u", query)
-            self.assertEqual(self.titles(), [row.split("\t")[4] for row in printed.splitlines()], query)
+            self.assertTrue(self.until(lambda: self.titles() == want), (query, want, self.screen()))
         self.keys("C-u", "in:here")
-        self.assertEqual(self.titles(), ["Ledger migration", "Old ledger fix"])
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration", "Old ledger fix"]), self.screen())
 
     def test_a_half_typed_filter_keeps_the_list_says_what_it_takes_and_cannot_ask(self):
         stub = self.home / "stub"
@@ -998,17 +997,17 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("ledger after:4")
         self.wait_for("after: takes a date like 2026-10-09, yesterday, or 3d.")
-        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
         self.keys("C-r")
         time.sleep(1)
         self.assertFalse(Path(f"{self.out}.asked").exists())
         self.assertIn("after: takes a date", self.screen())
         self.keys(*["BSpace"] * 7, "in:")
-        self.assertIn("in: takes here, as in in:here.", self.screen())
-        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.wait_for("in: takes here, as in in:here.")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
         self.keys(*["BSpace"] * 3, "after:4d")
-        self.assertNotIn("takes", self.screen())
-        self.assertEqual(self.titles(), ["Ledger migration"])
+        self.assertTrue(self.until(lambda: "takes" not in self.screen()), self.screen())
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
 
 
     def explaining_typesafe(self):
