@@ -275,39 +275,30 @@ Print superfind's version.
 
 var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label"}
 
-const zshSetup = `_superfind_run() {
-  if [[ -x %[1]s ]]; then
-    %[1]s "$@"
-  else
-    command superfind "$@"
-  fi
-}
-
-_superfind_resume() {
-  print -r -- $'Resuming \e[1m'"${1%%%%$'\n'*}"$'\e[0m'
-  print -s -- "${1#*$'\n'}"
-  eval "${1#*$'\n'}"
-}
-
-superfind() {
-  local out arg
+const zshSetup = `superfind() {
+  local _sf_out _sf_arg
+  local -a _sf_run
+  _sf_run=(command superfind)
+  [[ -x %[1]s ]] && _sf_run=(%[1]s)
   if [[ ${1-} == last && -t 0 && -t 1 ]]; then
-    for arg in "${@:2}"; do
-      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    for _sf_arg in "${@:2}"; do
+      [[ $_sf_arg == -* ]] && { "${_sf_run[@]}" "$@"; return; }
     done
   elif (( $# )); then
-    _superfind_run "$@"
+    "${_sf_run[@]}" "$@"
     return
   fi
-  out=$(_superfind_run "${@:-pick}") || return
-  _superfind_resume "$out"
+  _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  print -r -- $'Resuming \e[1m'"${_sf_out%%%%$'\n'*}"$'\e[0m'
+  print -s -- "${_sf_out#*$'\n'}"
+  eval "${_sf_out#*$'\n'}"
 }
 
 sfd() { superfind "$@"; }
 
 _superfind_widget() {
   local out
-  if out=$(_superfind_run pick); then
+  if out=$(superfind pick); then
     zle -I
     print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -320,74 +311,56 @@ zle -N _superfind_widget
 bindkey '^Xc' _superfind_widget
 `
 
-const bashSetup = `_superfind_run() {
-  if [[ -x %[1]s ]]; then
-    %[1]s "$@"
-  else
-    command superfind "$@"
-  fi
-}
-
-_superfind_resume() {
-  printf 'Resuming \e[1m%%s\e[0m\n' "${1%%%%$'\n'*}"
-  history -s "${1#*$'\n'}"
-  eval "${1#*$'\n'}"
-}
-
-superfind() {
-  local out arg
+const bashSetup = `superfind() {
+  local _sf_out _sf_arg
+  local -a _sf_run
+  _sf_run=(command superfind)
+  [[ -x %[1]s ]] && _sf_run=(%[1]s)
   if [[ ${1-} == last && -t 0 && -t 1 ]]; then
-    for arg in "${@:2}"; do
-      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    for _sf_arg in "${@:2}"; do
+      [[ $_sf_arg == -* ]] && { "${_sf_run[@]}" "$@"; return; }
     done
   elif (( $# )); then
-    _superfind_run "$@"
+    "${_sf_run[@]}" "$@"
     return
   fi
-  out=$(_superfind_run "${@:-pick}") || return
-  _superfind_resume "$out"
+  _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  printf 'Resuming \e[1m%%s\e[0m\n' "${_sf_out%%%%$'\n'*}"
+  history -s "${_sf_out#*$'\n'}"
+  eval "${_sf_out#*$'\n'}"
 }
 
 sfd() { superfind "$@"; }
 
-_superfind_widget() {
-  local out
-  out=$(_superfind_run pick) && _superfind_resume "$out"
-}
-[[ $- == *i* ]] && bind -x '"\C-xc": _superfind_widget'
+[[ $- == *i* ]] && bind -x '"\C-xc": superfind'
 `
 
-const fishSetup = `function _superfind_run
-    if test -x %[1]s
-        %[1]s $argv
-    else
-        command superfind $argv
+const fishSetup = `function superfind
+    set -l _sf_run %[1]s
+    if not test -x $_sf_run
+        set _sf_run (command -s superfind)
+        or begin
+            command superfind $argv
+            return
+        end
     end
-end
-
-function _superfind_resume
-    set -l resume (string join \n -- $argv[2..-1] | string collect)
-    printf 'Resuming \e[1m%%s\e[0m\n' $argv[1]
+    set -l _sf_rest $argv
+    set -e _sf_rest[1]
+    if not set -q argv[1]
+        set argv pick
+    else if not begin
+            test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $_sf_rest
+        end
+        $_sf_run $argv
+        return
+    end
+    set -l _sf_out ($_sf_run $argv); or return
+    set -l _sf_resume (string join \n -- $_sf_out[2..-1] | string collect)
+    printf 'Resuming \e[1m%%s\e[0m\n' $_sf_out[1]
     if test (string split . -- $version)[1] -ge 4
-        history append -- $resume
+        history append -- $_sf_resume
     end
-    eval $resume
-end
-
-function superfind
-    set -l rest $argv
-    set -e rest[1]
-    if test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $rest
-        set -l out (_superfind_run $argv); or return
-        _superfind_resume $out
-        return
-    end
-    if set -q argv[1]
-        _superfind_run $argv
-        return
-    end
-    set -l out (_superfind_run pick); or return
-    _superfind_resume $out
+    eval $_sf_resume
 end
 
 function sfd
@@ -395,8 +368,7 @@ function sfd
 end
 
 function _superfind_widget
-    set -l out (_superfind_run pick)
-    and _superfind_resume $out
+    superfind
     commandline -f repaint
 end
 
