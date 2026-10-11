@@ -911,7 +911,8 @@ class SuperfindBehavior(unittest.TestCase):
 
     def test_a_grok_home_whose_sessions_link_to_another_home_lists_each_session_once(self):
         self.env["GROK_HOME"] = str(self.linked_account("grok", "sessions"))
-        self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1))
+        self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                          grok_reply("Fixed."))
         self.assertEqual(self.rows(), ["fix the build  1d ago · tmp"])
         printed = self.superfind("search", "").split("\t")[0]
         self.assertEqual(self.superfind("command", printed), f"cd /tmp && grok --resume {uid(1)}\n")
