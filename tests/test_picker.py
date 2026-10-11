@@ -1069,8 +1069,7 @@ class EnterOnAnOpenSession(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.home, True)
-        base = "/private/tmp/claude-501" if os.path.isdir("/private/tmp/claude-501") else "/tmp"
-        self.sockets = tempfile.mkdtemp(dir=base, prefix="sfd")
+        self.sockets = tempfile.mkdtemp(dir="/tmp", prefix="sfd")
         self.addCleanup(shutil.rmtree, self.sockets, True)
         self.tmux_env = {k: v for k, v in os.environ.items() if k != "TMUX"}
         self.tmux_env["TMUX_TMPDIR"] = self.sockets
@@ -1132,7 +1131,7 @@ class EnterOnAnOpenSession(unittest.TestCase):
             time.sleep(0.1)
         return int(Path(f"{self.out}.code").read_text()), Path(f"{self.out}.stdout").read_text()
 
-    def test_enter_inside_tmux_hands_the_shell_a_switch_to_the_agents_pane(self):
+    def test_pick_inside_tmux_hands_the_shell_a_switch_to_the_agents_pane(self):
         pane, inside = self.open_elsewhere()
         self.pick(inside)
         self.keys("Enter")

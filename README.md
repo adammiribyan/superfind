@@ -74,7 +74,7 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 |---|---|
 | Type words | Search titles, projects, branches, and the conversations themselves. Every word must match. Titles that match come first, and among sessions that match about as well, newer ones come first. A title word that starts with a word you typed is bold. |
 | Ctrl-R | Ask: find the session you describe, even when it used other words. See [Ask for the session you remember](#ask-for-the-session-you-remember). |
-| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). When an agent already has the session open, Enter doesn't start a second copy. Inside tmux, it switches to the pane the agent runs in, and the hint reads "go to it". Otherwise it says where the session is open and keeps the picker open. |
+| Enter | Resume the selected session: `cd` into its folder and run its agent's resume command (`claude --resume`, `codex resume`, or `grok --resume`). When an agent already has the session open, Enter doesn't start a second copy. If the agent runs in a pane of the tmux server you're in, Enter switches to that pane, and the hint reads "go to it". Otherwise Enter says where the session is open and keeps the picker open, and the hint reads "see where". Codex counts as open only when it was started with `codex resume <id>`. |
 | Tab | Switch the preview between where the session left off and the recent conversation. |
 | ↑ ↓, Ctrl-P Ctrl-N, PgUp PgDn | Move through the list. |
 | Ctrl-/ | Hide or show the preview. Alt-Up and Alt-Down page through it. |
