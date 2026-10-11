@@ -74,7 +74,7 @@ type entry struct {
 
 type repo struct {
 	top, branch string
-	slugs       []string
+	slugs, refs []string
 	log         []entry
 	onDefault   map[string]bool
 	onRemote    map[string]bool
@@ -217,6 +217,7 @@ func load(top string, since float64) *repo {
 				refs = append(refs, local)
 			}
 		}
+		rp.refs = refs
 		listed, _ := git(top, append([]string{"rev-list", bound}, refs...)...)
 		for _, sha := range strings.Fields(listed) {
 			rp.onDefault[sha] = true
@@ -276,7 +277,22 @@ func (rp *repo) bySHA(sha string) (entry, bool) {
 	if err != nil {
 		return entry{}, false
 	}
-	return parseEntry(out)
+	e, ok := parseEntry(out)
+	if ok {
+		rp.reachable(e.SHA)
+	}
+	return e, ok
+}
+
+func (rp *repo) reachable(sha string) {
+	for _, ref := range rp.refs {
+		if _, err := git(rp.top, "merge-base", "--is-ancestor", sha, ref); err == nil {
+			rp.onDefault[sha] = true
+		}
+	}
+	if out, _ := git(rp.top, "for-each-ref", "--contains", sha, "--count=1", "refs/remotes"); out != "" {
+		rp.onRemote[sha] = true
+	}
 }
 
 func (rp *repo) byMessage(at float64, messages []string) (entry, bool) {

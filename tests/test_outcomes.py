@@ -249,6 +249,16 @@ class Outcomes(Blame):
                            codex_reply("Committed."))
         self.assertEqual(self.outcomes(1, "commit", "repo"), [(kept, str(receipts))])
 
+    def test_an_old_commit_named_by_its_hash_is_measured_against_main(self):
+        old = self.now - 60 * 86400
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, old - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, old)
+        self.commit("feat: keep a receipt for each charge", {"receipt.go": "r\n"}, self.now)
+        self.grok_session(uid(1), str(self.work), GROK_SYSTEM, grok_user("refunds"),
+                          grok_call("run_terminal_command", "g1", command="git commit -qam 'feat: refund a charge in full'"),
+                          line(type="tool_result", tool_call_id="g1", content=f"[main {made[:7]}] feat: refund a charge in full"), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage", "landed"), [(made, "merged", made)])
+
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)
         self.claude_at(1, title="Just talk")
