@@ -37,7 +37,7 @@ func TestAClaudeTrailHasItsEditsCommitsAndPullRequests(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:00Z","message":{"content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/w/a.go","old_string":"a","new_string":"b"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"The file has been updated"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:30Z","message":{"content":[{"type":"tool_use","id":"e2","name":"Edit","input":{"file_path":"/w/c.go","old_string":"a","new_string":"b"}}]}}`,
-		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","message":{"content":[{"type":"tool_result","tool_use_id":"e2","is_error":true,"content":"String to replace not found"}]}}`,
+		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","toolUseResult":"Error: String to replace not found","message":{"content":[{"type":"tool_result","tool_use_id":"e2","is_error":true,"content":"String to replace not found"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:40Z","message":{"content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/w/README.md"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:00:41Z","message":{"content":[{"type":"tool_result","tool_use_id":"r1","content":"# Billing"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:50Z","message":{"content":[{"type":"tool_use","id":"r2","name":"Read","input":{"file_path":"/w/missing.md"}}]}}`,

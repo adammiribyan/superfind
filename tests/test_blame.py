@@ -20,12 +20,14 @@ def claude_tool(at, tool_id, name, **given):
 
 
 def claude_result(at, tool_id, text, failed=False):
-    return line(type="user", timestamp=iso(at), message={"role": "user", "content": [
+    error = {"toolUseResult": "Error: " + text} if failed else {}
+    return line(type="user", timestamp=iso(at), **error, message={"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": failed}]})
 
 
 def edited(at, tool_id, path, failed=False):
-    result = line(type="user", timestamp=iso(at + 1), message={"role": "user", "content": [
+    error = {"toolUseResult": "Error: String to replace not found"} if failed else {}
+    result = line(type="user", timestamp=iso(at + 1), **error, message={"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": tool_id, "content": "The file has been updated", "is_error": failed}]})
     return [claude_tool(at, tool_id, "Edit", file_path=str(path), old_string="a", new_string="b"), result]
 
@@ -308,6 +310,15 @@ class Blame(SuperfindBehavior):
         (chat.parent / "summary.json").write_text('{"info": {"cwd": ')
         self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
         self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+
+    def test_a_commit_command_that_failed_does_not_count(self):
+        t = self.now - 3600
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "fix: round charges to the cent"'),
+                       claude_result(t + 1, "b1", "pre-commit hook failed", failed=True), title="Hook failed")
+        self.claude_at(2, claude_tool(t + 60, "b1", "Bash", command='git commit -qm "fix: round charges to the cent"'),
+                       claude_result(t + 61, "b1", "1 file changed"), title="Committed")
+        sha = self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 60)
+        self.assertEqual(self.found(sha[:7]), [(uid(2), "made this commit")])
 
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600

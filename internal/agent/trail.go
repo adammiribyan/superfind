@@ -195,20 +195,30 @@ func claudeParts(path string) []string {
 }
 
 type claudeTrailLine struct {
-	Type          string `json:"type"`
-	Timestamp     string `json:"timestamp"`
-	PRRepository  string `json:"prRepository"`
-	PRNumber      int    `json:"prNumber"`
-	ToolUseResult struct {
-		GitOperation struct {
-			Commit struct {
-				SHA string `json:"sha"`
-			} `json:"commit"`
-		} `json:"gitOperation"`
-	} `json:"toolUseResult"`
-	Message struct {
+	Type          string          `json:"type"`
+	Timestamp     string          `json:"timestamp"`
+	PRRepository  string          `json:"prRepository"`
+	PRNumber      int             `json:"prNumber"`
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Message       struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+type claudeToolResult struct {
+	GitOperation struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	} `json:"gitOperation"`
+}
+
+func committedBy(raw json.RawMessage) string {
+	var r claudeToolResult
+	if bytes.HasPrefix(raw, []byte("{")) && json.Unmarshal(raw, &r) == nil {
+		return r.GitOperation.Commit.SHA
+	}
+	return ""
 }
 
 type claudeTrailBlock struct {
@@ -290,7 +300,7 @@ func claudeTrail(t *Trail) func([]byte) bool {
 					if p.command != "" {
 						output = decodeContent(b.Content).text
 					}
-					t.answered(p, output, l.ToolUseResult.GitOperation.Commit.SHA, b.IsError)
+					t.answered(p, output, committedBy(l.ToolUseResult), b.IsError)
 				}
 			}
 		}
