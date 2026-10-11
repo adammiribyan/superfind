@@ -678,6 +678,42 @@ class SuperfindBehavior(unittest.TestCase):
         literal = self.run_superfind("search", "--", "-h")
         self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
+    def test_a_short_option_is_rejected_instead_of_searched_for(self):
+        self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.superfind("index")
+        for command in ("search", "ask"):
+            for flag in ("-n", "-j", "-flaky build"):
+                short = self.run_superfind(command, "--json", flag, "1")
+                self.assertEqual((short.returncode, short.stdout, short.stderr), (
+                    2, "", f"superfind {command}: there is no {flag} option. To search for it, put -- first: "
+                           f"superfind {command} -- {flag}\n"), (command, flag))
+        self.assertEqual(self.titles("--", "-build"), ["Build fix"])
+        for flag in ("--limit", "-n"):
+            refused = self.run_superfind("last", flag, "1")
+            self.assertEqual((refused.returncode, refused.stdout, refused.stderr),
+                             (2, "", f"superfind last: there is no {flag} option. See superfind help last.\n"), flag)
+
+    def test_limit_keeps_the_first_sessions(self):
+        for n, word in enumerate(("cache", "deploy", "lint")):
+            self.session(f"a{n}", user(f"fix the build {word}"), tool("Bash"), claude("Fixed."), title=f"Build {word}")
+        self.superfind("index")
+        everything = self.titles("build")
+        self.assertEqual(len(everything), 3)
+        self.assertEqual(self.titles("build", "--limit", "2"), everything[:2])
+        first = self.superfind("search", "--json", "--limit=1", "build").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in first], everything[:1])
+        listed = self.superfind("ask", "--limit", "1", "--json").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in listed], ["Build lint"])
+        self.logging_claude(reply="[2, 0, 1]")
+        self.assertEqual([r.split("\t")[4] for r in self.superfind("ask", "--limit", "2", "which", "build").splitlines()],
+                         ["Build cache", "Build lint"])
+        ranked = self.superfind("ask", "--json", "--limit", "2", "which", "build").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in ranked], ["Build cache", "Build lint"])
+        for bad in ("0", "two", "-h", "99999999999999999999", None):
+            result = self.run_superfind("search", "build", *(["--limit", bad] if bad else ["--limit"]))
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (2, "", "superfind search: --limit needs a number of sessions, like --limit 5.\n"), bad)
+
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
@@ -1189,7 +1225,7 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn("superfind help COMMAND", result.stdout, flag)
 
     def test_every_command_explains_itself(self):
-        for command in ("init", "pick", "search", "ask", "preview", "command", "index", "label", "version"):
+        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "version"):
             for args in (("help", command), (command, "--help"), (command, "-h")):
                 result = self.run_superfind(*args)
                 self.assertEqual((result.returncode, result.stderr), (0, ""), args)
@@ -1202,7 +1238,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, search, ask, preview, show, command, index, and label", result.stderr)
+            self.assertIn("init, pick, last, search, ask, preview, show, command, blame, index, and label", result.stderr)
 
     def test_preview_refuses_options_it_does_not_understand(self):
         path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
@@ -1701,7 +1737,13 @@ class SuperfindBehavior(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash"), "needs zsh and bash")
     def test_the_shell_functions_work_when_copied_without_their_variables(self):
-        dump = {"zsh": "typeset -f superfind sfd _superfind_run", "bash": "declare -f superfind sfd _superfind_run _superfind_resume"}
+        dump = {"zsh": "typeset -f superfind sfd _superfind_run _superfind_resume",
+                "bash": "declare -f superfind sfd _superfind_run _superfind_resume"}
+        session = self.session("a1", user("fix the ledger", cwd=str(self.home)), tool("Bash"), claude("Fixed."), title="Ledger fix")
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f"#!/bin/sh\ntouch {self.home}/resumed\n")
+        (stub / "claude").chmod(0o755)
         for shell in ("zsh", "bash"):
             setup = self.superfind("init", shell)
             snapshot = self.home / f"snapshot.{shell}"
@@ -1713,6 +1755,17 @@ class SuperfindBehavior(unittest.TestCase):
                 result = subprocess.run([shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
                                         "HOME": str(self.home)}, capture_output=True, text=True)
                 self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (shell, command, result.stderr))
+            for command in ("superfind last", "sfd last"):
+                result = subprocess.run([shell, "-c", f"source {snapshot}; cd {self.home}; {command}"], env={
+                    "PATH": f"{stub}:/usr/bin:/bin", "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache")},
+                    stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                self.assertEqual((result.returncode, ANSI.sub("", result.stdout)),
+                                 (0, f"Ledger fix\n{self.superfind('command', str(session))}"), (shell, command, result.stderr))
+                self.assertFalse((self.home / "resumed").exists(), (shell, command))
+            strict = subprocess.run([shell, "-c", f"set -u; source {snapshot}; superfind"], env={"PATH": "/usr/bin:/bin",
+                                    "HOME": str(self.home)}, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            self.assertEqual((strict.returncode, strict.stdout), (1, ""), (shell, strict.stderr))
+            self.assertIn("superfind pick needs a terminal", strict.stderr, shell)
             moved = self.home / "bin" / shell
             moved.mkdir(parents=True)
             shutil.copy(SUPERFIND, moved / "superfind")
