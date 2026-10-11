@@ -26,13 +26,14 @@ type Pane struct {
 }
 
 type State struct {
-	PID    int    `json:"pid"`
-	Status string `json:"status"`
-	Tmux   *Pane  `json:"tmux"`
+	PID    int      `json:"pid"`
+	Status string   `json:"status"`
+	Tmux   *Pane    `json:"tmux"`
+	TTY    proc.TTY `json:"-"`
 }
 
 func (s State) Equal(t State) bool {
-	return s.PID == t.PID && s.Status == t.Status && (s.Tmux == t.Tmux || s.Tmux != nil && t.Tmux != nil && *s.Tmux == *t.Tmux)
+	return s.PID == t.PID && s.Status == t.Status && s.TTY == t.TTY && (s.Tmux == t.Tmux || s.Tmux != nil && t.Tmux != nil && *s.Tmux == *t.Tmux)
 }
 
 type Key struct{ Agent, ID string }
@@ -325,6 +326,7 @@ func withPanes(claims map[Key]claim, listed <-chan map[proc.TTY]Pane) map[Key]St
 		if pane, ok := panes[c.tty]; ok {
 			c.state.Tmux = &pane
 		}
+		c.state.TTY = c.tty
 		out[key] = c.state
 	}
 	return out

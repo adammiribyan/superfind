@@ -28,6 +28,12 @@ func needsProcessFacts(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 }
 
+func terminal(t *testing.T) proc.TTY {
+	t.Helper()
+	me, _ := proc.Lookup(os.Getpid())
+	return me.TTY
+}
+
 func started(t *testing.T) time.Time {
 	t.Helper()
 	me, ok := proc.Lookup(os.Getpid())
@@ -203,7 +209,7 @@ func TestFindReportsASessionWhoseClaudeProcessRuns(t *testing.T) {
 		}
 	}
 	got := Find([]agent.Place{{Agent: agent.Named("claude"), Home: home}})
-	if state, ok := got[Key{"claude", sessionID}]; !ok || state != (State{PID: me, Status: "busy"}) {
+	if state, ok := got[Key{"claude", sessionID}]; !ok || state != (State{PID: me, Status: "busy", TTY: terminal(t)}) {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -224,7 +230,7 @@ func TestFindReportsAGrokSessionFromItsActiveList(t *testing.T) {
 	os.WriteFile(filepath.Join(home, "active_sessions.json"), []byte(fmt.Sprintf(
 		`[{"session_id":%q,"pid":%d,"cwd":"/w","opened_at":%q}]`, sessionID, me, time.Now().UTC().Format(time.RFC3339))), 0o600)
 	got := Find([]agent.Place{{Agent: agent.Named("grok"), Home: home}})
-	if state, ok := got[Key{"grok", sessionID}]; !ok || state != (State{PID: me}) {
+	if state, ok := got[Key{"grok", sessionID}]; !ok || state != (State{PID: me, TTY: terminal(t)}) {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -258,7 +264,7 @@ func TestFindReadsOnlyARegistryThatIsAPlainSmallFile(t *testing.T) {
 		t.Fatalf("an oversized pid file was read: %+v", got)
 	}
 	os.WriteFile(filepath.Join(claude, "sessions", strconv.Itoa(me)+".json"), pidJSON(me, sessionID, time.Now(), "busy"), 0o600)
-	if got := Find(places); got[Key{"claude", sessionID}] != (State{PID: me, Status: "busy"}) {
+	if got := Find(places); got[Key{"claude", sessionID}] != (State{PID: me, Status: "busy", TTY: terminal(t)}) {
 		t.Fatalf("a plain pid file was not read: %+v", got)
 	}
 }
