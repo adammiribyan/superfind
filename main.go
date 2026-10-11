@@ -333,6 +333,13 @@ function _superfind_resume
 end
 
 function superfind
+    set -l rest $argv
+    set -e rest[1]
+    if test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $rest
+        set -l out (_superfind_run $argv); or return
+        _superfind_resume $out
+        return
+    end
     if set -q argv[1]
         _superfind_run $argv
         return

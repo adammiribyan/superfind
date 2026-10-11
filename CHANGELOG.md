@@ -7,7 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
-- fish support: `superfind init fish | source` in `~/.config/fish/config.fish` sets up the same `superfind` and `sfd` commands and Ctrl-X c binding as zsh and bash, and `install.sh` adds that line for fish users. It needs fish 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
+- fish support: `superfind init fish | source` in `~/.config/fish/config.fish` sets up the same `superfind` and `sfd` commands, `superfind last`, and Ctrl-X c binding as zsh and bash, and `install.sh` adds that line for fish users. It needs fish 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
 - `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, or in a folder that contains it, as the picker's "here" does; sessions from folders inside it don't count. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
 - `superfind last` resumes the newest session started in the folder you're in, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 
@@ -27,16 +27,13 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
+- A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 - superfind works inside a sandbox that can't write to its cache, such as Codex's `read-only` mode. Every command used to fail there with "locking the index: operation not permitted". Now it reads the index as it was last written and changes nothing in the cache. `search` and `ask` say on stderr when sessions changed since then, because they match the words those sessions held at the last index. `index` and `label` exit 1 there. With no usable index, superfind says to run `superfind index` once outside the sandbox or to set `XDG_CACHE_HOME`.
 - `superfind blame <commit>` prints the session that made a commit, from any agent: the one that ran its `git commit`, then any that opened its pull request. A squash merge leads to the sessions that made the commits it squashed. `blame <file>` lists the sessions that edited a file, or made or opened the pull request of one of its last 30 commits, and `blame <file>:<line>` blames the commit that last changed that line. Each line's summary starts with what the session did, such as `made this commit` or `opened #19`, and `--json` puts it in `match`.
 - Without a TypeSafe key, sessions that ended on an interruption, mid-command, or on a request the agent never answered are marked **unfinished**, and `is:unfinished` finds them. superfind reads this from the session file and sends nothing. **waiting on you** still needs a key, and with a key Jev still decides both labels.
 - The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
 - A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
 - `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
-
-### Fixed
-
-- A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 
 ## [0.10.0] - 2026-10-10
 
