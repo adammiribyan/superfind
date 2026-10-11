@@ -13,7 +13,7 @@ Search by keyword or describe what you remember. Preview where you left off. Pre
 
 ## Install
 
-Works on macOS and Linux with zsh or bash.
+Works on macOS and Linux with zsh, bash, or fish.
 
 ```sh
 curl -fsSL https://superfind.dev/install | sh
@@ -42,7 +42,7 @@ For either, add this to `~/.zshrc`:
 eval "$(superfind init zsh)"
 ```
 
-For bash, add `eval "$(superfind init bash)"` to `~/.bashrc`, or `~/.bash_profile` on macOS. Open a new terminal tab after setup.
+For bash, add `eval "$(superfind init bash)"` to `~/.bashrc`, or `~/.bash_profile` on macOS. For fish, add `superfind init fish | source` to `~/.config/fish/config.fish`. Open a new terminal tab after setup.
 
 To build from source, with Go 1.21 or newer:
 
