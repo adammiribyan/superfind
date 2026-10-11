@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -32,6 +34,7 @@ type PreviewRequest struct {
 	Agent     *agent.Agent
 	Path      string
 	Width     int
+	Height    int
 	Recent    bool
 	Query     string
 	Explained string
@@ -98,10 +101,6 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 	if lastAsk < 0 {
 		lastAsk = lastAny
 	}
-	if lastAsk >= 0 {
-		body = append(body, speaker("user", req.Agent))
-		body = append(body, excerpt(render(turns[lastAsk].Text, width), 10, false, "rest of your message", req.Secondary)...)
-	}
 	reply := ""
 	for i := len(turns) - 1; i >= 0; i-- {
 		if turns[i].Role == "assistant" {
@@ -109,14 +108,51 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 			break
 		}
 	}
-	switch {
-	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].Role == "assistant"):
-		body = append(body, "", speaker("assistant", req.Agent))
-		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.Secondary)...)
-	case lastAsk >= 0:
-		body = append(body, "", req.Secondary+"  No reply yet. "+req.Agent.Label+" stopped before answering."+Reset)
+	var asked, replied []string
+	if lastAsk >= 0 {
+		asked = render(turns[lastAsk].Text, width)
 	}
-	return body, nil
+	answered := reply != "" && (lastAsk < 0 || turns[len(turns)-1].Role == "assistant")
+	if answered {
+		replied = renderEnd(reply, width, 18)
+	}
+	build := func(askLines []string, keepReply int) []string {
+		var body []string
+		if lastAsk >= 0 {
+			body = append(body, speaker("user", req.Agent))
+			body = append(body, askLines...)
+		}
+		switch {
+		case answered:
+			body = append(body, "", speaker("assistant", req.Agent))
+			body = append(body, excerpt(replied, keepReply, true, "earlier in this reply", req.Secondary)...)
+		case lastAsk >= 0:
+			body = append(body, "", req.Secondary+"  No reply yet. "+req.Agent.Label+" stopped before answering."+Reset)
+		}
+		return body
+	}
+	body = build(excerpt(asked, 10, false, "rest of your message", req.Secondary), 18)
+	if req.Height <= 0 || len(body) <= req.Height {
+		return body, nil
+	}
+	speakers := 3
+	if !answered {
+		speakers = 2
+	}
+	room := req.Height - speakers
+	askLines := asked[:min(len(asked), 10, max(room/3, 1))]
+	if len(askLines) < len(asked) {
+		last := len(askLines) - 1
+		askLines = append(append([]string{}, askLines[:last]...), ansi.Truncate(askLines[last], width-1, "")+req.Secondary+"…"+Reset)
+	}
+	return build(askLines, max(min(18, within(replied, room-len(askLines))), 0)), nil
+}
+
+func within(lines []string, rows int) int {
+	if len(lines) <= rows {
+		return rows
+	}
+	return rows - 1
 }
 
 var markdownMarks = regexp.MustCompile("[*`#]+")

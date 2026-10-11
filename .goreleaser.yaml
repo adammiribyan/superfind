@@ -2,6 +2,11 @@ version: 2
 
 project_name: superfind
 
+before:
+  hooks:
+    - go build -o bin/superfind .
+    - python3 scripts/llms.py
+
 builds:
   - id: superfind
     env:
@@ -31,6 +36,9 @@ archives:
 
 checksum:
   name_template: checksums.txt
+  extra_files:
+    - glob: ./llms-full.txt
+    - glob: ./install.sh
 
 homebrew_casks:
   - name: superfind
@@ -49,3 +57,6 @@ release:
     name: superfind
   draft: true
   replace_existing_draft: true
+  extra_files:
+    - glob: ./llms-full.txt
+    - glob: ./install.sh

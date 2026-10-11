@@ -4,13 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: Also run every job on macOS, as a release does
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      macos:
+        type: boolean
+        default: false
 
 concurrency:
-  group: test-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.sha }}
+  group: test-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'push' && !inputs.macos && github.sha || github.ref }}${{ inputs.macos && '-macos' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   changes:
@@ -20,21 +32,38 @@ jobs:
       code: ${{ steps.files.outputs.code }}
     steps:
       - uses: actions/checkout@v4
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push' && !inputs.macos
         with:
-          fetch-depth: 2
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '2' }}
       - id: files
-        name: Does this change touch anything but docs?
+        name: Does this change touch anything but docs and the demo?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS: ${{ inputs.macos }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ] || { echo "::error::expected the pull request's merge commit"; exit 1; }
-          git diff --name-only --no-renames HEAD^1 HEAD > files
+          if [ "$MACOS" = true ] || [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            for head in $(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[] | select(.merged_at != null) | .head.sha'); do
+              passed=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/check-runs?check_name=test%20(ubuntu-latest)" --jq '[.check_runs[] | select(.conclusion == "success")] | length')
+              if [ "$passed" -gt 0 ]; then
+                echo "merged from a pull request whose test (ubuntu-latest) passed on $head: skipping the Go and behavior jobs"
+                echo "code=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+            if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+            git diff --name-only --no-renames "$BEFORE" HEAD > files
+          else
+            [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -eq 3 ] || { echo "::error::expected the pull request's merge commit"; exit 1; }
+            git diff --name-only --no-renames HEAD^1 HEAD > files
+          fi
           echo "$(wc -l < files) files changed"
           status=0
-          code=$(grep -v -E '^([^/]+\.md|docs/.+\.(md|png|jpe?g|gif|svg|webp)|assets/.+\.(png|jpe?g|gif|svg|webp|ico))$' files) || status=$?
+          code=$(grep -v -E '^([^/]+\.md|docs/.+\.(md|png|jpe?g|gif|svg|webp)|assets/.+\.(png|jpe?g|gif|svg|webp|ico)|demo/.+\.(py|tape|gif))$' files) || status=$?
           [ "$status" -le 1 ] || { echo "::error::could not classify the changed files"; exit 1; }
           if [ -s files ] && [ -z "$code" ]; then
-            echo "docs only: skipping the Go and behavior jobs"
+            echo "docs and demo only: skipping the Go and behavior jobs"
             echo "code=false" >> "$GITHUB_OUTPUT"
           else
             echo "code changes:"; echo "$code" | head -20
@@ -47,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     name: checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -56,9 +85,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install tmux and zsh
+      - name: Install tmux, zsh, and fish
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh; else brew install tmux; fi
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh fish; else brew install tmux fish; fi
       - name: Format
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: Vet
@@ -86,7 +115,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
         shard: [1, 2]
     name: race (${{ matrix.os }}, ${{ matrix.shard }}/2)
     runs-on: ${{ matrix.os }}
@@ -96,9 +125,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Install tmux and zsh
+      - name: Install tmux, zsh, and fish
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh; else brew install tmux; fi
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh fish; else brew install tmux fish; fi
       - name: Build under the race detector
         run: go build -race -o bin/superfind .
       - name: Behavior tests under the race detector, shard ${{ matrix.shard }} of 2
@@ -118,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     name: install (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
@@ -141,20 +170,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            skips: ""
-          - os: macos-latest
-            skips: test_superfind.SuperfindBehavior.test_output_that_cannot_be_written_is_an_error
+        include: ${{ fromJSON(inputs.macos && '[{"os":"ubuntu-latest","skips":""},{"os":"macos-latest","skips":"test_superfind.SuperfindBehavior.test_output_that_cannot_be_written_is_an_error"}]' || '[{"os":"ubuntu-latest","skips":""}]') }}
     name: test (${{ matrix.os }})
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: The changes job succeeded
         run: test "${{ needs.changes.result }}" = success
-      - name: Docs-only changes need no tests
+      - name: Docs, demo, and already-tested merges need no tests
         if: needs.changes.outputs.code == 'false'
-        run: echo "docs only; the Go and behavior jobs were skipped"
+        run: echo "docs and demo only, or a merged pull request; the Go and behavior jobs were skipped"
       - name: Every job passed
         if: needs.changes.outputs.code != 'false'
         run: |

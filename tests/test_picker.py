@@ -1,3 +1,4 @@
+import base64
 import http.server
 import json
 import os
@@ -6,6 +7,7 @@ import re
 import pty
 import select
 import shutil
+import signal
 import struct
 import subprocess
 import tempfile
@@ -16,7 +18,7 @@ import unittest
 from pathlib import Path
 
 from test_superfind import (SUPERFIND, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, colors_in,
-                            grok_reply, grok_user, line, tool, uid, user)
+                            grok_reply, grok_user, line, serve, tool, uid, user)
 
 
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
@@ -24,7 +26,7 @@ CELL_GAP = r" {2,}"
 
 
 def tmux(*args):
-    return subprocess.run(["tmux", *args], capture_output=True, text=True)
+    return subprocess.run(["tmux", "-L", "superfind", *args], capture_output=True, text=True)
 
 
 @unittest.skipUnless(shutil.which("tmux"), "the picker tests drive a real terminal through tmux")
@@ -36,6 +38,7 @@ class PickerBehavior(unittest.TestCase):
         self.out = self.home / "out"
         self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
+        self.here = Path("/")
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
                     "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
 
@@ -65,19 +68,24 @@ class PickerBehavior(unittest.TestCase):
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
-        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command, *style)
+        tmux("new-session", "-d", "-s", self.session_name, "-c", str(self.here), "-x", str(width), "-y", str(height), command,
+             *style)
         self.wait_for(header)
 
     def screen(self, *flags):
         return tmux("capture-pane", "-p", *flags, "-t", self.session_name).stdout
 
-    def wait_for(self, text, timeout=5):
+    def until(self, done, timeout=30):
         deadline = time.time() + timeout
-        while time.time() < deadline:
-            if text in self.screen():
-                return
+        while not done():
+            if time.time() > deadline:
+                return False
             time.sleep(0.1)
-        self.fail(f"never saw {text!r} on screen:\n{self.screen()}")
+        return True
+
+    def wait_for(self, text, timeout=30):
+        if not self.until(lambda: text in self.screen(), timeout):
+            self.fail(f"never saw {text!r} on screen:\n{self.screen()}")
 
     def settled_screen(self):
         previous, current = None, self.screen()
@@ -90,12 +98,20 @@ class PickerBehavior(unittest.TestCase):
         tmux("send-keys", "-t", self.session_name, *keys)
         time.sleep(0.4)
 
-    def result(self, timeout=5):
-        deadline = time.time() + timeout
-        while time.time() < deadline and not Path(f"{self.out}.code").exists():
-            time.sleep(0.1)
+    def result(self, timeout=30):
+        self.assertTrue(self.until(Path(f"{self.out}.code").exists, timeout), f"superfind never exited:\n{self.screen()}")
         code = int(Path(f"{self.out}.code").read_text())
         return code, Path(f"{self.out}.stdout").read_text()
+
+    def alive(self, pids):
+        alive = []
+        for pid in map(int, pids.read_text().split()):
+            try:
+                os.kill(pid, 0)
+                alive.append(pid)
+            except ProcessLookupError:
+                pass
+        return alive
 
     def three_sessions(self):
         self.session("old", "Ledger migration", user("migrate the ledger tables to the new schema"), tool("Bash"),
@@ -193,8 +209,8 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual(self.cells(), [["fix the build", "tmp", "codex", "2d"],
                                         ["Ledger migration", "payments-reco…", "claude", "2d"]])
         tmux("resize-window", "-t", self.session_name, "-x", "60", "-y", "24")
-        time.sleep(0.8)
-        self.assertEqual(self.cells(), [["fix the build", "tmp", "2d"], ["Ledger migration", "payments-reco…", "2d"]])
+        narrow = [["fix the build", "tmp", "2d"], ["Ledger migration", "payments-reco…", "2d"]]
+        self.assertTrue(self.until(lambda: self.cells() == narrow), self.screen())
 
     def test_opened_from_a_subfolder_its_sessions_come_first_without_a_project(self):
         for name in ("app/web", "shop"):
@@ -242,8 +258,8 @@ class PickerBehavior(unittest.TestCase):
         self.assertIn("3/3", self.screen())
         self.assertNotIn("codex", self.screen())
         self.keys("is:agent")
+        self.wait_for("2/2")
         self.assertEqual(sorted(self.titles()), ["Nightly eval run", "review the ledger diff"])
-        self.assertIn("2/2", self.screen())
 
     def test_a_picker_holding_only_sessions_another_program_started_says_how_to_see_them(self):
         self.session("sdk", "Nightly eval run", line(type="user", cwd="/tmp", entrypoint="sdk-cli",
@@ -253,7 +269,7 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Only sessions other programs started. Type is:agent to see them.")
         self.assertNotIn("0/", self.screen())
         self.keys("is:agent")
-        self.assertEqual(self.titles(), ["Nightly eval run"])
+        self.assertTrue(self.until(lambda: self.titles() == ["Nightly eval run"]), self.screen())
         self.assertIn("1/1", self.screen())
         self.assertNotIn("Only sessions other programs started", self.screen())
 
@@ -313,9 +329,8 @@ class PickerBehavior(unittest.TestCase):
         selected, unselected = self.ledger_rows()
         self.assertRegex(unselected, r"^  " + blue + r"( |\x1b)")
         self.keys("C-r")
-        time.sleep(1.5)
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration follow-up"]), self.screen())
         self.assertNotIn("Asking", self.screen())
-        self.assertEqual(self.titles(), ["Ledger migration follow-up"])
         self.assertNotRegex(self.list_column(), blue)
 
     def test_matched_words_are_bold_under_no_color(self):
@@ -409,7 +424,7 @@ class PickerBehavior(unittest.TestCase):
         self.env["PATH"] = f"{stub}:/usr/bin:/bin"
         self.open_picker()
         self.keys("is:waiting invoice names", "C-r")
-        self.wait_for("1/3", timeout=10)
+        self.wait_for("1/3")
         status.write_text("{}")
         os.utime(status, (time.time() + 5, time.time() + 5))
         self.wait_for("0/3")
@@ -442,11 +457,10 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.open_picker()
         tmux("resize-window", "-t", self.session_name, "-x", "1", "-y", "1")
-        time.sleep(0.8)
         self.assertEqual(tmux("display", "-p", "-t", self.session_name, "#{window_width}x#{window_height}").stdout, "1x1\n")
         tmux("resize-window", "-t", self.session_name, "-x", "140", "-y", "32")
-        time.sleep(0.8)
-        self.assertEqual(self.titles(), ["Checkout double charge", "Invoice layout", "Ledger migration"])
+        titles = ["Checkout double charge", "Invoice layout", "Ledger migration"]
+        self.assertTrue(self.until(lambda: self.titles() == titles), self.screen())
 
     def test_the_title_handed_to_the_shell_carries_no_terminal_commands(self):
         self.session("esc", "make the \x1b[31mred\x1b[0m title \x1b]0;renamed\x07go \x1b[2Jaway",
@@ -497,8 +511,7 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.wait_for("Added a test that taps Pay twice")
         self.keys("C-_")
-        time.sleep(0.3)
-        self.assertNotIn("Added a test that taps Pay twice", self.screen())
+        self.assertTrue(self.until(lambda: "Added a test that taps Pay twice" not in self.screen()), self.screen())
 
     def test_a_narrow_window_stacks_the_preview_under_the_list(self):
         self.three_sessions()
@@ -551,7 +564,7 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Tab")
         self.wait_for("step 39 of the rollout")
         tmux("resize-window", "-t", self.session_name, "-y", "16")
-        time.sleep(0.6)
+        self.wait_for("Finished rollout step 40.")
         self.assertIn("Finished rollout step 40.", self.settled_screen())
 
     def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
@@ -559,12 +572,16 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
         self.open_picker()
         self.keys("charged")
         self.wait_for("Search failed: the search index couldn't be read")
         self.assertNotIn("No session", self.screen())
+        self.keys(" after:4")
+        time.sleep(0.5)
+        self.assertIn("Search failed: the search index couldn't be read", self.screen())
+        self.assertNotIn("after: takes", self.screen())
 
     def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
         self.three_sessions()
@@ -587,20 +604,61 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
-        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i", "fish": f"{shutil.which('fish')} --no-config -i"}[shell]
         tmux("new-session", "-d", "-s", self.session_name, "-x", "140", "-y", "32", f"env -i {env} {start}")
         time.sleep(0.5)
-        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        setup = f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"'
+        self.keys(setup, "Enter")
         self.keys(*open_keys)
         self.wait_for("Claude sessions")
         self.keys("Down", "Enter")
-        deadline = time.time() + 5
-        while not Path(f"{self.out}.resumed").exists() and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
         self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp --resume mid\n")
         self.keys("pwd", "Enter")
         self.wait_for("Resuming")
         self.assertIn("\n/tmp", self.screen())
+
+    def last_through_shell(self, shell):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.folder_sessions()
+        self.session("shop-new", "Newest elsewhere", user("charge once", cwd=str(self.home / "shop")), tool("Edit"),
+                     claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i", "fish": f"{shutil.which('fish')} --no-config -i"}[shell]
+        tmux("new-session", "-d", "-s", self.session_name, "-x", "160", "-y", "32", f"env -i {env} {start}")
+        time.sleep(0.5)
+        self.keys(f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        self.keys(f"cd {self.home / 'app'}", "Enter")
+        if shell != "fish":
+            self.keys("IFS=:", "Enter")
+        self.keys("superfind last --json", "Enter")
+        self.wait_for('"schema":1')
+        time.sleep(0.5)
+        self.assertNotIn("Resuming", self.screen())
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.keys("clear", "Enter")
+        self.keys("superfind last", "Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
+        folder = self.home / "app"
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume app\n")
+        self.keys("pwd", "Enter")
+        self.wait_for("Resuming")
+        self.assertIn("Resuming Ledger migration", self.screen())
+        self.wait_for(f"\n{folder}\n")
+
+    def test_typing_superfind_last_in_zsh_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("zsh")
+
+    def test_typing_superfind_last_in_bash_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("bash")
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_superfind_last_in_fish_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("fish")
 
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])
@@ -619,6 +677,18 @@ class PickerBehavior(unittest.TestCase):
 
     def test_ctrl_x_c_in_bash_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("bash", ["C-x", "c"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_superfind_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["superfind", "Enter"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd", "Enter"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_ctrl_x_c_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["C-x", "c"])
 
     def test_the_list_appears_while_indexing_and_the_selection_survives_the_refresh(self):
         self.three_sessions()
@@ -702,30 +772,27 @@ class PickerBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Recorder)
         self.three_sessions()
         self.codex_session(uid(1), codex_meta(), codex_user("migrate the ledger index"), codex_call(), codex_output(),
                            codex_reply("Migrated."))
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url)
         self.open_picker(header="─ Sessions ")
         self.keys("agent:codex ledger", "C-r")
-        deadline = time.time() + 10
-        while not received and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(lambda: received), "TypeSafe was never asked")
         cards = [c.split(" | ")[0] for k, c in received[0]["questions"]["which"]["criteria"].items() if k != "none"]
         self.assertEqual((received[0]["state"]["search"], cards), ("ledger", ["migrate the ledger index"]))
 
     def test_clearing_an_ask_stops_it_before_more_session_cards_are_sent(self):
-        received = []
+        received, cleared, answered = [], threading.Event(), threading.Event()
+        self.addCleanup(cleared.set)
 
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 received.append(sent)
-                time.sleep(2)
+                if "which" in sent["questions"]:
+                    cleared.wait(30)
                 answers = {q: {"choice": list(spec["criteria"])[0],
                                "probabilities": {k: 0.5 for k in spec["criteria"]}, "noul": 0.5}
                            for q, spec in sent["questions"].items()}
@@ -737,23 +804,26 @@ class PickerBehavior(unittest.TestCase):
                     self.wfile.write(body)
                 except OSError:
                     pass
+                if "which" in sent["questions"]:
+                    answered.set()
 
             def log_message(self, *args):
                 pass
 
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Slow, threaded=True)
         self.three_sessions()
         status = self.home / ".cache" / "superfind" / "status.json"
         status.parent.mkdir(parents=True, exist_ok=True)
         status.write_text("{}")
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url)
         self.open_picker()
         self.keys("ledger", "C-r")
+        self.assertTrue(self.until(lambda: any("which" in r["questions"] for r in received)), "the ask never asked TypeSafe")
         self.keys("C-u")
-        time.sleep(5)
+        self.assertTrue(self.until(lambda: "Asking" not in self.screen()), self.screen())
+        cleared.set()
+        self.assertTrue(self.until(answered.is_set))
+        self.until(lambda: len([r for r in received if "status" not in r["questions"]]) > 1, timeout=3)
         self.assertEqual([list(r["questions"]) for r in received if "status" not in r["questions"]], [["which"]])
 
     def test_quitting_during_an_ask_stops_claude_and_what_it_started(self):
@@ -768,20 +838,11 @@ class PickerBehavior(unittest.TestCase):
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
         self.keys("ledger", "C-r")
-        deadline = time.time() + 10
-        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(lambda: len(pids.read_text().split() if pids.exists() else []) >= 2), "claude never started")
         self.assertIn("esc stop asking", self.screen())
         self.keys("Escape")
-        time.sleep(0.5)
-        alive = []
-        for pid in map(int, pids.read_text().split()):
-            try:
-                os.kill(pid, 0)
-                alive.append(pid)
-            except ProcessLookupError:
-                pass
-        self.assertEqual(alive, [])
+        self.until(lambda: not self.alive(pids))
+        self.assertEqual(self.alive(pids), [])
         self.assertFalse(Path(f"{self.out}.code").exists())
         self.assertEqual(self.titles(), ["Ledger migration"])
         self.assertNotIn("Asking", self.screen())
@@ -818,20 +879,11 @@ class PickerBehavior(unittest.TestCase):
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
         self.keys("ledger", "C-r")
-        deadline = time.time() + 10
-        while len(pids.read_text().split() if pids.exists() else []) < 2 and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(lambda: len(pids.read_text().split() if pids.exists() else []) >= 2), "claude never started")
         os.kill(int(Path(f"{pids}.parent").read_text()), 2)
         self.result()
-        time.sleep(0.5)
-        alive = []
-        for pid in map(int, pids.read_text().split()):
-            try:
-                os.kill(pid, 0)
-                alive.append(pid)
-            except ProcessLookupError:
-                pass
-        self.assertEqual(alive, [])
+        self.until(lambda: not self.alive(pids))
+        self.assertEqual(self.alive(pids), [])
 
     def test_a_damaged_index_found_while_typing_is_removed_only_under_the_index_lock(self):
         import sqlite3
@@ -857,10 +909,13 @@ class PickerBehavior(unittest.TestCase):
     def test_damage_found_during_an_ask_does_not_crash_the_picker(self):
         import sqlite3
 
+        asked = threading.Event()
+
         class Slow(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if "which" in sent["questions"] and "s0" in sent["questions"]["which"]["criteria"]:
+                    asked.set()
                     time.sleep(3)
                 answers = {q: {"choice": list(spec.get("criteria", {"x": 1}))[0], "noul": 0.9,
                                "probabilities": {k: (0.9 if k == "s0" else 0.01) for k in spec.get("criteria", {})}}
@@ -874,15 +929,12 @@ class PickerBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Slow)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Slow, threaded=True)
         self.three_sessions()
         status = self.home / ".cache" / "superfind" / "status.json"
         status.parent.mkdir(parents=True, exist_ok=True)
         status.write_text("{}")
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url)
         self.open_picker()
         tmux("set-buffer", "-b", self.session_name, "charged")
         tmux("paste-buffer", "-p", "-d", "-b", self.session_name, "-t", self.session_name)
@@ -892,7 +944,7 @@ class PickerBehavior(unittest.TestCase):
         db.commit()
         db.close()
         self.keys("C-r")
-        time.sleep(0.5)
+        self.assertTrue(self.until(asked.is_set), "the ask never asked TypeSafe")
         status.write_text("{}")
         os.utime(status, (time.time() + 5, time.time() + 5))
         time.sleep(5)
@@ -917,14 +969,65 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "C-r")
-        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask failed: Claude Code didn't answer.")
         self.assertFalse(Path(f"{self.out}.code").exists())
 
     def test_alt_enter_also_asks_in_terminals_that_send_it(self):
         self.three_sessions()
         self.open_picker()
         self.keys("where did we stop double charges", "M-Enter")
-        self.wait_for("Ask failed: Claude Code didn't answer.", timeout=10)
+        self.wait_for("Ask failed: Claude Code didn't answer.")
+
+    def folder_sessions(self):
+        for name in ("app/sub", "shop"):
+            (self.home / name).mkdir(parents=True)
+        self.session("app", "Ledger migration", user("migrate the ledger", cwd=str(self.home / "app"), branch="main"),
+                     tool("Bash"), claude("Done."))
+        self.session("sub", "Invoice layout", user("wrap names", cwd=str(self.home / "app" / "sub"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("shop", "Checkout double charge", user("charge once", cwd=str(self.home / "shop"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("dotfiles", "Dotfiles cleanup", user("tidy", cwd=str(self.home), branch="main"), tool("Bash"),
+                     claude("Done."))
+        self.session("old", "Old ledger fix", user("fix the ledger", cwd=str(self.home / "app"), branch="fix"),
+                     tool("Bash"), claude("Done."))
+        os.utime(self.projects / "old.jsonl", (time.time() - 10 * 86400, time.time() - 10 * 86400))
+        self.here = self.home / "app"
+        self.env["PWD"] = str(self.here)
+
+    def test_filters_in_the_picker_list_what_search_prints_in_the_same_order(self):
+        self.folder_sessions()
+        self.open_picker()
+        for query in ("in:here", "in:here branch:FIX", "branch:fix after:5d", "in:here ledger"):
+            printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, cwd=self.here,
+                                     capture_output=True, text=True, check=True).stdout
+            want = [row.split("\t")[4] for row in printed.splitlines()]
+            self.keys("C-u", query)
+            self.assertTrue(self.until(lambda: self.titles() == want), (query, want, self.screen()))
+        self.keys("C-u", "in:here")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration", "Old ledger fix"]), self.screen())
+
+    def test_a_half_typed_filter_keeps_the_list_says_what_it_takes_and_cannot_ask(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.out}.asked\necho '{{\"result\": \"[0]\"}}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.three_sessions()
+        self.open_picker()
+        self.keys("ledger after:4")
+        self.wait_for("after: takes a date like 2026-10-09, yesterday, or 3d.")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
+        self.keys("C-r")
+        time.sleep(1)
+        self.assertFalse(Path(f"{self.out}.asked").exists())
+        self.assertIn("after: takes a date", self.screen())
+        self.keys(*["BSpace"] * 7, "in:")
+        self.wait_for("in: takes here, as in in:here.")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
+        self.keys(*["BSpace"] * 3, "after:4d")
+        self.assertTrue(self.until(lambda: "takes" not in self.screen()), self.screen())
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
 
 
     def explaining_typesafe(self):
@@ -954,11 +1057,7 @@ class PickerBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), TypeSafe)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=serve(self, TypeSafe))
         return received
 
     def test_explanation_passages_cover_every_message_and_all_of_a_long_one(self):
@@ -969,9 +1068,7 @@ class PickerBehavior(unittest.TestCase):
                      claude(long_reply))
         self.open_picker()
         self.keys("where did we migrate the ledger", "C-r")
-        deadline = time.time() + 10
-        while not received and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(lambda: received), "TypeSafe was never asked")
         passages = " ".join(received[0][k] for k in received[0] if k != "none")
         for said in ("I changed ledger.go", "now add a test for the ledger", "word000", "word124"):
             self.assertIn(said, passages)
@@ -984,9 +1081,7 @@ class PickerBehavior(unittest.TestCase):
                      claude("\n\n".join(paragraphs)))
         self.open_picker()
         self.keys("where did we migrate the ledger", "C-r")
-        deadline = time.time() + 10
-        while not received and time.time() < deadline:
-            time.sleep(0.1)
+        self.assertTrue(self.until(lambda: received), "TypeSafe was never asked")
         passages = [received[0][k] for k in received[0] if k != "none"]
         self.assertEqual(passages, ["migrate the ledger " + paragraphs[0] + " " + paragraphs[1], paragraphs[2], paragraphs[3]])
         self.assertEqual(list(received[0]), [f"p{i}" for i in range(len(received[0]) - 1)] + ["none"])
@@ -994,6 +1089,7 @@ class PickerBehavior(unittest.TestCase):
 
 class PtyPicker(unittest.TestCase):
     EXTRA_ENV = {}
+    INDEX = True
 
     def setUp(self):
         home = Path(tempfile.mkdtemp()).resolve()
@@ -1004,8 +1100,13 @@ class PtyPicker(unittest.TestCase):
                                           claude("Migrated.") + "\n" + line(type="ai-title", aiTitle="Ledger") + "\n")
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
                "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", **self.EXTRA_ENV}
-        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        if self.INDEX:
+            subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        else:
+            for n in range(400):
+                (projects / f"s{n}.jsonl").write_text(user(f"reconcile ledger batch {n} " * 2000) + "\n" + claude("Done.") + "\n")
         pid, self.terminal = pty.fork()
+        self.pid = pid
         if pid == 0:
             fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
             os.execve(str(SUPERFIND), [str(SUPERFIND), "pick"], env)
@@ -1031,19 +1132,27 @@ class PtyPicker(unittest.TestCase):
 
 class PickerColors(PtyPicker):
     COLORS = b"\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\\x1b]10;rgb:dddd/dddd/dddd\x1b\\"
+    DEVICE = b"\x1b[?62;22c"
     TINT = b"48;2;46;63;82"
 
     def test_colors_that_arrive_after_the_first_paint_still_theme_the_picker(self):
-        before = self.read(until=b"\x1b[7m")
-        self.assertIn(b"\x1b]11;?", before)
-        self.assertIn(b"\x1b[7m \x1b[1mLedger", before)
-        time.sleep(0.6)
+        asked = self.read(until=b"\x1b[c")
+        self.assertIn(b"\x1b[c", asked)
+        self.assertLess(max(asked.index(b"\x1b]10;?"), asked.index(b"\x1b]11;?")), asked.index(b"\x1b[c"))
+        os.write(self.terminal, self.DEVICE)
+        first = asked + self.read(until=b"\x1b[7m")
+        self.assertIn(b"\x1b[7m \x1b[1mLedger", first)
         os.write(self.terminal, self.COLORS)
-        self.assertIn(self.TINT, self.read(until=self.TINT))
+        themed = self.read(until=self.TINT)
+        self.assertIn(self.TINT, themed)
+        self.assertNotIn(b"62;22c", first + themed)
+
+    def test_a_terminal_that_answers_no_queries_still_gets_the_picker(self):
+        self.assertIn(b"\x1b[7m \x1b[1mLedger", self.read(until=b"\x1b[7m"))
 
     def test_the_picker_appears_in_one_finished_frame_once_colors_are_known(self):
         asked = self.read(until=b"\x1b]11;?")
-        os.write(self.terminal, self.COLORS)
+        os.write(self.terminal, self.COLORS + self.DEVICE)
         shown = asked + self.read(until=b"Migrated.")
         self.assertIn(self.TINT, shown)
         self.assertNotIn(b"Ledger", asked)
@@ -1062,9 +1171,105 @@ class PickerWithoutColor(PtyPicker):
         self.assertIn(b"Ledger", first)
         self.assertIn(b"\x1b[7m", first)
         self.assertNotIn(b"\x1b]11;?", first)
+        self.assertNotIn(b"\x1b[c", first)
         self.assertEqual(colors_in(first), [])
 
-@unittest.skipUnless(shutil.which("tmux"), "an open session's pane is read from tmux")
+def working(title):
+    return b"\x1b]7501;state=working:app=superfind:title=" + base64.b64encode(title.encode()) + b"\x07"
+
+
+class PickerStatus(PtyPicker):
+    WORKING = working("Asking")
+    CLEAR = b"\x1b]7501;state=clear\x07"
+
+    def setUp(self):
+        stub = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, stub, ignore_errors=True)
+        self.release = stub / "release"
+        (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\n"
+                                     f"while [ ! -e '{self.release}' ]; do sleep 0.05; done\n"
+                                     "echo '{\"result\": \"[0]\"}'\n")
+        (stub / "claude").chmod(0o755)
+        self.EXTRA_ENV = {"PATH": f"{stub}:/usr/bin:/bin"}
+        super().setUp()
+
+    def ask(self):
+        seen = self.read(until=b"Migrated.")
+        os.write(self.terminal, b"ledger\x12")
+        seen += self.read(until=self.WORKING)
+        self.assertIn(self.WORKING, seen, "asking never reported working")
+        return seen
+
+    def last_status(self, seen):
+        found = re.findall(rb"\x1b\]7501;[^\x07]*\x07", seen)
+        return found[-1] if found else b""
+
+    def rest(self):
+        seen = self.read(seconds=5)
+        os.close(self.terminal)
+        self.terminal = os.open("/dev/null", os.O_RDWR)
+        return seen
+
+
+class AskStatus(PickerStatus):
+    def test_asking_reports_working_until_the_answer_arrives(self):
+        seen = self.ask()
+        seen += self.read(seconds=1)
+        self.assertNotIn(self.CLEAR, seen, "the status was cleared while the ask was still running")
+        self.release.touch()
+        seen += self.read(until=self.CLEAR)
+        self.assertEqual(self.last_status(seen), self.CLEAR)
+
+
+class StoppedAskStatus(PickerStatus):
+
+    def test_stopping_an_ask_with_esc_clears_its_status(self):
+        self.ask()
+        os.write(self.terminal, b"\x1b")
+        self.assertEqual(self.last_status(self.read(until=self.CLEAR)), self.CLEAR)
+
+    def test_ctrl_c_while_asking_clears_the_status_before_exit(self):
+        self.ask()
+        os.write(self.terminal, b"\x03")
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+    def test_sigterm_while_asking_clears_the_status_before_exit(self):
+        self.ask()
+        os.kill(self.pid, signal.SIGTERM)
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+    def test_choosing_while_asking_clears_the_status_before_the_agent_starts(self):
+        self.ask()
+        os.write(self.terminal, b"\r")
+        self.assertEqual(self.last_status(self.rest()), self.CLEAR)
+
+
+class IndexingStatus(PtyPicker):
+    INDEX = False
+
+    def test_the_first_index_reports_working_until_it_finishes(self):
+        os.write(self.terminal, PickerColors.COLORS + PickerColors.DEVICE)
+        seen = self.read(until=working("Indexing"), seconds=20)
+        self.assertIn(working("Indexing"), seen, "the first index never reported working")
+        if PickerStatus.CLEAR not in seen.split(working("Indexing"))[-1]:
+            seen += self.read(until=PickerStatus.CLEAR, seconds=60)
+        self.assertEqual(PickerStatus.last_status(self, seen), PickerStatus.CLEAR)
+
+
+class QuietPicker(PtyPicker):
+    def test_a_picker_that_does_no_work_sends_no_status(self):
+        seen = self.read(until=b"Migrated.")
+        os.write(self.terminal, b"\x03")
+        seen += self.read(seconds=2)
+        os.close(self.terminal)
+        self.terminal = os.open("/dev/null", os.O_RDWR)
+        self.assertFalse(b"7501" in seen, "a picker that did no work sent a status")
+
+
+class QuietPickerWithoutColor(QuietPicker):
+    EXTRA_ENV = {"NO_COLOR": "1"}
+
+
 class EnterOnAnOpenSession(unittest.TestCase):
     def setUp(self):
         self.home = Path(tempfile.mkdtemp()).resolve()

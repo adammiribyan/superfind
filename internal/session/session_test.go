@@ -1,10 +1,17 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTheCacheStaysPutWithoutHOME(t *testing.T) {
@@ -89,5 +96,135 @@ func TestSearchBandsIgnoreHitsTheFiltersLeftOut(t *testing.T) {
 	want := []string{"b-close-new", "a-strong-old"}
 	if got := banded(hits, mtime); !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func clusters(s string) []string {
+	var out []string
+	for s != "" {
+		cluster, _ := ansi.FirstGraphemeCluster(s, ansi.GraphemeWidth)
+		out = append(out, cluster)
+		s = s[len(cluster):]
+	}
+	return out
+}
+
+func FuzzClipKeepsTheStartWithinTheLimit(f *testing.F) {
+	for _, seed := range []struct {
+		s string
+		n int
+	}{{"", 1}, {"fix the login bug", 10}, {"fix", 3}, {"fixed", 4}, {"  spaced\tout\n\ntext  ", 8}, {"e\u0301ab", 2},
+		{"👍🏽👨‍👩‍👧🇫🇷 emoji", 3}, {"🇫🇷🇩🇪", 1}, {strings.Repeat("漢", 300), 200}} {
+		f.Add(seed.s, seed.n)
+	}
+	f.Fuzz(func(t *testing.T, s string, n int) {
+		if n < 1 || n > 500 || !utf8.ValidString(s) {
+			t.Skip()
+		}
+		flat := strings.Join(strings.Fields(s), " ")
+		want := flat
+		if all := clusters(flat); len(all) > n {
+			want = strings.Join(all[:n-1], "") + "…"
+		}
+		if got := clip(s, n); got != want {
+			t.Fatalf("clip(%q, %d) = %q, want %q", s, n, got, want)
+		}
+	})
+}
+
+func FuzzAnySearchTextIsAQueryTheIndexAccepts(f *testing.F) {
+	for _, seed := range []string{"login bug", `"quoted" AND (x OR y) NEAR*`, "title:x", "a b c", "ﬁx straße", "١٢٣ 漢字", "x^y -z +w", "_"} {
+		f.Add(seed)
+	}
+	f.Setenv("XDG_CACHE_HOME", f.TempDir())
+	db, err := OpenSearch()
+	if err != nil {
+		f.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO docs (path, title, body) VALUES ('/a', 'fix the login bug', 'we changed the session cookie')"); err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, query string) {
+		if _, _, err := matches(db, query); err != nil {
+			t.Fatalf("searching for %q (%s) failed: %v", query, joined(phrasesOf(query), " "), err)
+		}
+	})
+}
+
+func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	name := func(r Row) string { return strings.TrimSuffix(filepath.Base(r.Path), ".jsonl") }
+	row := func(file string, ending agent.Event, ago time.Duration, change func(*Session)) Row {
+		path := filepath.Join(dir, file+".jsonl")
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-ago)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+		_, mtime, err := agent.Named("claude").Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := Session{Prompts: 5, Words: 900, ToolCalls: 3, Ending: ending, Mtime: mtime}
+		if change != nil {
+			change(&s)
+		}
+		return Row{Session: s, Agent: agent.Named("claude"), Path: path}
+	}
+	day := 24 * time.Hour
+	rows := []Row{
+		row("interrupted", agent.Interrupted, day, nil),
+		row("mid-command", agent.CalledTool, day, nil),
+		row("unanswered", agent.Prompted, day, nil),
+		row("replied", agent.Replied, day, nil),
+		row("throwaway", agent.Interrupted, day, func(s *Session) { *s = Session{Prompts: 1, Words: 3, Ending: agent.Interrupted} }),
+		row("by-agent", agent.Interrupted, day, func(s *Session) { s.ByAgent = true }),
+		row("active", agent.Interrupted, 30*time.Second, nil),
+		row("stale", agent.Interrupted, 15*day, nil),
+		row("changed", agent.Interrupted, day, func(s *Session) { s.Mtime -= 60 }),
+		row("jev-finished", agent.Interrupted, day, nil),
+		row("jev-waiting", agent.Replied, day, nil),
+		row("jev-unsure", agent.Interrupted, day, nil),
+		row("jev-earlier", agent.Interrupted, day, nil),
+	}
+	verdicts := map[string]statusEntry{}
+	for _, r := range rows[len(rows)-4:] {
+		id, _, err := r.Agent.Stat(r.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verdicts[r.Path] = statusEntry{id, strings.TrimPrefix(name(r), "jev-"), 0.95}
+	}
+	unsure, earlier := rows[len(rows)-2].Path, rows[len(rows)-1].Path
+	verdicts[unsure] = statusEntry{verdicts[unsure].FileID, "waiting", 0.6}
+	verdicts[earlier] = statusEntry{agent.FileID{ModNanos: 1, Size: 1}, "finished", 0.95}
+	data, _ := json.Marshal(verdicts)
+	os.MkdirAll(CacheDir(), 0o755)
+	if err := os.WriteFile(CachePath("status.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]map[string]string{
+		"": {
+			"interrupted": "unfinished", "mid-command": "unfinished", "unanswered": "unfinished", "replied": "",
+			"throwaway": "", "by-agent": "", "active": "", "stale": "", "changed": "",
+			"jev-finished": "", "jev-waiting": "waiting on you", "jev-unsure": "", "jev-earlier": "unfinished",
+		},
+		"key": {
+			"interrupted": "", "mid-command": "", "unanswered": "", "replied": "",
+			"throwaway": "", "by-agent": "", "active": "", "stale": "", "changed": "",
+			"jev-finished": "", "jev-waiting": "waiting on you", "jev-unsure": "", "jev-earlier": "",
+		},
+	} {
+		t.Setenv("TYPESAFE_API_KEY", key)
+		for _, r := range Annotate(rows, nil) {
+			if r.Status != want[name(r)] {
+				t.Errorf("with key %q, the %s session is labeled %q, want %q", key, name(r), r.Status, want[name(r)])
+			}
+		}
 	}
 }
