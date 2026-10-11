@@ -36,9 +36,9 @@ func TestUnknownIsAndAgentValuesAreDroppedButRemembered(t *testing.T) {
 		t.Fatalf("got %+v", q)
 	}
 	cases := map[string]string{
-		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, or agent.",
+		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, agent, or open.",
 		"agent:codx is:bogus": "can't read agent:codx. agent: takes claude, codex, or grok.",
-		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, or agent.",
+		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, agent, or open.",
 	}
 	for query, want := range cases {
 		if q := Parse(query); q.Unknown == nil || q.Unknown.Error() != want || q.Problem != nil {

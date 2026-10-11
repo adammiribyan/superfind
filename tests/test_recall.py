@@ -247,8 +247,8 @@ class Recall(SuperfindBehavior):
     def test_last_refuses_an_agent_or_is_value_it_does_not_know_instead_of_dropping_it(self):
         self.worked("app", self.app)
         cases = {("agent:codx",): "can't read agent:codx. agent: takes claude, codex, or grok.",
-                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, or agent.",
-                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, or agent."}
+                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, agent, or open.",
+                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, agent, or open."}
         for args, sentence in cases.items():
             self.assertEqual(self.last(*args), (2, "", f"superfind last: {sentence}\n"), args)
         self.assertEqual(self.ids("agent:bogus", "ledger"), ["app"])
