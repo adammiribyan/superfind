@@ -6,7 +6,6 @@
 </p>
 
 <p align="center">The session picker for your coding agents.</p>
-<p align="center">Claude Code · Codex · Grok</p>
 
 Search by keyword or describe what you remember. Preview where you left off. Press Enter to resume with the original agent in the session's project folder, right in your current terminal.
 
