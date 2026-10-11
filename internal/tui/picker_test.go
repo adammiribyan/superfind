@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -343,5 +344,20 @@ func TestANarrowFooterAfterAskKeepsTheWayBackToSearch(t *testing.T) {
 	m.askedFor = "ledger"
 	if got := ansi.Strip(m.footer(24)); got != " esc back to search" {
 		t.Fatalf("the footer after ask at 24 columns reads %q", got)
+	}
+}
+
+func TestATerminalThatAnswersWithoutItsColorsGetsThePickerWithoutWaiting(t *testing.T) {
+	m := testPicker(t)
+	next, load := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	for load != nil {
+		next, load = next.Update(load())
+	}
+	if view := next.View().Content; view != "" {
+		t.Fatalf("the picker appeared before the terminal answered:\n%s", view)
+	}
+	next, _ = next.Update(uv.PrimaryDeviceAttributesEvent{62, 22})
+	if view := next.View().Content; !strings.Contains(view, "Ledger migration") {
+		t.Fatalf("after the terminal's device attributes, the picker showed %q, want the list", view)
 	}
 }

@@ -1,8 +1,11 @@
 package show
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
 )
@@ -44,6 +47,25 @@ func TestMaskReplacesEachKindOfSecret(t *testing.T) {
 		{"user=a&password=pa55word&next=1", "user=a&password=[masked secret]&next=1"},
 		{"password: hunter2", "password: [masked secret]"},
 		{"passphrase: correcthorsebatterystaple", "passphrase: [masked secret]"},
+	}
+	for _, c := range cases {
+		if got := Mask(c.in); got != c.want {
+			t.Errorf("Mask(%q)\n got %q\nwant %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMaskHidesAKeyWholeEvenWhenPartOfItLooksLikeAnotherKey(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"xoxb-AKIABBBBBBBBBBBBBBBB-abcdefghij", "[masked Slack token]"},
+		{"AIza-AKIABBBBBBBBBBBBBBBB-abcdefghijklm", "[masked Google API key]"},
+		{"Authorization: Bearer abc1-AKIABBBBBBBBBBBBBBBB-tokenrest", "Authorization: Bearer [masked bearer token]"},
+		{"Authorization: Bearer sk-ant-" + strings.Repeat("a", 30), "Authorization: Bearer [masked Anthropic key]"},
+		{"AKIABBBBBBBBBBBBBBBB then xoxb-1234567890-abcdefghij", "[masked AWS access key] then [masked Slack token]"},
+		{"password=-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "password=[masked private key]"},
+		{"xoxb-abcdefghij-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "[masked Slack token][masked private key]"},
+		{"sk-proj-" + strings.Repeat("B", 40) + "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn", "[masked OpenAI key][masked private key]"},
+		{"https://ghp_" + strings.Repeat("A", 36) + ":hunter22@example.com", "https://[masked GitHub token]:[masked password in a URL]@example.com"},
 	}
 	for _, c := range cases {
 		if got := Mask(c.in); got != c.want {
@@ -178,4 +200,83 @@ func TestSelectMasksAndStripsControlCharactersBeforeMeasuring(t *testing.T) {
 	if got := c.Turns[0].Text; got != "token [masked GitHub token] red" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+type keyFormat struct {
+	prefix, alphabet string
+	least, exact     int
+	endsAtWord       bool
+}
+
+const (
+	alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	urlSafe      = alphanumeric + "_-"
+)
+
+var keyFormats = []keyFormat{
+	{prefix: "sk-ant-api03-", alphabet: urlSafe, least: 20},
+	{prefix: "sk-proj-", alphabet: urlSafe, least: 32},
+	{prefix: "sk-", alphabet: urlSafe, least: 32},
+	{prefix: "xai-", alphabet: alphanumeric, least: 32},
+	{prefix: "ghp_", alphabet: alphanumeric, least: 36},
+	{prefix: "github_pat_", alphabet: alphanumeric + "_", least: 40},
+	{prefix: "AKIA", alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", exact: 16, endsAtWord: true},
+	{prefix: "xoxb-", alphabet: alphanumeric + "-", least: 10},
+	{prefix: "sk_live_", alphabet: alphanumeric, least: 16},
+	{prefix: "AIza", alphabet: urlSafe, exact: 35},
+	{prefix: "phc_", alphabet: alphanumeric, least: 30},
+}
+
+func FuzzMaskHidesEveryKeyWrittenAnywhere(f *testing.F) {
+	var every []byte
+	for _, format := range keyFormats {
+		every = append(every, byte(len(format.alphabet)-1))
+	}
+	for i := range 256 {
+		every = append(every, byte(i))
+	}
+	for _, before := range []string{"key ", "export TOKEN=", `"api_key": "`, "Authorization: Bearer ", "password=", "(", "\n", "", "https://"} {
+		for _, after := range []string{" done", "_x", "-", "", "\"", "x", ":hunter22@example.com"} {
+			for kind := range keyFormats {
+				f.Add(before, after, uint8(kind), uint8(len(after)), every)
+			}
+		}
+	}
+	f.Fuzz(func(t *testing.T, before, after string, kind, extra uint8, body []byte) {
+		format := keyFormats[int(kind)%len(keyFormats)]
+		length := format.exact
+		if length == 0 {
+			length = format.least + int(extra)%40
+		}
+		key := []byte(format.prefix)
+		for i := range length {
+			b := byte(i)
+			if len(body) > 0 {
+				b = body[i%len(body)] + byte(i/len(body))
+			}
+			key = append(key, format.alphabet[int(b)%len(format.alphabet)])
+		}
+		if word(lastRune(before)) || format.endsAtWord && word(firstRune(after)) || strings.Contains(before+after, "\x00") {
+			t.Skip()
+		}
+		out, last, tail := maskLabel.ReplaceAllString(Mask(before+string(key)+after), "\x00"), string(key[len(key)-1:]), string(key[len(key)-6:])
+		if after == "" && strings.HasSuffix(out, last) || after != "" && strings.Contains(out, last+after) && !strings.Contains(before+after, last+after) ||
+			strings.Contains(out, tail) && !strings.Contains(before+after, tail) {
+			t.Fatalf("Mask(%q) = %q still shows the end of the key", before+string(key)+after, out)
+		}
+	})
+}
+
+var maskLabel = regexp.MustCompile(`\[masked [^\]]*\]`)
+
+func word(r rune) bool { return r == '_' || r < 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r)) }
+
+func lastRune(s string) rune {
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return r
+}
+
+func firstRune(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
 }

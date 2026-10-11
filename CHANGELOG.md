@@ -18,6 +18,12 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - When nothing in the preview matched your search, it no longer leaves two blank lines above "you", so the conversation gets one more line.
 - When the footer is too narrow for every key, it leaves keys out in this order: "tab view", "ctrl-u clear search", "ctrl-r ask", "enter resume". "esc" goes last. A message too wide for the list leaves out its later sentences before anything else is cut.
 
+### Fixed
+
+- The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
+- A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
+- `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
+
 ## [0.10.0] - 2026-10-10
 
 ### Added
