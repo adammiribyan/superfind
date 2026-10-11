@@ -91,6 +91,8 @@ If you installed with Homebrew or Go, it tells you the command to run instead.
 
 Keyword search runs on your machine, and superfind never changes your session files. Search by description sends your query and parts of your sessions to Claude Code's model, or to TypeSafe if you set a key. With a TypeSafe key, superfind also sends the end of recent sessions to TypeSafe to label the ones waiting on you.
 
+Once a day, when you open the picker, superfind checks for a new version and sends a random install ID, its version, your OS and CPU type, how it was installed, and whether an upgrade you ran worked. Nothing from your sessions is sent. `superfind telemetry off` turns it off, and `superfind help telemetry` shows exactly what is sent.
+
 ---
 
 [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md)

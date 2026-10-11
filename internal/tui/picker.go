@@ -199,6 +199,7 @@ type picker struct {
 	explained   map[string]string
 	message     string
 	notice      string
+	feed        *news.Feed
 	confirming  string
 	inTmux      bool
 	focus       func(open.State) bool
@@ -624,7 +625,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterMove()
 	case labelsTick:
 		next := tea.Batch(tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }), findHeld)
-		if line, changed := news.Poll(); changed {
+		if line, changed := m.feed.Poll(); changed {
 			m.notice = line
 		}
 		info, err := os.Stat(store.CachePath("status.json"))
@@ -1113,7 +1114,8 @@ func Pick(b news.Build) (*session.Row, error) {
 		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
 	}
 	start := newPicker(session.CachedRows(), db, problem)
-	start.notice = news.Open(b)
+	start.feed = news.Open(b)
+	start.notice = start.feed.Line()
 	final, err := tea.NewProgram(start, options...).Run()
 	start.asks.stop()
 	stopped := make(chan struct{})

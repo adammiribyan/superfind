@@ -2,6 +2,12 @@ import { handle } from "../src/index.ts";
 
 export const ID = "0f8e2c1a-5b7d-4e3f-9a21-6c4d8b0e7f12";
 export const GOOD = { schema: 1, id: ID, version: "0.12.0", os: "darwin", arch: "arm64", method: "script", events: [] };
+export const UPGRADED = {
+  name: "upgraded",
+  id: "7c2d1f0e-9a8b-4c6d-8e5f-0a1b2c3d4e5f",
+  hours_ago: 3,
+  props: { method: "script", outcome: "installed" },
+};
 
 export interface Sent {
   url: string;

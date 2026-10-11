@@ -1,6 +1,8 @@
 const OSES = ["darwin", "linux"] as const;
 const ARCHES = ["amd64", "arm64"] as const;
 const METHODS = ["script", "homebrew", "go", "checkout", "unknown"] as const;
+const OUTCOMES = ["installed", "unchanged", "failed"] as const;
+const MAX_HOURS_AGO = 24 * 366;
 
 export type OS = (typeof OSES)[number];
 export type Arch = (typeof ARCHES)[number];
@@ -8,6 +10,8 @@ export type Method = (typeof METHODS)[number];
 
 export interface Event {
   name: string;
+  id: string;
+  hours_ago: number;
   props: Record<string, string | number | boolean>;
 }
 
@@ -27,8 +31,11 @@ export interface Reply {
   retry_after_s?: number;
 }
 
-type EventRule = (raw: Record<string, unknown>) => Event["props"] | undefined;
-export const EVENTS: Record<string, EventRule> = {};
+type EventRule = (props: Record<string, unknown>) => Event["props"] | undefined;
+export const EVENTS: Record<string, EventRule> = {
+  upgraded: ({ method, outcome }) =>
+    oneOf(method, METHODS) && oneOf(outcome, OUTCOMES) ? { method, outcome } : undefined,
+};
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const VERSION = /^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
@@ -60,9 +67,11 @@ export function parseCheckin(text: string): { checkin: Checkin } | { error: stri
   if (!Array.isArray(rawEvents)) return { error: "events is not a list" };
   const events: Event[] = [];
   for (const e of rawEvents) {
-    if (!isObject(e) || typeof e.name !== "string" || !Object.hasOwn(EVENTS, e.name)) continue;
-    const props = EVENTS[e.name](e);
-    if (props) events.push({ name: e.name, props });
+    if (!isObject(e) || typeof e.name !== "string" || !Object.hasOwn(EVENTS, e.name) || !isObject(e.props)) continue;
+    if (typeof e.id !== "string" || !UUID_V4.test(e.id)) continue;
+    if (!Number.isInteger(e.hours_ago) || (e.hours_ago as number) < 0 || (e.hours_ago as number) > MAX_HOURS_AGO) continue;
+    const props = EVENTS[e.name](e.props);
+    if (props) events.push({ name: e.name, id: e.id, hours_ago: e.hours_ago as number, props });
   }
   return { checkin: { schema: 1, id, version, os, arch, method, events } };
 }
@@ -77,9 +86,8 @@ export function reply(latest: string | null, retryAfter: string | undefined): Re
   return r;
 }
 
-async function dailyUUID(id: string, now: Date): Promise<string> {
-  const day = now.toISOString().slice(0, 10);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${id} ${day}`));
+async function uuidFrom(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   const b = new Uint8Array(digest, 0, 16);
   b[6] = (b[6] & 0x0f) | 0x80;
   b[8] = (b[8] & 0x3f) | 0x80;
@@ -87,25 +95,26 @@ async function dailyUUID(id: string, now: Date): Promise<string> {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+const PERSONLESS = { $process_person_profile: false, $geoip_disable: true, $ip: null };
+
 export async function posthogBatch(c: Checkin, apiKey: string, now: Date): Promise<string> {
-  return JSON.stringify({
-    api_key: apiKey,
-    batch: [
-      {
-        event: "checkin",
-        distinct_id: c.id,
-        uuid: await dailyUUID(c.id, now),
-        timestamp: now.toISOString(),
-        properties: {
-          version: c.version,
-          os: c.os,
-          arch: c.arch,
-          method: c.method,
-          $process_person_profile: false,
-          $geoip_disable: true,
-          $ip: null,
-        },
-      },
-    ],
-  });
+  const batch = [
+    {
+      event: "checkin",
+      distinct_id: c.id,
+      uuid: await uuidFrom(`${c.id} ${now.toISOString().slice(0, 10)}`),
+      timestamp: now.toISOString(),
+      properties: { version: c.version, os: c.os, arch: c.arch, method: c.method, ...PERSONLESS },
+    },
+  ];
+  for (const e of c.events) {
+    batch.push({
+      event: e.name,
+      distinct_id: c.id,
+      uuid: await uuidFrom(`${c.id} ${e.id}`),
+      timestamp: new Date(now.getTime() - e.hours_ago * 3600 * 1000).toISOString(),
+      properties: { version: c.version, os: c.os, arch: c.arch, ...e.props, ...PERSONLESS },
+    });
+  }
+  return JSON.stringify({ api_key: apiKey, batch });
 }

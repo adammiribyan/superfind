@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { GOOD, ID, world } from "./fakes.ts";
+import { GOOD, ID, UPGRADED, world } from "./fakes.ts";
 
 test("PostHog gets one personless check-in with no address and only a content type", async () => {
   const w = world();
@@ -34,6 +34,40 @@ test("PostHog gets one personless check-in with no address and only a content ty
       }),
     },
   ]);
+});
+
+test("each queued event is forwarded as its own event, timed by hours_ago, with a uuid a resend repeats", async () => {
+  const w = world();
+  await w.call({ ...GOOD, events: [UPGRADED] });
+  await Promise.all(w.waits);
+  const batch = JSON.parse(w.posthog()[0].body!).batch;
+  assert.deepEqual(batch[1], {
+    event: "upgraded",
+    distinct_id: ID,
+    uuid: "8c0e7ae7-37a6-857f-b681-d06938a5af96",
+    timestamp: "2026-10-11T09:00:00.000Z",
+    properties: {
+      version: "0.12.0",
+      os: "darwin",
+      arch: "arm64",
+      method: "script",
+      outcome: "installed",
+      $process_person_profile: false,
+      $geoip_disable: true,
+      $ip: null,
+    },
+  });
+  assert.equal(batch.length, 2);
+  w.at("2026-10-12T12:00:00Z");
+  await w.call({ ...GOOD, events: [UPGRADED] });
+  await Promise.all(w.waits);
+  const again = JSON.parse(w.posthog()[1].body!).batch;
+  assert.deepEqual([again[1].uuid, again[1].timestamp], [batch[1].uuid, "2026-10-12T09:00:00.000Z"]);
+  assert.notEqual(again[0].uuid, batch[0].uuid);
+  const other = world();
+  await other.call({ ...GOOD, id: "1f8e2c1a-5b7d-4e3f-9a21-6c4d8b0e7f12", events: [UPGRADED] });
+  await Promise.all(other.waits);
+  assert.notEqual(JSON.parse(other.posthog()[0].body!).batch[1].uuid, batch[1].uuid);
 });
 
 test("an install keeps one event uuid all day and gets a new one the next UTC day", async () => {
