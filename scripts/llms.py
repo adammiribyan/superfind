@@ -44,6 +44,10 @@ FIELDS = {
     "status": "`waiting` or `unfinished` when a TypeSafe label says so, and empty otherwise.",
     "active": "True when the transcript changed in the last two minutes, so the session may still be open "
               "somewhere. It doesn't mean the agent is running.",
+    "open": "`null` unless a running agent has the session open. Then `pid` is that agent's process id, `status` is "
+            "`busy` or `idle` for Claude Code and empty when the agent doesn't say, and `tmux` is the pane it runs in, "
+            "as `{\"pane\": \"%3\", \"session\": \"work\", \"window\": 1}`, or `null` when superfind can't see the pane. "
+            "Codex counts as open only when it was started with `codex resume <id>`.",
     "folder_gone": "True when the session's folder no longer exists. `resume` then moves to the nearest parent that does.",
     "resume": "The shell command that resumes the session, with every value quoted for the shell.",
     "kind": "`agent` when another program started the session, such as `codex exec` or `claude -p`, and "

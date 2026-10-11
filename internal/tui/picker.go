@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/typesafe"
@@ -154,6 +156,8 @@ type indexed struct {
 
 type labelsTick struct{}
 
+type heldMsg map[open.Key]open.State
+
 type picker struct {
 	rows       []session.Row
 	agents     bool
@@ -163,6 +167,7 @@ type picker struct {
 	problem    string
 	dbProblem  string
 	statusSeen time.Time
+	held       map[open.Key]open.State
 	tags       render.Tags
 	widths     render.Widths
 	label      string
@@ -236,8 +241,9 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	in.Prompt = ""
 	in.SetVirtualCursor(false)
 	in.Focus()
+	held := open.Find(agent.Places())
 	m := picker{
-		rows: session.RecentFirst(session.Annotate(rows)), db: db,
+		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
 		asks: &asks{}, reported: &atomic.Bool{},
 	}
@@ -503,6 +509,26 @@ func spawnLabeler() {
 	cmd.Start()
 }
 
+func findHeld() tea.Msg { return heldMsg(open.Find(agent.Places())) }
+
+func (m picker) reannotate() (tea.Model, tea.Cmd) {
+	focused := ""
+	if r := m.focused(); r != nil {
+		focused = r.Path
+	}
+	m.rows = session.Annotate(m.rows, m.held)
+	m.populate()
+	if m.askedFor == "" {
+		m.filter()
+	} else {
+		_, m.shown = session.Narrow(m.input.Value(), session.InOrder(m.all, pathsOf(m.shown)))
+	}
+	if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
+		m.cursor = i
+	}
+	return m.afterMove()
+}
+
 func (m picker) afterMove() (tea.Model, tea.Cmd) {
 	m.keepCursorVisible()
 	return m.loadPreview()
@@ -556,7 +582,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.rows, m.indexing = session.RecentFirst(session.Annotate(msg.rows)), false
+		m.held = open.Find(agent.Places())
+		m.rows, m.indexing = session.RecentFirst(session.Annotate(msg.rows, m.held)), false
 		m.populate()
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
@@ -586,28 +613,20 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spawnLabeler()
 		return m.afterMove()
 	case labelsTick:
-		next := tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} })
+		next := tea.Batch(tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }), findHeld)
 		info, err := os.Stat(session.CachePath("status.json"))
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
 		}
 		m.statusSeen = info.ModTime()
-		focused := ""
-		if r := m.focused(); r != nil {
-			focused = r.Path
-		}
-		m.rows = session.Annotate(m.rows)
-		m.populate()
-		if m.askedFor == "" {
-			m.filter()
-		} else {
-			_, m.shown = session.Narrow(m.input.Value(), session.InOrder(m.all, pathsOf(m.shown)))
-		}
-		if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
-			m.cursor = i
-		}
-		updated, load := m.afterMove()
+		updated, load := m.reannotate()
 		return updated, tea.Batch(next, load)
+	case heldMsg:
+		if maps.EqualFunc(m.held, msg, open.State.Equal) {
+			return m, nil
+		}
+		m.held = msg
+		return m.reannotate()
 	case bodyLoaded:
 		delete(m.loading, msg.key)
 		if msg.readable {

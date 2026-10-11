@@ -402,9 +402,12 @@ func lowered(runes []rune) []rune {
 
 func isLetterOrDigit(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
-func when(s session.Session) string {
-	if s.Active() {
+func when(r session.Row) string {
+	if r.Open != nil {
+		return "open"
+	}
+	if r.Session.Active() {
 		return "active now"
 	}
-	return Ago(s.Mtime)
+	return Ago(r.Session.Mtime)
 }

@@ -17,6 +17,7 @@ import (
 type Query struct {
 	Words    string
 	Agents   bool
+	Open     bool
 	Here     bool
 	Statuses []string
 	From     []*agent.Agent
@@ -46,10 +47,12 @@ var filters = map[string]filter{
 		switch {
 		case v == "agent":
 			q.Agents = true
+		case v == "open":
+			q.Open = true
 		case label != "":
 			q.Statuses = append(q.Statuses, label)
 		}
-		return v == "agent" || label != ""
+		return v == "agent" || v == "open" || label != ""
 	}},
 	"agent": {hint: "agent: takes " + orList(agentIDs()) + ".", lenient: true, parse: func(q *Query, v string, _ time.Time) bool {
 		a := agent.Named(strings.ToLower(v))
@@ -113,7 +116,7 @@ func isValues() []string {
 			values = append(values, k.name)
 		}
 	}
-	return append(values, strings.TrimPrefix(AgentFilter, "is:"))
+	return append(values, strings.TrimPrefix(OpenFilter, "is:"), strings.TrimPrefix(AgentFilter, "is:"))
 }
 
 func agentIDs() []string {
@@ -187,6 +190,8 @@ func (q Query) keeps(r Row, everyKind bool) bool {
 	s := r.Session
 	switch {
 	case q.Agents && !s.ByAgent, !q.Agents && !everyKind && s.ByAgent:
+		return false
+	case q.Open && r.Open == nil:
 		return false
 	case len(q.Statuses) > 0 && !slices.Contains(q.Statuses, r.Status):
 		return false
