@@ -73,11 +73,12 @@ type entry struct {
 }
 
 type repo struct {
-	top, branch string
-	slugs, refs []string
-	log         []entry
-	onDefault   map[string]bool
-	onRemote    map[string]bool
+	top, branch, bound string
+	slugs, refs        []string
+	log                []entry
+	onDefault          map[string]bool
+	onRemote           map[string]bool
+	dug                bool
 }
 
 func bare(s string) string { return plain(pullSuffix.ReplaceAllString(s, "")) }
@@ -235,13 +236,33 @@ func load(top string, since float64) *repo {
 	for _, sha := range strings.Fields(remote) {
 		rp.onRemote[sha] = true
 	}
-	out, _ := git(top, "log", "--no-show-signature", "--all", "--reflog", bound, "--format="+logFormat+"%x1e")
+	rp.bound = bound
+	rp.read("--all")
+	return rp
+}
+
+func (rp *repo) read(which string) {
+	known := map[string]bool{}
+	for _, e := range rp.log {
+		known[e.SHA] = true
+	}
+	out, _ := git(rp.top, "log", "--no-show-signature", which, rp.bound, "--format="+logFormat+"%x1e")
 	for _, raw := range strings.Split(out, "\x1e") {
-		if e, ok := parseEntry(strings.TrimLeft(raw, "\n")); ok {
+		if e, ok := parseEntry(strings.TrimLeft(raw, "\n")); ok && !known[e.SHA] {
+			known[e.SHA] = true
 			rp.log = append(rp.log, e)
 		}
 	}
-	return rp
+}
+
+func (rp *repo) dig() bool {
+	if rp.dug {
+		return false
+	}
+	rp.dug = true
+	before := len(rp.log)
+	rp.read("--reflog")
+	return len(rp.log) > before
 }
 
 const logFormat = "%H%x00%s%x00%b%x00%at%x00%ct%x00%P"
@@ -261,8 +282,13 @@ func (rp *repo) outcome(c agent.Commit) (Outcome, bool) {
 		return rp.judge(e), true
 	}
 	messages := messageLines(c.Command, 0)
-	if e, ok := rp.byMessage(c.At, messages); ok {
-		return rp.judge(e), true
+	for {
+		if e, ok := rp.byMessage(c.At, messages); ok {
+			return rp.judge(e), true
+		}
+		if !rp.dig() {
+			break
+		}
 	}
 	squash, bullet, ok := rp.squash(c.At-matchBefore, func(p string) bool { return slices.Contains(messages, p) })
 	if !ok {
