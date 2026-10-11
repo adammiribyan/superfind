@@ -195,7 +195,8 @@ class Outcomes(Blame):
     def test_a_commit_found_by_its_message_is_the_one_made_near_that_time(self):
         t = self.now - 3 * 3600
         near = self.commit("fix: retry a charge only once", {"charge.go": "1\n"}, t)
-        self.commit("fix: retry a charge only once", {"charge.go": "2\n"}, t + 7200)
+        self.commit("fix: retry a charge only once", {"charge.go": "2\n"}, t + 900)
+        self.commit("fix: retry a charge only once", {"charge.go": "3\n"}, t + 7200)
         self.claude_at(1, claude_tool(t - 5, "b1", "Bash", command='git commit -qam "fix: retry a charge only once"'), title="Retry")
         self.assertEqual(self.outcomes(1, "commit", "stage"), [(near, "merged")])
 
