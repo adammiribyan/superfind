@@ -14,7 +14,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
-- `superfind blame FILE` also reads the file's commits that only other branches and remotes hold, up to 30 more after the current branch's last 30. A session that committed on a branch that never merged, or merged as a squash with a bare title, now shows up with what it made.
+- `superfind blame FILE` now also reads the file's commits that only other branches, remotes, and tags hold: up to 30 more, after the last 30 on this branch. A session that committed the file on a branch that was never merged, or that was squash-merged under a message that doesn't list its commits, now shows up with the commit it made. A merge on another branch counts only when it changed the file beyond what its parents had.
 
 
 ## [0.11.0] - 2026-10-11

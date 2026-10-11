@@ -283,6 +283,57 @@ class Blame(SuperfindBehavior):
             (uid(2), f"made {receipt[:7]}: feat: keep a receipt for each charge"),
             (uid(3), f"made {refund[:7]}: feat: refund a charge in full")]))
 
+    def test_blame_on_a_file_skips_a_merge_on_another_branch_that_only_carries_this_branchs_change(self):
+        t = self.now - 3600
+        self.commit("feat: charge in cents", {"charge.go": "a\nb\nc\nd\ne\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        top = self.commit("feat: theme the editor through its variables", {"charge.go": "themed\nb\nc\nd\ne\n"}, t + 60)
+        self.git("checkout", "-q", "main")
+        self.commit("fix: round charges to the cent", {"charge.go": "a\nb\nc\nd\nrounded\n"}, t + 120)
+        self.git("checkout", "-q", "editor")
+        self.git("merge", "-q", "--no-commit", "main", at=t + 180)
+        merge = self.commit("Merge branch 'main' into editor", {}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: theme the editor through its variables"'),
+                       claude_result(t + 61, "b1", f"[editor {top[:7]}] feat: theme the editor through its variables"), title="Theme the editor")
+        self.claude_at(2, claude_tool(t + 180, "b2", "Bash", command="git merge --no-commit main && git commit -qm \"Merge branch 'main' into editor\""),
+                       claude_result(t + 181, "b2", f"[editor {merge[:7]}] Merge branch 'main' into editor"), title="Merge main into editor")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {top[:7]}: feat: theme the editor through its variables")])
+
+    def test_blame_on_a_file_counts_a_merge_on_another_branch_that_resolved_a_conflict_in_it(self):
+        t = self.now - 3600
+        self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        self.commit("feat: charge in euros", {"charge.go": "euros\n"}, t + 60)
+        self.git("checkout", "-q", "main")
+        self.commit("feat: charge in dollars", {"charge.go": "dollars\n"}, t + 120)
+        self.git("checkout", "-q", "editor")
+        subprocess.run(["git", "merge", "-q", "main"], cwd=self.work, env=self.env, capture_output=True)
+        merge = self.commit("Merge main into editor, charging in either currency", {"charge.go": "euros or dollars\n"}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t + 180, "b1", "Bash", command='git commit -qam "Merge main into editor, charging in either currency"'),
+                       claude_result(t + 181, "b1", f"[editor {merge[:7]}] Merge main into editor, charging in either currency"), title="Resolve")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {merge[:7]}: Merge main into editor, charging in either currency")])
+
+    def test_blame_on_a_file_reads_other_branches_from_a_branch_with_no_commits_yet(self):
+        t = self.now - 3600
+        made = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] feat: charge in cents"), title="Cents")
+        self.git("checkout", "-q", "--orphan", "docs")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {made[:7]}: feat: charge in cents")])
+
+    def test_blame_on_a_file_says_when_it_could_not_read_other_branches(self):
+        t = self.now - 3600
+        made = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] feat: charge in cents"), title="Cents")
+        (self.work / ".git" / "refs" / "remotes" / "origin").mkdir(parents=True)
+        (self.work / ".git" / "refs" / "remotes" / "origin" / "gone").write_text("0123456789abcdef0123456789abcdef01234567\n")
+        result = self.blame("charge.go", "--json")
+        self.assertEqual([json.loads(l)["id"] for l in result.stdout.splitlines()], [uid(1)])
+        self.assertIn("superfind blame: couldn't read charge.go's commits on other branches:", result.stderr)
+
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'), title="Cents")
