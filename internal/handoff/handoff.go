@@ -363,9 +363,9 @@ func layout(t agent.Transcript, found map[int]*note) ([]string, [][]span, map[in
 	turnsOf := map[string][]int{}
 	var order []string
 	for i, turn := range t.Turns {
-		whole := lineBreaks.Replace(show.Clean(turn.Text))
-		texts[i], pieces[i] = whole, []span{{0, len(whole)}}
 		if where == nil {
+			texts[i] = lineBreaks.Replace(show.Clean(turn.Text))
+			pieces[i] = []span{{0, len(texts[i])}}
 			continue
 		}
 		var b strings.Builder
@@ -393,8 +393,11 @@ func layout(t agent.Transcript, found map[int]*note) ([]string, [][]span, map[in
 		for k := where[i].start; k < where[i].end; k++ {
 			said = append(said, lineBreaks.Replace(show.Clean(t.Messages[k])))
 		}
-		if strings.Join(said, "\n\n") != whole {
-			continue
+		if strings.Contains(turn.Text, "PRIVATE KEY-----") {
+			if whole := lineBreaks.Replace(show.Clean(turn.Text)); strings.Join(said, "\n\n") != whole {
+				texts[i], pieces[i] = whole, []span{{0, len(whole)}}
+				continue
+			}
 		}
 		for k := where[i].start; k < where[i].end; k++ {
 			if nt := before[k]; nt != nil {
