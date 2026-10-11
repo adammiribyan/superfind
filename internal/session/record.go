@@ -6,32 +6,35 @@ import (
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 )
 
 const (
 	RecordSchema     = 1
 	ShortestIDPrefix = 8
 	AgentFilter      = "is:agent"
+	OpenFilter       = "is:open"
 )
 
 type Record struct {
-	Schema     int    `json:"schema"`
-	Agent      string `json:"agent"`
-	ID         string `json:"id"`
-	Path       string `json:"path"`
-	Cwd        string `json:"cwd"`
-	Home       string `json:"home"`
-	Title      string `json:"title"`
-	Project    string `json:"project"`
-	Branch     string `json:"branch"`
-	Updated    string `json:"updated"`
-	Prompts    int    `json:"prompts"`
-	Status     string `json:"status"`
-	Active     bool   `json:"active"`
-	FolderGone bool   `json:"folder_gone"`
-	Resume     string `json:"resume"`
-	Kind       string `json:"kind"`
-	Match      string `json:"match"`
+	Schema     int         `json:"schema"`
+	Agent      string      `json:"agent"`
+	ID         string      `json:"id"`
+	Path       string      `json:"path"`
+	Cwd        string      `json:"cwd"`
+	Home       string      `json:"home"`
+	Title      string      `json:"title"`
+	Project    string      `json:"project"`
+	Branch     string      `json:"branch"`
+	Updated    string      `json:"updated"`
+	Prompts    int         `json:"prompts"`
+	Status     string      `json:"status"`
+	Active     bool        `json:"active"`
+	Open       *open.State `json:"open"`
+	FolderGone bool        `json:"folder_gone"`
+	Resume     string      `json:"resume"`
+	Kind       string      `json:"kind"`
+	Match      string      `json:"match"`
 }
 
 func StatusName(label string) string {
@@ -62,6 +65,7 @@ func RecordOf(r Row, clean func(string) string) Record {
 		Prompts:    s.Prompts,
 		Status:     StatusName(r.Status),
 		Active:     s.Active(),
+		Open:       r.Open,
 		FolderGone: r.FolderGone,
 		Resume:     agent.ResumeCommand(r.Agent, r.Home, s.Cwd, s.ID),
 		Kind:       KindOf(s),

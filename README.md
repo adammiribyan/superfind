@@ -82,7 +82,7 @@ The picker opens full screen. When you choose or cancel, it closes and leaves yo
 | Esc | Close the picker without resuming anything. While ask runs or shows its results, Esc goes back to search instead. |
 | Ctrl-C | Close the picker without resuming anything. |
 
-Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words. Sessions that another program started are left out unless you add `is:agent` (see [Sessions it finds](#sessions-it-finds)).
+Add `agent:claude`, `agent:codex`, or `agent:grok` to show one agent's sessions, and, with a TypeSafe key, `is:waiting` or `is:unfinished` to show only sessions with that mark (see [Waiting on you](#waiting-on-you)). Filters work with or without other words. Sessions that another program started are left out unless you add `is:agent` (see [Sessions it finds](#sessions-it-finds)). Add `is:open` to show only sessions that a running Claude Code, Codex, or Grok has open right now; their rows say "open" unless they're waiting on you. Codex counts as open only when it was started with `codex resume <id>`.
 
 Each row shows a session's title, then its project, its agent when your sessions come from more than one, and how long ago it was active, each in its own column. A label such as **waiting on you** follows the title. In a narrow window the agent column goes first, then the project column. Sessions from the folder you're in, or from a folder that contains it, come first and leave the project blank. Your home folder and the root folder count only for sessions started right there. Everything else follows, newest first. Very short sessions sink to the bottom: ones with two prompts or fewer, under 150 words in all, and no tool calls, such as a lone "hi".
 
@@ -90,7 +90,7 @@ The preview opens on where the session left off: your last real request and the 
 
 When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/store && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 
-A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder.
+A session written in the last two minutes shows **active now**, because it's probably open in another window. Resuming it anyway prints a reminder that it may still be open in another window. When superfind sees the agent that has it open, the row shows **open** instead, and the reminder says it's already open in another window.
 
 superfind takes its colors from your terminal. If your terminal doesn't report them, the selected row is shown in reverse video instead of tinted. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video.
 
@@ -188,7 +188,7 @@ superfind command "$id"               # the command that resumes it
 {"schema":1,"agent":"codex","id":"019a…","path":"/Users/you/.codex/sessions/2026/10/09/rollout-….jsonl",
  "cwd":"/Users/you/code/api","home":"/Users/you/.codex","title":"Move auth tokens to cookies",
  "project":"api","branch":"feat/auth","updated":"2026-10-09T10:01:00Z","prompts":3,"status":"",
- "active":false,"folder_gone":false,"resume":"cd /Users/you/code/api && codex resume 019a…",
+ "active":false,"open":null,"folder_gone":false,"resume":"cd /Users/you/code/api && codex resume 019a…",
  "kind":"interactive","match":"…SameSite=Lax because the OAuth redirect needs a top-level GET…"}
 ```
 
@@ -232,7 +232,7 @@ By default `show` keeps the most recent turns that fit in 60,000 bytes of text, 
 {"schema":1,"agent":"claude","id":"0f6c…","path":"/Users/you/.claude/projects/…/0f6c….jsonl",
  "cwd":"/Users/you/code/storefront","home":"/Users/you/.claude","title":"Checkout button double-charges on slow networks",
  "project":"storefront","branch":"main","updated":"2026-10-09T10:01:00Z","prompts":4,"status":"",
- "active":false,"folder_gone":false,"resume":"cd /Users/you/code/storefront && claude --resume 0f6c…",
+ "active":false,"open":null,"folder_gone":false,"resume":"cd /Users/you/code/storefront && claude --resume 0f6c…",
  "kind":"interactive","match":"","total_turns":12,"omitted_turns":6,"truncated":false,
  "turns":[{"role":"user","text":"…"},{"role":"assistant","text":"…"}]}
 ```
@@ -240,6 +240,7 @@ By default `show` keeps the most recent turns that fit in 60,000 bytes of text, 
 - `agent` is `claude`, `codex`, or `grok`, and `id` is that agent's own session id.
 - `path` is the transcript. It's the one field that always names exactly one session.
 - `updated` is when the transcript last changed, in UTC. `active` means it changed in the last two minutes, so the session may still be open somewhere. It doesn't mean the agent is running.
+- `open` is `null` unless a running agent has the session open. Then it holds the agent's process id as `pid`; `status`, which is `busy` while Claude Code works, `idle` while it waits for you, and empty when the agent doesn't say; and `tmux`, the pane the agent runs in, as `{"pane":"%3","session":"work","window":1}`, or `null` when superfind can't see the pane, such as outside tmux. `open.status` is about the agent process, unlike the top-level `status` label. superfind reads this from Claude Code's and Grok's own lists of running sessions and from the agent's command line. Codex counts as open only when it was started with `codex resume <id>`.
 - `prompts` counts the requests you typed. It can be more than the number of `user` turns, because requests in a row join into one turn.
 - `status` is `waiting` or `unfinished` when a session has that label (see [Waiting on you](#waiting-on-you)), and empty otherwise.
 - `folder_gone` means the session's folder was deleted. `resume` is the shell command that resumes it, with every value quoted for the shell.

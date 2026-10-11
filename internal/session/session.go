@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 )
 
 const (
@@ -53,15 +54,22 @@ type Row struct {
 	Path       string
 	Status     string
 	FolderGone bool
+	Open       *open.State
 }
 
-func Annotate(rows []Row) []Row {
+func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 	known := statuses()
 	out := make([]Row, len(rows))
 	for i, r := range rows {
 		r.Status = statusLabel(r, known)
 		r.FolderGone = !folderExists(r.Session.Cwd)
+		r.Open = nil
 		out[i] = r
+	}
+	for i, r := range out {
+		if state, ok := held[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
+			out[i].Open = &state
+		}
 	}
 	return out
 }
