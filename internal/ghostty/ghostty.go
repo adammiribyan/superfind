@@ -5,6 +5,7 @@ import (
 	"context"
 	"os/exec"
 	"regexp"
+	"syscall"
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/open"
@@ -40,6 +41,8 @@ func tell(osascript, command string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, osascript, "-e", `tell application "Ghostty" to `+command)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = deadline / 10
 	return cmd.Output()
 }

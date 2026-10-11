@@ -1289,7 +1289,7 @@ case "$2" in
 *"get tty of every terminal"*)
     case "$(/bin/cat {self.stub}/mode)" in
     error) echo "execution error: Ghostty got an error: Can't get tty of every terminal. (-1728)" >&2; exit 1 ;;
-    slow) /bin/sleep 3 ;;
+    slow) /bin/sleep 30 & echo $! > {self.stub}/straggler; /bin/sleep 3 ;;
     esac
     /bin/cat {self.stub}/ttys ;;
 *) printf '%s\\n' "$2" >> {self.stub}/focused ;;
@@ -1495,10 +1495,10 @@ esac
         self.osascript(mode, tty)
         self.host()
         self.pick(None)
-        started = time.time()
         self.tmux("send-keys", "-t", "work:0", "Enter")
+        entered = time.time()
         self.wait_for(ASK_FIRST, timeout=2.5)
-        self.assertLess(time.time() - started, 2)
+        self.assertLess(time.time() - entered, 1.5)
         self.keys("Escape")
         self.assertFalse(Path(f"{self.out}.code").exists())
         self.keys("Escape")
@@ -1510,6 +1510,21 @@ esac
 
     def test_enter_asks_first_within_a_second_when_ghostty_does_not_answer(self):
         self.asks_first_within_a_second("slow")
+        straggler = int((self.stub / "straggler").read_text())
+        deadline = time.time() + 1
+        while time.time() < deadline and self.alive(straggler):
+            time.sleep(0.05)
+        if self.alive(straggler):
+            os.kill(straggler, signal.SIGKILL)
+            self.fail("a process osascript started outlived the second superfind gave it")
+
+    @staticmethod
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
 
     def last(self):
         env = self.env()
