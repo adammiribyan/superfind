@@ -90,8 +90,6 @@ type parser struct {
 	peers      *Transcript
 }
 
-func newParser() *parser { return &parser{t: Transcript{Last: Replied}} }
-
 var (
 	agentMessageLine = regexp.MustCompile(`^(?:Another Claude session|The coordinator) sent a message[^\n]*:\n`)
 	wrappedMessage   = regexp.MustCompile(`(?s)^<[a-z][\w-]*[^<>]*>\n?(.*?)\n?</[a-z][\w-]*>`)
@@ -141,10 +139,9 @@ func (p *parser) feed(raw []byte) bool {
 				t.Last = Prompted
 				if !p.typed {
 					if p.peers == nil {
-						p.peers = &Transcript{}
+						p.peers = &Transcript{hear: t.hear, peer: true}
 					}
-					p.peers.Prompts = append(p.peers.Prompts, asked)
-					p.peers.say("user", asked)
+					p.peers.ask(asked)
 				}
 			}
 			return true
@@ -156,8 +153,7 @@ func (p *parser) feed(raw []byte) bool {
 			t.Last = CalledTool
 		case prompt != "" && !l.IsMeta:
 			t.Last = Prompted
-			t.Prompts = append(t.Prompts, prompt)
-			t.say("user", prompt)
+			t.ask(prompt)
 			p.typed, p.peers = true, nil
 		}
 	case "assistant":
@@ -189,7 +185,9 @@ func (p *parser) done() Transcript {
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
 	}
+	p.t.join()
 	if !p.typed && p.peers != nil {
+		p.peers.join()
 		p.t.Prompts, p.t.Turns, p.t.Messages = p.peers.Prompts, p.peers.Turns, p.peers.Messages
 		p.t.ByAgent, p.t.PeerDriven = true, true
 	}
