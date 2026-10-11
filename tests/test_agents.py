@@ -288,6 +288,13 @@ class ScriptsAndAgents(SuperfindBehavior):
         [row] = self.records("ask", "--json", "where", "did", "we", "stop", "charging", "twice")
         self.assertEqual((row["title"], row["kind"], row["match"]), ("Payment retries", "interactive", ""))
 
+    def test_ask_json_shows_the_passage_with_some_of_the_words(self):
+        self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
+                     claude("Each request now carries an idempotency key."), title="Payment retries")
+        self.logging_claude(reply="[0]")
+        [row] = self.records("ask", "--json", "how", "did", "we", "stop", "retries", "charging", "twice")
+        self.assertEqual(row["match"], "make payment retries safe to repeat Each request now carries…")
+
     def test_ask_json_ranks_sessions_another_program_started_too(self):
         self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
                      claude("Each request now carries an idempotency key."), title="Payment retries")

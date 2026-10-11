@@ -160,7 +160,9 @@ first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude
 without one. Takes the same filters as search, such as agent:codex or in:here, and prints
 the same fields.
 With --json, it prints one JSON object per line, as search --json does. --limit N prints
-only the first N sessions.
+only the first N sessions. Its match is a passage with some of your words, not counting
+common ones like the, when the conversation doesn't hold them all. It shows where a session
+touches your words, not how well it fits.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
@@ -370,7 +372,7 @@ func runLast(args []string) {
 	case !ok:
 		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
-		writeRecords([]session.Row{r}, nil, "")
+		writeRecords([]session.Row{r}, nil, "", false)
 	default:
 		handoff(r)
 	}
@@ -635,8 +637,8 @@ func usageError(message string) {
 	exit(2)
 }
 
-func writeRecords(rows []session.Row, db *sql.DB, query string) {
-	if err := show.WriteRecords(stdout, rows, db, query); err != nil {
+func writeRecords(rows []session.Row, db *sql.DB, query string, byMeaning bool) {
+	if err := show.WriteRecords(stdout, rows, db, query, byMeaning); err != nil {
 		fail("superfind: couldn't write the output: " + err.Error())
 	}
 }
@@ -763,7 +765,7 @@ func run(args []string) {
 		}
 		found = atMost(found, limit)
 		if asJSON {
-			writeRecords(found, db, query)
+			writeRecords(found, db, query, false)
 			return
 		}
 		printRows(found, render.TagsFor(session.SameKind(rows, q.Agents)))
@@ -775,7 +777,7 @@ func run(args []string) {
 		db := mustOpenSearch()
 		query, eligible := q.Words, q.Rows(rows, asJSON)
 		if query == "" && asJSON {
-			writeRecords(atMost(session.RecentFirst(eligible), limit), db, "")
+			writeRecords(atMost(session.RecentFirst(eligible), limit), db, "", false)
 			return
 		}
 		if query == "" {
@@ -795,7 +797,7 @@ func run(args []string) {
 		}
 		ranked := atMost(session.InOrder(rows, paths), limit)
 		if asJSON {
-			writeRecords(ranked, db, query)
+			writeRecords(ranked, db, query, true)
 			return
 		}
 		printRows(ranked, shown)
