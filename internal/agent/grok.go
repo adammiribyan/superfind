@@ -35,8 +35,8 @@ func grokID(path string) string { return filepath.Base(filepath.Dir(path)) }
 
 type grokReader struct{ t Transcript }
 
-func newGrokReader(path string) (reader, error) {
-	g := &grokReader{t: Transcript{Last: Replied}}
+func newGrokReader(path string, start Transcript) (reader, error) {
+	g := &grokReader{t: start}
 	dir := filepath.Dir(path)
 	folder, _ := url.PathUnescape(filepath.Base(filepath.Dir(dir)))
 	g.t.Cwd = folder
@@ -52,6 +52,7 @@ func newGrokReader(path string) (reader, error) {
 	g.t.Cwd = cmp.Or(s.Info.Cwd, folder)
 	g.t.Branch = s.HeadBranch
 	g.t.Hidden = s.SessionKind == "subagent"
+	g.t.ByAgent = s.SessionKind == "headless"
 	title := cmp.Or(s.SessionSummary, s.GeneratedTitle)
 	if s.TitleIsManual {
 		g.t.CustomTitle = title
@@ -97,8 +98,7 @@ func (g *grokReader) feed(raw []byte) bool {
 			return true
 		}
 		t.Last = Prompted
-		t.Prompts = append(t.Prompts, prompt)
-		t.say("user", prompt)
+		t.ask(prompt)
 	case "assistant":
 		t.ToolCalls += len(l.ToolCalls)
 		t.Last = Replied
@@ -114,4 +114,7 @@ func (g *grokReader) feed(raw []byte) bool {
 	return true
 }
 
-func (g *grokReader) done() Transcript { return g.t }
+func (g *grokReader) done() Transcript {
+	g.t.join()
+	return g.t
+}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/typesafe"
 )
 
 const (
@@ -20,15 +21,17 @@ const (
 )
 
 type Session struct {
-	ID         string  `json:"session_id"`
-	Cwd        string  `json:"cwd"`
-	Title      string  `json:"title"`
-	LastPrompt string  `json:"last_prompt"`
-	Branch     string  `json:"branch"`
-	Prompts    int     `json:"prompts"`
-	Words      int     `json:"words"`
-	ToolCalls  int     `json:"tool_calls"`
-	Mtime      float64 `json:"mtime"`
+	ID         string      `json:"session_id"`
+	Cwd        string      `json:"cwd"`
+	Title      string      `json:"title"`
+	LastPrompt string      `json:"last_prompt"`
+	Branch     string      `json:"branch"`
+	Prompts    int         `json:"prompts"`
+	Words      int         `json:"words"`
+	ToolCalls  int         `json:"tool_calls"`
+	Mtime      float64     `json:"mtime"`
+	ByAgent    bool        `json:"by_agent,omitempty"`
+	Ending     agent.Event `json:"ending,omitempty"`
 }
 
 func (s Session) Project() string {
@@ -55,10 +58,10 @@ type Row struct {
 }
 
 func Annotate(rows []Row) []Row {
-	known := statuses()
+	known, keyless := statuses(), typesafe.Key() == ""
 	out := make([]Row, len(rows))
 	for i, r := range rows {
-		r.Status = statusLabel(r, known)
+		r.Status = statusLabel(r, known, keyless)
 		r.FolderGone = !folderExists(r.Session.Cwd)
 		out[i] = r
 	}

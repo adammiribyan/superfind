@@ -15,6 +15,7 @@ type codexItem struct {
 	Content        json.RawMessage `json:"content"`
 	Cwd            string          `json:"cwd"`
 	ParentThreadID string          `json:"parent_thread_id"`
+	Source         json.RawMessage `json:"source"`
 	Git            *struct {
 		Branch string `json:"branch"`
 	} `json:"git"`
@@ -110,7 +111,7 @@ func codexPrompt(blocks []codexBlock) string {
 
 type codexReader struct{ t Transcript }
 
-func newCodexReader(string) (reader, error) { return &codexReader{t: Transcript{Last: Replied}}, nil }
+func newCodexReader(_ string, start Transcript) (reader, error) { return &codexReader{t: start}, nil }
 
 func (c *codexReader) feed(raw []byte) bool {
 	t := &c.t
@@ -132,6 +133,7 @@ func (c *codexReader) feed(raw []byte) bool {
 			t.Branch = item.Git.Branch
 		}
 		t.Hidden = item.ParentThreadID != ""
+		t.ByAgent = string(item.Source) == `"exec"`
 		return !t.Hidden
 	case l.Type == "turn_context":
 		t.Cwd = cmp.Or(item.Cwd, t.Cwd)
@@ -165,8 +167,7 @@ func (c *codexReader) item(it codexItem) {
 			}
 			if prompt := codexPrompt(blocks); prompt != "" {
 				t.Last = Prompted
-				t.Prompts = append(t.Prompts, prompt)
-				t.say("user", prompt)
+				t.ask(prompt)
 			}
 		case "assistant":
 			var texts []string
@@ -188,4 +189,7 @@ func (c *codexReader) item(it codexItem) {
 	}
 }
 
-func (c *codexReader) done() Transcript { return c.t }
+func (c *codexReader) done() Transcript {
+	c.t.join()
+	return c.t
+}

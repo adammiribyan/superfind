@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -105,6 +104,10 @@ type Transcript struct {
 	ToolCalls                        int
 	Last                             Event
 	Hidden, Incomplete               bool
+	ByAgent, PeerDriven              bool
+	hear                             func(peer bool, role, text string)
+	peer                             bool
+	from                             int
 }
 
 type reader interface {
@@ -144,19 +147,23 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 		return err
 	}
 	defer f.Close()
-	lines := bufio.NewReaderSize(f, 1<<20)
+	return scanLines(f, fn)
+}
+
+func scanLines(r io.Reader, fn func(raw []byte) bool) error {
+	lines := bufio.NewReaderSize(r, 1<<20)
 	var long []byte
 	tooLong := false
 	for {
 		raw, err := lines.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
 			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
-				long = append(long, raw...)
+				long = append(grow(long, len(raw)), raw...)
 			}
 			continue
 		}
 		if long != nil || tooLong {
-			if !tooLong {
+			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
 				raw = append(long, raw...)
 			} else {
 				raw = nil
@@ -175,17 +182,51 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 	}
 }
 
+func grow(b []byte, n int) []byte {
+	if cap(b)-len(b) >= n {
+		return b
+	}
+	bigger := make([]byte, len(b), min(max(2*cap(b), len(b)+n), longestLine))
+	copy(bigger, b)
+	return bigger
+}
+
 func (t *Transcript) say(role, text string) {
-	if n := len(t.Turns); n > 0 && t.Turns[n-1].Role == role {
-		t.Turns[n-1].Text += "\n\n" + text
-	} else {
-		t.Turns = append(t.Turns, Turn{role, text})
+	if t.hear != nil {
+		t.hear(t.peer, role, text)
+		return
+	}
+	if n := len(t.Turns); n == 0 || t.Turns[n-1].Role != role {
+		t.join()
+		t.Turns = append(t.Turns, Turn{Role: role})
+		t.from = len(t.Messages)
 	}
 	t.Messages = append(t.Messages, text)
 }
 
+func (t *Transcript) join() {
+	if n := len(t.Turns); n > 0 {
+		t.Turns[n-1].Text = strings.Join(t.Messages[t.from:], "\n\n")
+	}
+}
+
+func (t *Transcript) ask(prompt string) {
+	if t.hear == nil {
+		t.Prompts = append(t.Prompts, prompt)
+	}
+	t.say("user", prompt)
+}
+
 func ReadTranscript(a *Agent, path string) (Transcript, error) {
-	r, err := a.reader(path)
+	return read(a, path, Transcript{Last: Replied})
+}
+
+func Listen(a *Agent, path string, hear func(peer bool, role, text string)) (Transcript, error) {
+	return read(a, path, Transcript{Last: Replied, hear: hear})
+}
+
+func read(a *Agent, path string, start Transcript) (Transcript, error) {
+	r, err := a.reader(path, start)
 	if err != nil {
 		return Transcript{}, err
 	}
@@ -194,6 +235,20 @@ func ReadTranscript(a *Agent, path string) (Transcript, error) {
 }
 
 const firstEndingWindow = 1 << 20
+
+func skipLine(r *bufio.Reader) (bool, error) {
+	for {
+		_, err := r.ReadSlice('\n')
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, io.EOF):
+			return false, nil
+		case !errors.Is(err, bufio.ErrBufferFull):
+			return false, err
+		}
+	}
+}
 
 func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
 	f, err := openFile(path)
@@ -208,32 +263,33 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 	size := info.Size()
 	for window := int64(firstEndingWindow); ; window *= 4 {
 		start := max(size-window, 0)
-		buf := make([]byte, size-start)
-		if _, err := f.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
-			return nil, err
-		}
-		if start > 0 {
-			buf = buf[bytes.IndexByte(buf, '\n')+1:]
-		}
-		r, err := a.reader(path)
+		r, err := a.reader(path, Transcript{Last: Replied})
 		if err != nil {
 			return nil, err
 		}
-		for len(buf) > 0 {
-			end := bytes.IndexByte(buf, '\n') + 1
-			if end == 0 {
-				end = len(buf)
+		lines := bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
+		if start > 0 {
+			skipped, err := skipLine(lines)
+			if err != nil {
+				return nil, err
 			}
-			if end <= longestLine {
-				r.feed(buf[:end])
+			if !skipped {
+				lines = bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
 			}
-			buf = buf[end:]
 		}
-		turns := r.done().Turns
+		err = scanLines(lines, func(raw []byte) bool {
+			r.feed(raw)
+			return true
+		})
+		if err != nil {
+			return nil, err
+		}
+		read := r.done()
+		turns := read.Turns
 		if start > 0 && len(turns) > 0 {
 			turns = turns[1:]
 		}
-		if start == 0 || enough(turns) {
+		if start == 0 || (enough(turns) && !read.PeerDriven) {
 			return turns, nil
 		}
 	}
