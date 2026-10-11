@@ -12,7 +12,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Changed
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
-- In a pane 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3.
+- In a pane 23 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. A 40×10 pane now shows 6 sessions instead of 3, and an 80×20 pane has room for 16 instead of 13.
 - When the preview is too short for your last request and the end of the reply, it keeps the start of your request and cuts the reply from its start. Before, a short preview showed only the end of the reply.
 - Under the list, the preview now appears only when it has room for at least 6 lines below its heading. At 80×24 the list shows 5 sessions and the preview 7 lines, instead of 8 sessions and 3 lines. Beside the list, the preview is left out when the window is too short for 6 lines.
 - When nothing in the preview matched your search, it no longer leaves two blank lines above "you", so the conversation gets one more line.

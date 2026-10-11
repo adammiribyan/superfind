@@ -88,7 +88,7 @@ Each row shows a session's title, then its project, its agent when your sessions
 
 The preview opens on where the session left off: your last real request and the end of the reply. When you search, its fourth line shows the passage that matched. When the preview is too short for both, it keeps the start of your request and cuts the reply from its start.
 
-In a window 16 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. In a window narrower than 102 columns, the preview goes under the list when there is room for 5 sessions and 6 lines of preview below its heading. Otherwise, and in a wide window too short for 6 lines, the list takes the whole window.
+In a window 23 rows tall or shorter, such as a tmux or zellij split, the search box takes one line instead of three. In a window narrower than 102 columns, the preview goes under the list when there is room for 5 sessions and 6 lines of preview below its heading. Otherwise, and in a wide window too short for 6 lines, the list takes the whole window.
 
 When you resume, superfind prints `Resuming` and the session's title, and the agent takes over the terminal. The command, such as `cd /Users/you/code/store && claude --resume <id>`, lands in your shell history, and when you leave the agent your shell stays in that folder.
 

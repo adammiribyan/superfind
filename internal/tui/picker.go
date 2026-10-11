@@ -38,7 +38,7 @@ const (
 	labelsInterval = 1500 * time.Millisecond
 	marginTop      = 1
 	marginSide     = 1
-	compactRows    = 16
+	compactRows    = 23
 	minBody        = 6
 	minList        = 5
 	minInput       = 10

@@ -225,6 +225,12 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 			15: " you",
 			23: "  enter resume · tab view · ctrl-r ask",
 		}},
+		{80, 20, 12, map[int]string{
+			1:  "  Claude sessions  Search sessions and conversations                     12/12",
+			2:  "  Ledger migration  active now                                   tmp        1m",
+			18: "",
+			19: "  enter resume · tab view · ctrl-r ask",
+		}},
 		{60, 16, 12, map[int]string{
 			1:  "  Claude sessions  Search sessions and conversations 12/12",
 			2:  "  Ledger migration  active now               tmp        1m",
