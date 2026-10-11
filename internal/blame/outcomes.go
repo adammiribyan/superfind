@@ -268,10 +268,14 @@ func (rp *repo) bySHA(sha string) (entry, bool) {
 	if !hexSHA.MatchString(sha) {
 		return entry{}, false
 	}
+	var found []entry
 	for _, e := range rp.log {
 		if strings.HasPrefix(e.SHA, sha) {
-			return e, true
+			found = append(found, e)
 		}
+	}
+	if len(found) == 1 {
+		return found[0], true
 	}
 	out, err := git(rp.top, "show", "--no-show-signature", "-s", "--format="+logFormat, sha+"^{commit}")
 	if err != nil {
