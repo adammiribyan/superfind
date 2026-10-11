@@ -13,6 +13,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
 - `superfind last` resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 - fish support: `superfind init fish | source` in `~/.config/fish/config.fish` sets up the same `superfind` and `sfd` commands and Ctrl-X c binding as zsh and bash, and `install.sh` adds that line for fish users. It needs fish 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
+- Without a TypeSafe key, sessions that ended on an interruption, mid-command, or on a request the agent never answered are marked **unfinished**, and `is:unfinished` finds them. superfind reads this from the session file and sends nothing. **waiting on you** still needs a key, and with a key Jev still decides both labels.
 
 ### Changed
 
@@ -25,6 +26,8 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The preview reads the end of a session line by line instead of loading it, so a long run of tool output no longer has to fit in memory. On the same 126 MB session it peaked at 0.29 to 0.35 GB instead of 0.39 to 0.43 GB.
 - A line between 16 MiB and 17 MiB long is now skipped by the index as well as the preview, so search no longer finds a prompt the preview can't show.
 - A filter that superfind can't read, such as `after:2026-1`, makes `search`, `ask`, and `last` exit 2 and say what the filter takes, before `ask` sends anything. In the picker, the filter is left out and the line under the search box says what it takes.
+- The index is rebuilt once after upgrading, to record how each session ended.
+- A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.
 
 ### Fixed
 

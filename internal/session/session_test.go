@@ -1,13 +1,16 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -147,4 +150,81 @@ func FuzzAnySearchTextIsAQueryTheIndexAccepts(f *testing.F) {
 			t.Fatalf("searching for %q (%s) failed: %v", query, joined(phrasesOf(query), " "), err)
 		}
 	})
+}
+
+func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	name := func(r Row) string { return strings.TrimSuffix(filepath.Base(r.Path), ".jsonl") }
+	row := func(file string, ending agent.Event, ago time.Duration, change func(*Session)) Row {
+		path := filepath.Join(dir, file+".jsonl")
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-ago)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+		_, mtime, err := agent.Named("claude").Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := Session{Prompts: 5, Words: 900, ToolCalls: 3, Ending: ending, Mtime: mtime}
+		if change != nil {
+			change(&s)
+		}
+		return Row{Session: s, Agent: agent.Named("claude"), Path: path}
+	}
+	day := 24 * time.Hour
+	rows := []Row{
+		row("interrupted", agent.Interrupted, day, nil),
+		row("mid-command", agent.CalledTool, day, nil),
+		row("unanswered", agent.Prompted, day, nil),
+		row("replied", agent.Replied, day, nil),
+		row("throwaway", agent.Interrupted, day, func(s *Session) { *s = Session{Prompts: 1, Words: 3, Ending: agent.Interrupted} }),
+		row("by-agent", agent.Interrupted, day, func(s *Session) { s.ByAgent = true }),
+		row("active", agent.Interrupted, 30*time.Second, nil),
+		row("stale", agent.Interrupted, 15*day, nil),
+		row("changed", agent.Interrupted, day, func(s *Session) { s.Mtime -= 60 }),
+		row("jev-finished", agent.Interrupted, day, nil),
+		row("jev-waiting", agent.Replied, day, nil),
+		row("jev-unsure", agent.Interrupted, day, nil),
+		row("jev-earlier", agent.Interrupted, day, nil),
+	}
+	verdicts := map[string]statusEntry{}
+	for _, r := range rows[len(rows)-4:] {
+		id, _, err := r.Agent.Stat(r.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		verdicts[r.Path] = statusEntry{id, strings.TrimPrefix(name(r), "jev-"), 0.95}
+	}
+	unsure, earlier := rows[len(rows)-2].Path, rows[len(rows)-1].Path
+	verdicts[unsure] = statusEntry{verdicts[unsure].FileID, "waiting", 0.6}
+	verdicts[earlier] = statusEntry{agent.FileID{ModNanos: 1, Size: 1}, "finished", 0.95}
+	data, _ := json.Marshal(verdicts)
+	os.MkdirAll(CacheDir(), 0o755)
+	if err := os.WriteFile(CachePath("status.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]map[string]string{
+		"": {
+			"interrupted": "unfinished", "mid-command": "unfinished", "unanswered": "unfinished", "replied": "",
+			"throwaway": "", "by-agent": "", "active": "", "stale": "", "changed": "",
+			"jev-finished": "", "jev-waiting": "waiting on you", "jev-unsure": "", "jev-earlier": "unfinished",
+		},
+		"key": {
+			"interrupted": "", "mid-command": "", "unanswered": "", "replied": "",
+			"throwaway": "", "by-agent": "", "active": "", "stale": "", "changed": "",
+			"jev-finished": "", "jev-waiting": "waiting on you", "jev-unsure": "", "jev-earlier": "",
+		},
+	} {
+		t.Setenv("TYPESAFE_API_KEY", key)
+		for _, r := range Annotate(rows, nil) {
+			if r.Status != want[name(r)] {
+				t.Errorf("with key %q, the %s session is labeled %q, want %q", key, name(r), r.Status, want[name(r)])
+			}
+		}
+	}
 }
