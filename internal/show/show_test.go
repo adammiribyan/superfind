@@ -235,8 +235,8 @@ func FuzzMaskHidesEveryKeyWrittenAnywhere(f *testing.F) {
 	for i := range 256 {
 		every = append(every, byte(i))
 	}
-	for _, before := range []string{"key ", "export TOKEN=", `"api_key": "`, "Authorization: Bearer ", "password=", "(", "\n", ""} {
-		for _, after := range []string{" done", "_x", "-", "", "\"", "x"} {
+	for _, before := range []string{"key ", "export TOKEN=", `"api_key": "`, "Authorization: Bearer ", "password=", "(", "\n", "", "https://"} {
+		for _, after := range []string{" done", "_x", "-", "", "\"", "x", ":hunter22@example.com"} {
 			for kind := range keyFormats {
 				f.Add(before, after, uint8(kind), uint8(len(after)), every)
 			}
@@ -256,11 +256,12 @@ func FuzzMaskHidesEveryKeyWrittenAnywhere(f *testing.F) {
 			}
 			key = append(key, format.alphabet[int(b)%len(format.alphabet)])
 		}
-		if word(lastRune(before)) || format.endsAtWord && word(firstRune(after)) {
+		if word(lastRune(before)) || format.endsAtWord && word(firstRune(after)) || strings.Contains(before+after, "\x00") {
 			t.Skip()
 		}
-		out, last := maskLabel.ReplaceAllString(Mask(before+string(key)+after), "]"), string(key[len(key)-1:])
-		if after == "" && strings.HasSuffix(out, last) || after != "" && strings.Contains(out, last+after) && !strings.Contains(before+after, last+after) {
+		out, last, tail := maskLabel.ReplaceAllString(Mask(before+string(key)+after), "\x00"), string(key[len(key)-1:]), string(key[len(key)-6:])
+		if after == "" && strings.HasSuffix(out, last) || after != "" && strings.Contains(out, last+after) && !strings.Contains(before+after, last+after) ||
+			strings.Contains(out, tail) && !strings.Contains(before+after, tail) {
 			t.Fatalf("Mask(%q) = %q still shows the end of the key", before+string(key)+after, out)
 		}
 	})
