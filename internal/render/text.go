@@ -253,8 +253,7 @@ func fencedAfter(text string) bool {
 		}
 		at += found
 		if b := strings.LastIndexAny(text[scanned:at], lineBreaks); b >= 0 {
-			_, size := utf8.DecodeRuneInString(text[scanned+b:])
-			scanned, blank = scanned+b+size, true
+			scanned, blank = scanned+b, true
 		}
 		blank = blank && strings.TrimLeftFunc(text[scanned:at], unicode.IsSpace) == ""
 		scanned = at
