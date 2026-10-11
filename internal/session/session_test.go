@@ -243,6 +243,17 @@ func TestMaskingOnlyTheStartOfALongTextClipsItAsMaskingAllOfItWould(t *testing.T
 			}
 		}
 	}
+	for _, s := range []string{
+		`deploy with password="` + strings.Repeat("privatevalue7 ", 500) + `" done ` + strings.Repeat("z ", maskWindow),
+		"token eyJhbGciOiJIUzI1NiJ9.eyJ" + strings.Repeat("a", maskWindow) + ".c2lnbmF0dXJlc2ln " + strings.Repeat("z ", maskWindow),
+		strings.Repeat("ab ", maskWindow/3-5) + "eyJhbGciOiJIUzI1NiJ9.eyJ" + strings.Repeat("a", 2*maskWindow) + ".c2lnbmF0dXJlc2ln done",
+	} {
+		for _, n := range []int{titleRunes, promptRunes} {
+			if got, want := clipMasked(s, n), clip(mask.Secrets(s), n); got != want {
+				t.Fatalf("n=%d: got %q, want %q", n, got[:min(len(got), 120)], want[:min(len(want), 120)])
+			}
+		}
+	}
 	long := strings.Repeat("x", 3*maskWindow) + " password=hunter2hunter2 " + strings.Repeat("y ", maskWindow)
 	if got, want := clipMasked(long, promptRunes), clip(mask.Secrets(long), promptRunes); got != want {
 		t.Fatalf("a single word longer than the window: got %q, want %q", got, want)
