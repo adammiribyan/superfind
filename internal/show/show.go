@@ -1,7 +1,6 @@
 package show
 
 import (
-	"cmp"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -69,37 +68,49 @@ func speaker(role string, r session.Record) string {
 func short(sha string) string { return sha[:min(len(sha), 7)] }
 
 func outcomeLine(o blame.Outcome) string {
-	branch := cmp.Or(o.Branch, "the default branch")
-	head, fate := "made "+short(o.Commit)+" "+oneLine(o.Subject)+" · ", ""
+	head := "made " + short(o.Commit) + " " + oneLine(o.Subject)
 	switch {
 	case o.Kind == blame.PullRequest:
-		head = fmt.Sprintf("opened #%d · ", o.PR)
+		head = fmt.Sprintf("opened #%d", o.PR)
 	case o.Commit == "":
-		head = "made a commit "
+		head = "made " + oneLine(o.Subject)
 	}
+	if fate := fateOf(o); fate != "" {
+		return head + " · " + fate
+	}
+	return head
+}
+
+func fateOf(o blame.Outcome) string {
+	known := o.Branch != ""
 	switch {
 	case o.Stage == blame.Committed:
-		return head + "committed, not pushed"
+		return "committed, not pushed"
+	case o.Stage == blame.Pushed && known:
+		return "pushed, not on " + o.Branch
 	case o.Stage == blame.Pushed:
-		return head + "pushed, not on " + branch
+		return "pushed"
+	case o.Stage == blame.Opened && known:
+		return "not merged into " + o.Branch
 	case o.Stage == blame.Opened:
-		return head + "not merged into " + branch
+		return ""
+	}
+	fate := "merged into " + o.Branch
+	switch {
 	case o.Kind == blame.PullRequest || (o.PR == 0 && o.Landed != o.Commit):
-		fate = "merged into " + branch + " as " + short(o.Landed)
+		fate += " as " + short(o.Landed)
 	case o.Landed != o.Commit:
-		fate = fmt.Sprintf("squashed into %s as %s (#%d)", branch, short(o.Landed), o.PR)
-	default:
-		fate = "merged into " + branch
+		fate = fmt.Sprintf("squashed into %s as %s (#%d)", o.Branch, short(o.Landed), o.PR)
+	case o.PR > 0:
+		fate += fmt.Sprintf(" via #%d", o.PR)
 	}
 	if o.Stage == blame.Reverted {
-		fate += ", then reverted by " + short(o.RevertedBy)
-	} else if at, err := time.Parse(time.RFC3339, o.LandedAt); err == nil {
+		return fate + ", then reverted by " + short(o.RevertedBy)
+	}
+	if at, err := time.Parse(time.RFC3339, o.LandedAt); err == nil {
 		fate += " " + render.Ago(float64(at.Unix()))
 	}
-	if o.Kind == blame.Made && o.Commit == "" {
-		return head + fate + ": " + oneLine(o.Subject)
-	}
-	return head + fate
+	return fate
 }
 
 func WriteText(w io.Writer, r session.Record, c Conversation, outcomes []blame.Outcome) error {

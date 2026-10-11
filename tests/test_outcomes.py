@@ -78,7 +78,7 @@ class Outcomes(Blame):
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
         keys = ("kind", "commit", "pr", "subject", "stage", "landed")
         self.assertEqual(self.outcomes(1, *keys), [("commit", "", 7, "feat: refund a charge in full", "merged", squash)])
-        self.assertRegex(self.text(1)[0], rf"^made a commit squashed into main as {squash[:7]} \(#7\) \S+ ago: feat: refund a charge in full$")
+        self.assertRegex(self.text(1)[0], rf"^made feat: refund a charge in full · squashed into main as {squash[:7]} \(#7\) \S+ ago$")
         self.claude_at(2, claude_tool(t + 60, "b1", "Bash", command='git commit -qm "fix: refund only settled charges"'),
                        claude_result(t + 61, "b1", f"[refunds {kept[:7]}] fix: refund only settled charges"), title="Settled")
         self.assertEqual(self.outcomes(2, *keys), [("commit", kept, 7, "fix: refund only settled charges", "merged", squash)])
@@ -119,6 +119,7 @@ class Outcomes(Blame):
         self.claude_at(2, line(type="pr-link", prRepository="Acme/Billing", prNumber=9), title="Receipts PR")
         keys = ("kind", "commit", "pr", "stage", "landed")
         self.assertEqual(self.outcomes(1, *keys), [("commit", made, 8, "merged", made)])
+        self.assertRegex(self.text(1)[0], rf"^made {made[:7]} fix: refund only settled charges · merged into main via #8 \S+ ago$")
         self.assertEqual(self.outcomes(2, *keys), [("pull_request", "", 9, "opened", "")])
         self.assertEqual(self.text(2), ["opened #9 · not merged into main"])
         self.commit("feat: receipts (#9)", {"receipt.go": "r\n"}, t + 900)
@@ -126,6 +127,18 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(2, *keys), [("pull_request", "", 9, "merged", squash)])
         self.assertRegex(self.text(2)[0], rf"^opened #9 · merged into main as {squash[:7]} \S+ ago$")
         self.assertNotEqual(merge, squash)
+
+    def test_without_a_default_branch_show_says_only_what_it_knows(self):
+        t = self.now - 3600
+        self.git("checkout", "-q", "-b", "trunk")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'),
+                       line(type="pr-link", prRepository="acme/billing", prNumber=9), title="Refunds")
+        self.assertEqual(self.outcomes(1, "kind", "stage", "branch"), [("commit", "committed", ""), ("pull_request", "opened", "")])
+        self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · committed, not pushed", "opened #9"])
+        self.origin()
+        self.git("push", "-q", "origin", "trunk")
+        self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · pushed"])
 
     def test_a_merged_commit_that_main_later_reverts_says_so(self):
         t = self.now - 3600
