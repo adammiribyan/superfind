@@ -147,6 +147,11 @@ class SuperfindBehavior(unittest.TestCase):
         for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
                      "NO_COLOR", "SUPERFIND_SECONDARY"):
             self.env.pop(name, None)
+        no_ghostty = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, no_ghostty, True)
+        (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
+        (no_ghostty / "osascript").chmod(0o755)
+        self.env["PATH"] = f"{no_ghostty}:{self.env.get('PATH', '/usr/bin:/bin')}"
         self.clock = time.time() - 2 * 86400
 
     def tick(self, *paths):
