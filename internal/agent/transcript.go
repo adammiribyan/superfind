@@ -227,11 +227,16 @@ func read(a *Agent, path string, start Transcript) (Transcript, error) {
 
 const firstEndingWindow = 1 << 20
 
-func skipLine(r *bufio.Reader) bool {
+func skipLine(r *bufio.Reader) (bool, error) {
 	for {
 		_, err := r.ReadSlice('\n')
-		if !errors.Is(err, bufio.ErrBufferFull) {
-			return err == nil
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.Is(err, io.EOF):
+			return false, nil
+		case !errors.Is(err, bufio.ErrBufferFull):
+			return false, err
 		}
 	}
 }
@@ -254,8 +259,14 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 			return nil, err
 		}
 		lines := bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
-		if start > 0 && !skipLine(lines) {
-			lines = bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
+		if start > 0 {
+			skipped, err := skipLine(lines)
+			if err != nil {
+				return nil, err
+			}
+			if !skipped {
+				lines = bufio.NewReaderSize(io.NewSectionReader(f, start, size-start), 1<<20)
+			}
 		}
 		err = scanLines(lines, func(raw []byte) bool {
 			r.feed(raw)
