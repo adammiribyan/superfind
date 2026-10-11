@@ -35,8 +35,8 @@ func grokID(path string) string { return filepath.Base(filepath.Dir(path)) }
 
 type grokReader struct{ t Transcript }
 
-func newGrokReader(path string) (reader, error) {
-	g := &grokReader{t: Transcript{Last: Replied}}
+func newGrokReader(path string, start Transcript) (reader, error) {
+	g := &grokReader{t: start}
 	dir := filepath.Dir(path)
 	folder, _ := url.PathUnescape(filepath.Base(filepath.Dir(dir)))
 	g.t.Cwd = folder
@@ -98,8 +98,7 @@ func (g *grokReader) feed(raw []byte) bool {
 			return true
 		}
 		t.Last = Prompted
-		t.Prompts = append(t.Prompts, prompt)
-		t.say("user", prompt)
+		t.ask(prompt)
 	case "assistant":
 		t.ToolCalls += len(l.ToolCalls)
 		t.Last = Replied

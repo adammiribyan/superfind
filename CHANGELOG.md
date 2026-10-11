@@ -18,6 +18,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
 - `search --json` takes about as long as plain `search`, even for a word in nearly every session. On 600 generated sessions, `search --json the` took 13 seconds and now takes under a quarter of a second. `ask` also prepares its question faster, and the preview finds the passage that matched sooner in long sessions.
 - In a conversation longer than about 2,000 characters, `match` can show a different passage than before. It comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common. Shorter conversations show the same passage as before.
+- `superfind show` holds only the turns it prints, instead of the whole session, and masks secrets only in the text it measures. The output is the same as before. On test sessions, `show --tail 10 --json` peaked at 0.30 GB instead of 1.1 GB on a 561 MB session, most of it the search index, and took 2 s instead of 19 to 27 s on a 126 MB session that ends in one long agent run.
 
 ### Fixed
 
