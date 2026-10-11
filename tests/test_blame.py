@@ -296,6 +296,17 @@ class Blame(SuperfindBehavior):
         result = self.blame("charge.go", "--json")
         self.assertEqual([(r["id"], r["match"]) for r in map(json.loads, result.stdout.splitlines())], [(uid(1), "edited it 3 times")])
 
+    def test_a_new_session_whose_subagents_cannot_be_read_still_counts_its_own_edits(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        folder = path.parent / path.stem / "subagents"
+        folder.mkdir(parents=True)
+        (folder / "agent-a1.jsonl").write_text("\n".join(edited(t + 5, "s1", str(self.work / "charge.go"))) + "\n")
+        folder.chmod(0)
+        self.addCleanup(folder.chmod, 0o755)
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+
     def test_blame_says_when_a_cache_it_cannot_write_may_miss_new_edits(self):
         t = self.now - 3600
         self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")

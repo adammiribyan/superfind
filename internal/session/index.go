@@ -19,7 +19,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
@@ -66,9 +65,15 @@ func cutAt(s string, n int) (int, bool) {
 func clipMasked(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	for window := maskWindow; window < len(s); window *= 4 {
-		end := window
-		for end < len(s) && !utf8.RuneStart(s[end]) {
-			end++
+		end := len(s)
+		if space := strings.IndexByte(s[window:], ' '); space >= 0 {
+			end = window + space
+		}
+		if end == len(s) {
+			break
+		}
+		if mask.Unclosed(s[:end]) {
+			continue
 		}
 		head := mask.Secrets(s[:end])
 		if cut, over := cutAt(head, n); over && cut <= len(head)-maskMargin {
@@ -520,8 +525,11 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 			defer wg.Done()
 			for f := range work {
 				p, incomplete, err := parse(f)
+				if _, known := old[f.path]; !known {
+					p.kept = false
+				}
 				mu.Lock()
-				if err != nil && !p.kept {
+				if err != nil && !incomplete {
 					problems = append(problems, err)
 					mu.Unlock()
 					continue
@@ -553,7 +561,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		}
 		unfinished, listed := partial[f.path]
 		shown := unfinished.entry
-		if !listed || (known && entry.Session == nil) {
+		if !listed || unfinished.kept || (known && entry.Session == nil) {
 			shown = entry
 		}
 		if shown.Session != nil {
