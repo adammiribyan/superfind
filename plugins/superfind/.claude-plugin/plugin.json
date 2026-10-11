@@ -7,6 +7,13 @@
   },
   "homepage": "https://superfind.dev",
   "repository": "https://github.com/adammiribyan/superfind",
-  "license": "MIT",
-  "keywords": ["sessions", "search", "resume", "handoff", "codex", "grok"]
+  "license": "Apache-2.0",
+  "keywords": [
+    "sessions",
+    "search",
+    "resume",
+    "handoff",
+    "codex",
+    "grok"
+  ]
 }

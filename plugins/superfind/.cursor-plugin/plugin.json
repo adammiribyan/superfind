@@ -1,0 +1,19 @@
+{
+  "name": "superfind",
+  "description": "Find, read, and resume past Claude Code, Codex, and Grok sessions with the superfind CLI",
+  "author": {
+    "name": "Adam Miribyan",
+    "url": "https://github.com/adammiribyan"
+  },
+  "homepage": "https://superfind.dev",
+  "repository": "https://github.com/adammiribyan/superfind",
+  "license": "Apache-2.0",
+  "keywords": [
+    "sessions",
+    "search",
+    "resume",
+    "handoff",
+    "codex",
+    "grok"
+  ]
+}

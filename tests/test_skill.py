@@ -14,7 +14,7 @@ from test_superfind import (CODEX_ENVIRONMENT, SUPERFIND, SuperfindBehavior, cla
 
 ROOT = Path(__file__).resolve().parent.parent
 PLUGIN = ROOT / "plugins" / "superfind"
-SKILL = PLUGIN / "skills" / "superfind" / "SKILL.md"
+SKILL = ROOT / "skills" / "superfind" / "SKILL.md"
 JQ = shutil.which("jq")
 
 
@@ -39,14 +39,17 @@ class Skill(SuperfindBehavior):
             self.assertIn(trigger, fields["description"])
         self.assertLessEqual(len(body.splitlines()), 120)
 
-    def test_the_marketplace_installs_the_plugin_that_holds_the_skill(self):
-        market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
-        plugin = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [(plugin["name"], "./plugins/superfind")])
-        self.assertEqual((market["name"], plugin["name"]), ("superfind", "superfind"))
-        self.assertTrue((ROOT / market["plugins"][0]["source"] / "skills" / plugin["name"] / "SKILL.md").is_file())
-        self.assertEqual(sorted(p.name for p in PLUGIN.iterdir()), [".claude-plugin", "README.md", "skills"])
-        self.assertNotIn("version", plugin)
+    def test_every_marketplace_installs_the_plugin_that_holds_a_copy_of_the_skill(self):
+        for vendor in (".claude-plugin", ".cursor-plugin"):
+            market = json.loads((ROOT / vendor / "marketplace.json").read_text())
+            plugin = json.loads((PLUGIN / vendor / "plugin.json").read_text())
+            self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [("superfind", "./plugins/superfind")])
+            self.assertEqual((market["name"], plugin["name"], plugin["license"]), ("superfind", "superfind", "Apache-2.0"))
+            self.assertNotIn("version", plugin)
+        self.assertEqual(sorted(p.name for p in PLUGIN.rglob("*") if p.is_file()),
+                         ["SKILL.md", "plugin.json", "plugin.json"])
+        self.assertEqual((PLUGIN / "skills" / "superfind" / "SKILL.md").read_bytes(), SKILL.read_bytes(),
+                         "plugins/superfind/skills/superfind/SKILL.md must be a copy of skills/superfind/SKILL.md")
 
     def test_every_superfind_command_in_the_skill_exists(self):
         listed = re.search(r"The commands are (.+)\.\n", self.run_superfind("no-such-command").stderr).group(1)
