@@ -2,6 +2,11 @@ version: 2
 
 project_name: superfind
 
+before:
+  hooks:
+    - go build -o bin/superfind .
+    - python3 scripts/llms.py
+
 builds:
   - id: superfind
     env:
