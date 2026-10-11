@@ -19,7 +19,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `is:open` lists only the sessions that a running Claude Code, Codex, or Grok has open right now. Their rows say "open" instead of "active now" or the time.
 - `search --json`, `ask --json`, and `show --json` have a new field, `open`: the process id of the agent that has the session open, whether Claude Code is busy or idle, and the tmux pane it runs in. It is `null` when no agent has the session open.
 - Codex counts as open only when it was started with `codex resume <id>`, because Codex keeps no list of running sessions.
-- In the picker, Enter on a session that an agent already has open no longer starts a second copy. When the agent runs in a pane of the tmux server you're in, Enter switches to that pane: `superfind pick` prints `tmux switch-client -t <pane>` as its second line, and the shell setup runs it. Otherwise the picker says where the session is open and stays open.
+- Enter in the picker, and `superfind last`, no longer start a second copy of a session that an agent already has open. If the agent runs in a pane of the tmux server you're in, they switch to that pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab uses (newer builds than 1.3.1), they switch to that tab. Otherwise the picker asks first: Enter again resumes a copy, and Esc goes back. `superfind last` asks the same at a terminal, and in a script it says where the session is open and exits 1.
 
 ### Changed
 
