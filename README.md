@@ -114,7 +114,7 @@ superfind search --json |
 
 To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts.
 
-See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt).
+See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt). Agents can also learn when to use superfind from [its skill](skills/README.md), for Claude Code, Codex, and Grok.
 
 ## Privacy
 
@@ -126,6 +126,6 @@ Search by description sends your query and session excerpts to TypeSafe when con
 
 [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
-Built by [Adam Miribyan](https://github.com/adammiribyan). [MIT licensed](LICENSE).
+Built by [Adam Miribyan](https://github.com/adammiribyan). [Apache 2.0 licensed](LICENSE).
 
 Independent of Anthropic, OpenAI, and xAI.
