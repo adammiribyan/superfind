@@ -35,8 +35,10 @@ const version = "0.10.0"
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
   superfind               open the picker (after shell setup; see superfind init); sfd is short for it
-  superfind init zsh|bash print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc
-                          or  eval "$(superfind init bash)"  to ~/.bashrc
+  superfind init zsh|bash|fish
+                          print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc,
+                          eval "$(superfind init bash)"  to ~/.bashrc, or
+                          superfind init fish | source  to ~/.config/fish/config.fish
   superfind pick          open the picker; prints the chosen session's title, then the command
                           that resumes it
   superfind last [FILTERS] [--json]
@@ -78,16 +80,18 @@ Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cance
 `
 
 var helps = map[string]string{
-	"init": `superfind init zsh|bash
+	"init": `superfind init zsh|bash|fish
 
 Print the shell setup that lets superfind change your shell's folder when you resume a session.
 Add one line to your shell's startup file:
 
   eval "$(superfind init zsh)"     # in ~/.zshrc
   eval "$(superfind init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
+  superfind init fish | source     # in ~/.config/fish/config.fish
 
 Then superfind with no arguments, sfd, or Ctrl-X c opens the picker. Choosing a session cds
-into its folder and runs its agent's resume command, which lands in your shell history.
+into its folder and runs its agent's resume command, which lands in your shell history
+(in fish, from version 4.0). fish needs version 3.1 or later.
 `,
 	"pick": `superfind pick
 
@@ -326,7 +330,56 @@ _superfind_widget() {
 [[ $- == *i* ]] && bind -x '"\C-xc": _superfind_widget'
 `
 
-var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
+const fishSetup = `function _superfind_run
+    if test -x %[1]s
+        %[1]s $argv
+    else
+        command superfind $argv
+    end
+end
+
+function _superfind_resume
+    set -l resume (string join \n -- $argv[2..-1] | string collect)
+    printf 'Resuming \e[1m%%s\e[0m\n' $argv[1]
+    if test (string split . -- $version)[1] -ge 4
+        history append -- $resume
+    end
+    eval $resume
+end
+
+function superfind
+    set -l rest $argv
+    set -e rest[1]
+    if test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $rest
+        set -l out (_superfind_run $argv); or return
+        _superfind_resume $out
+        return
+    end
+    if set -q argv[1]
+        _superfind_run $argv
+        return
+    end
+    set -l out (_superfind_run pick); or return
+    _superfind_resume $out
+end
+
+function sfd
+    superfind $argv
+end
+
+function _superfind_widget
+    set -l out (_superfind_run pick)
+    and _superfind_resume $out
+    commandline -f repaint
+end
+
+if status is-interactive
+    bind \cxc _superfind_widget
+    bind -M insert \cxc _superfind_widget
+end
+`
+
+var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup, "fish": fishSetup}
 
 var stdout, stderr io.Writer = os.Stdout, os.Stderr
 
@@ -736,7 +789,7 @@ func run(args []string) {
 			setup, ok = shellSetups[args[1]]
 		}
 		if !ok {
-			usageError("superfind init: which shell? superfind init zsh or superfind init bash")
+			usageError("superfind init: which shell? superfind init zsh, superfind init bash, or superfind init fish")
 		}
 		fmt.Fprintf(stdout, setup, agent.ShellQuote(selfPath()))
 	case "index":

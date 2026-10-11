@@ -46,6 +46,13 @@ class Installer(unittest.TestCase):
         self.assertEqual(self.install("bash").returncode, 0)
         self.assertEqual(self.startup_file("bash").read_text(), '\neval "$("$HOME/.local/bin/superfind" init bash)"\n')
 
+    def test_installing_for_fish_creates_its_config_and_a_second_run_changes_nothing(self):
+        self.assertEqual(self.install("fish").returncode, 0)
+        config = self.home / ".config" / "fish" / "config.fish"
+        self.assertEqual(config.read_text(), '\n"$HOME/.local/bin/superfind" init fish | source\n')
+        self.assertEqual(self.install("fish").returncode, 0)
+        self.assertEqual(config.read_text(), '\n"$HOME/.local/bin/superfind" init fish | source\n')
+
     def test_a_failed_copy_leaves_the_installed_superfind_working(self):
         self.assertEqual(self.install("zsh").returncode, 0)
         stub = self.home / "stub"
@@ -202,12 +209,13 @@ class ReleaseInstaller(unittest.TestCase):
     def test_another_shell_is_shown_the_setup_lines_and_gets_no_ghostty_keybind(self):
         (self.stubs / "ghostty").write_text("#!/bin/sh\n")
         (self.stubs / "ghostty").chmod(0o755)
-        for shell in ("/usr/bin/fish", ""):
+        for shell in ("/usr/bin/nu", ""):
             result = self.install(SHELL=shell)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('  eval "$("$HOME/.local/bin/superfind" init zsh)"     # in ~/.zshrc\n', result.stdout)
             self.assertIn('  eval "$("$HOME/.local/bin/superfind" init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS\n',
                           result.stdout)
+            self.assertIn('  "$HOME/.local/bin/superfind" init fish | source      # in ~/.config/fish/config.fish\n', result.stdout)
             self.assertEqual(result.stdout.splitlines()[-1], f"done: run {self.home}/.local/bin/superfind to see what it does")
             self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".local"])
 
