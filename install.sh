@@ -85,6 +85,26 @@ main() {
     echo "note: another superfind is installed at $other"
   fi
 
+  omarchy="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
+  if [ -d "$omarchy" ]; then
+    hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
+    launch="omarchy-launch-tui $bin/superfind pick --run"
+    if [ -f "$hypr/bindings.conf" ] && [ ! -f "$hypr/bindings.lua" ]; then
+      bindings="$hypr/bindings.conf" chord='SUPER SHIFT CTRL, F,' binding="bindd = SUPER SHIFT CTRL, F, Superfind, exec, $launch"
+    else
+      bindings="$hypr/bindings.lua" chord='"SUPER + SHIFT + CTRL + F"' binding="o.bind(\"SUPER + SHIFT + CTRL + F\", \"Superfind\", \"$launch\")"
+    fi
+    case "$bin" in *[!A-Za-z0-9/._-]*) unsafe=1 ;; *) unsafe="" ;; esac
+    if grep -qF "$binding" "$bindings" 2>/dev/null; then
+      :
+    elif [ -n "$unsafe" ] || [ ! -f "$bindings" ] || grep -qF "$chord" "$bindings"; then
+      echo "to open superfind with Super-Shift-Ctrl-F, add this line to $bindings: $binding"
+    else
+      printf '\n%s\n' "$binding" >> "$bindings"
+      echo "added Super-Shift-Ctrl-F to $bindings (run hyprctl reload to use it now)"
+    fi
+  fi
+
   case "$(basename "${SHELL:-}")" in
     zsh) shell=zsh rc="$HOME/.zshrc" ;;
     bash)
@@ -117,7 +137,9 @@ main() {
   if [ -f "$ghostty_xdg" ] || [ -f "$ghostty_mac" ] || [ -d /Applications/Ghostty.app ] || command -v ghostty >/dev/null; then
     if [ -f "$ghostty_xdg" ] || [ ! -f "$ghostty_mac" ]; then ghostty="$ghostty_xdg"; else ghostty="$ghostty_mac"; fi
     keybind='keybind = super+shift+o=text:\x18c'
-    if ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
+    if [ -d "$omarchy" ]; then
+      echo "skipped the Ghostty keybind: on Omarchy, Hyprland takes Super keys before Ghostty sees them"
+    elif ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
       mkdir -p "$(dirname "$ghostty")"
       printf '\n%s\n' "$keybind" >> "$ghostty"
       echo "added Cmd-Shift-O to $ghostty (reload Ghostty config with Cmd-Shift-,)"

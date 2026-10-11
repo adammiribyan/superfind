@@ -41,8 +41,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc,
                           eval "$(superfind init bash)"  to ~/.bashrc, or
                           superfind init fish | source  to ~/.config/fish/config.fish
-  superfind pick          open the picker; prints the chosen session's title, then the command
-                          that resumes it
+  superfind pick [--run]  open the picker; prints the chosen session's title, then the command
+                          that resumes it, or with --run, runs that command
   superfind last [FILTERS] [--json]
                           resume the newest session from this folder (after shell setup);
                           without the shell setup, or in a script, print its title and the
@@ -99,11 +99,15 @@ Then superfind with no arguments, sfd, or Ctrl-X c opens the picker. Choosing a 
 into its folder and runs its agent's resume command, which lands in your shell history
 (in fish, from version 4.0). fish needs version 3.1 or later.
 `,
-	"pick": `superfind pick
+	"pick": `superfind pick [--run]
 
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+  --run           run the command instead of printing it, for a terminal with no shell to hand
+                  it to, such as one a desktop keybinding opens. A session an agent already has
+                  open is refused, as superfind last does.
 
 Type filters in the search box to narrow the list, such as in:here, branch:main,
 after:yesterday, or agent:codex; superfind help search lists them all.
@@ -453,12 +457,26 @@ func runLast(args []string) {
 		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
-	case r.Open != nil:
-		fail("superfind last: " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
-			". superfind last doesn't start a second copy.")
 	default:
+		refuseOpen("last", r)
 		handoff(r)
 	}
+}
+
+func refuseOpen(command string, r session.Row) {
+	if r.Open != nil {
+		fail("superfind " + command + ": " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
+			". superfind " + command + " doesn't start a second copy.")
+	}
+}
+
+func resumeHere(r session.Row) {
+	refuseOpen("pick --run", r)
+	command := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID)
+	fmt.Fprintln(stdout, "Resuming "+render.Bold+handoffTitle(r)+render.Reset)
+	output.Flush()
+	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
+	fail("superfind pick: couldn't run " + command + ": " + err.Error())
 }
 
 func openWhere(o open.State) string {
@@ -1024,6 +1042,13 @@ func run(args []string) {
 	case "blame":
 		runBlame(args[1:])
 	case "pick":
+		resume := false
+		for _, arg := range args[1:] {
+			if arg != "--run" {
+				usageError("superfind pick: there is no " + arg + " option. See superfind help pick.")
+			}
+			resume = true
+		}
 		chosen, err := tui.Pick()
 		if err != nil {
 			fail(err.Error())
@@ -1031,6 +1056,9 @@ func run(args []string) {
 		if chosen == nil {
 			exit(1)
 			return
+		}
+		if resume {
+			resumeHere(*chosen)
 		}
 		handoff(*chosen)
 	case "last":

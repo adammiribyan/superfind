@@ -21,9 +21,74 @@ class Installer(unittest.TestCase):
         self.clone = self.home / "src" / "superfind"
         shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env", "demo"))
 
-    def install(self, shell):
-        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES}
+    def install(self, shell, **extra):
+        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES, **extra}
         return subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True, text=True)
+
+    def omarchy(self, bindings, text="o.bind(\"SUPER + SHIFT + CTRL + A\", \"Agent\", \"omarchy-launch-tui claude\")\n"):
+        (self.home / ".local" / "share" / "omarchy").mkdir(parents=True)
+        path = self.home / ".config" / "hypr" / bindings
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+        return path
+
+    def test_on_omarchy_4_a_second_run_leaves_one_superfind_binding(self):
+        path = self.omarchy("bindings.lua")
+        self.install("bash")
+        result = self.install("bash")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(path.read_text(), 'o.bind("SUPER + SHIFT + CTRL + A", "Agent", "omarchy-launch-tui claude")\n\n'
+                         f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n')
+        self.assertNotIn("Super-Shift-Ctrl-F", result.stdout)
+
+    def test_on_omarchy_3_the_binding_goes_in_bindings_conf(self):
+        path = self.omarchy("bindings.conf", "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n")
+        result = self.install("bash")
+        self.assertEqual(path.read_text(), "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n\n"
+                         f"bindd = SUPER SHIFT CTRL, F, Superfind, exec, omarchy-launch-tui {self.home}/.local/bin/superfind pick --run\n")
+        self.assertIn(f"added Super-Shift-Ctrl-F to {path} (run hyprctl reload to use it now)\n", result.stdout)
+
+    def test_on_omarchy_a_key_already_bound_is_left_alone_with_a_hint(self):
+        taken = 'o.bind("SUPER + SHIFT + CTRL + F", "Files", "nautilus")\n'
+        path = self.omarchy("bindings.lua", taken)
+        result = self.install("bash")
+        self.assertEqual(path.read_text(), taken)
+        self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: "
+                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n',
+                      result.stdout)
+
+    def test_on_omarchy_a_home_with_a_space_gets_a_hint_instead_of_a_broken_binding(self):
+        self.home = self.home / "Adam M"
+        path = self.omarchy("bindings.lua", "")
+        result = self.install("bash")
+        self.assertEqual(path.read_text(), "")
+        self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: ", result.stdout)
+
+    def test_on_omarchy_ghostty_gets_no_super_keybind(self):
+        self.omarchy("bindings.lua")
+        ghostty = self.home / ".config" / "ghostty" / "config"
+        ghostty.parent.mkdir(parents=True)
+        ghostty.write_text("theme = dark\n")
+        result = self.install("bash")
+        self.assertEqual(ghostty.read_text(), "theme = dark\n")
+        self.assertIn("skipped the Ghostty keybind: on Omarchy, Hyprland takes Super keys before Ghostty sees them\n", result.stdout)
+
+    def test_on_omarchy_an_unknown_shell_still_gets_the_binding(self):
+        path = self.omarchy("bindings.lua", "")
+        result = self.install("nu")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('o.bind("SUPER + SHIFT + CTRL + F", "Superfind",', path.read_text())
+
+    def test_without_omarchy_ghostty_gets_its_keybind_and_hyprland_nothing(self):
+        ghostty = self.home / ".config" / "ghostty" / "config"
+        ghostty.parent.mkdir(parents=True)
+        ghostty.write_text("theme = dark\n")
+        bindings = self.home / ".config" / "hypr" / "bindings.lua"
+        bindings.parent.mkdir(parents=True)
+        bindings.write_text("")
+        self.install("bash")
+        self.assertEqual(ghostty.read_text(), "theme = dark\n\nkeybind = super+shift+o=text:\\x18c\n")
+        self.assertEqual(bindings.read_text(), "")
 
     def startup_file(self, shell):
         if shell == "zsh":
@@ -218,6 +283,16 @@ class ReleaseInstaller(unittest.TestCase):
             self.assertIn('  "$HOME/.local/bin/superfind" init fish | source      # in ~/.config/fish/config.fish\n', result.stdout)
             self.assertEqual(result.stdout.splitlines()[-1], f"done: run {self.home}/.local/bin/superfind to see what it does")
             self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".local"])
+
+    def test_on_omarchy_the_release_install_binds_super_shift_ctrl_f(self):
+        (self.home / ".local" / "share" / "omarchy").mkdir(parents=True)
+        bindings = self.home / ".config" / "hypr" / "bindings.lua"
+        bindings.parent.mkdir(parents=True)
+        bindings.write_text("")
+        result = self.install(stdin=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(bindings.read_text(), '\no.bind("SUPER + SHIFT + CTRL + F", "Superfind", '
+                         f'"omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n')
 
     def test_piped_to_sh_inside_a_superfind_clone_it_still_installs_the_release(self):
         clone = self.root / "clone"

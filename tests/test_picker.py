@@ -60,11 +60,12 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False,
+                    pick="pick"):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
-        command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        command = f"env -i {env} {SUPERFIND} {pick} > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
@@ -112,6 +113,45 @@ class PickerBehavior(unittest.TestCase):
             except ProcessLookupError:
                 pass
         return alive
+
+    def fake_claude(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+
+    def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\n"))
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "claude never ran")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+
+    def test_run_cancelled_with_escape_runs_nothing(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+
+    def test_run_never_starts_a_second_copy_of_a_session_an_agent_has_open(self):
+        self.fake_claude()
+        self.three_sessions()
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
+                                                                 "startedAt": int(time.time() * 1000), "status": "idle"}))
+        self.open_picker(pick="pick --run")
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(Path(f"{self.out}.stderr").read_text(),
+                         "superfind pick --run: Invoice layout is already open in another window. "
+                         "superfind pick --run doesn't start a second copy.\n")
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
 
     def three_sessions(self):
         self.session("old", "Ledger migration", user("migrate the ledger tables to the new schema"), tool("Bash"),

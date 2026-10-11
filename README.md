@@ -94,6 +94,13 @@ keybind = super+shift+o=text:\x18c
 
 </details>
 
+<details>
+<summary>Open with Super-Shift-Ctrl-F on Omarchy</summary>
+
+The install script adds the key to your Hyprland bindings. Run `hyprctl reload` to use it right away.
+
+</details>
+
 ## Scripts and agents
 
 Give your agent context from an earlier conversation, or build a journal across all your agents. These examples use `jq`.
