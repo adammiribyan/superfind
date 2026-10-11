@@ -25,7 +25,7 @@ python3 -m unittest discover -s tests -p test_picker.py    # one file
 
 Without tmux, the picker and shell tests are skipped rather than failed. To test another build, point `SUPERFIND_BIN` at it.
 
-CI runs these checks on macOS and Linux for every pull request. To run them yourself before you push:
+CI runs these checks on Linux for every pull request, and on macOS and Linux before every release. A push to `main` runs them again only when it didn't come from a merged pull request. To run the macOS checks on a branch, run `gh workflow run test.yml --ref BRANCH -f macos=true`. To run them yourself before you push:
 
 ```sh
 gofmt -l .                                                 # prints nothing when formatting is clean
@@ -78,6 +78,6 @@ For maintainers:
    git push origin v0.9.0
    ```
 
-Pushing the tag starts the release workflow. It checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
+Pushing the tag starts the release workflow. It first runs every check on macOS and Linux, and stops if any fails. Then it checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
 
 The workflow needs these repository secrets: `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`, and `HOMEBREW_TAP_TOKEN`.
