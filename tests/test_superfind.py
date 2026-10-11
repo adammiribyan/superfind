@@ -1,10 +1,13 @@
+import http.server
 import json
 import os
 import re
 import shutil
+import socketserver
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import urllib.parse
@@ -23,6 +26,24 @@ def colors_in(text):
     return found + re.findall(r"\x1b\](?:1[0-9]|4);", text)
 
 
+class LoopbackServer(http.server.HTTPServer):
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+class ThreadingLoopbackServer(socketserver.ThreadingMixIn, LoopbackServer):
+    daemon_threads = True
+
+
+def serve(test, handler, threaded=False):
+    server = (ThreadingLoopbackServer if threaded else LoopbackServer)(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    return f"http://127.0.0.1:{server.server_port}"
+
+
 def line(**entry):
     return json.dumps(entry, separators=(",", ":"))
 
@@ -38,6 +59,10 @@ def claude(text):
 def tool(name):
     return line(type="assistant", message={"role": "assistant", "content": [
         {"type": "tool_use", "id": "t1", "name": name, "input": {}}]})
+
+
+def interrupted():
+    return line(type="user", message={"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]})
 
 
 def uid(n):
@@ -162,8 +187,6 @@ class SuperfindBehavior(unittest.TestCase):
         (chat.parent / "summary.json").write_text(json.dumps(fields, indent=2))
 
     def record_typesafe(self, answer=None, delay=0):
-        import http.server
-        import threading
         requests = []
 
         class Recorder(http.server.BaseHTTPRequestHandler):
@@ -180,11 +203,7 @@ class SuperfindBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=serve(self, Recorder, threaded=True))
         return requests
 
     def logging_claude(self, reply="[0]"):
@@ -270,6 +289,17 @@ class SuperfindBehavior(unittest.TestCase):
         self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
+
+    def test_without_a_key_an_interrupted_session_is_unfinished(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Running it on staging first."),
+                     interrupted(), title="Ledger migration")
+        self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job name")
+        self.assertEqual(self.rows(""), ["Export job name  1d ago · tmp", "Ledger migration  unfinished · 1d ago · tmp"])
+        self.assertEqual(self.rows("is:unfinished"), ["Ledger migration  unfinished · 1d ago · tmp"])
+        self.assertEqual([(r["title"], r["status"]) for r in map(json.loads, self.superfind("search", "--json").splitlines())],
+                         [("Export job name", ""), ("Ledger migration", "unfinished")])
+        self.env["TYPESAFE_API_KEY"] = "test"
+        self.assertEqual(self.rows(""), ["Export job name  1d ago · tmp", "Ledger migration  1d ago · tmp"])
 
     def test_a_judgment_is_dropped_once_the_session_changes(self):
         waiting = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
@@ -377,7 +407,6 @@ class SuperfindBehavior(unittest.TestCase):
 
     def test_indexing_waits_for_another_writer_instead_of_failing(self):
         import sqlite3
-        import threading
 
         self.session("a1", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
         self.superfind("index")
@@ -429,6 +458,63 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual([r.split("\t")[4] for r in self.superfind("search", "kubernetes").splitlines()], ["Cluster upgrade"])
         self.assertEqual(self.superfind("command", str(path)), "cd /tmp && claude --resume b2\n")
 
+    def freeze_cache(self):
+        cache = self.home / ".cache"
+        cache.mkdir(exist_ok=True)
+        frozen = [cache, *cache.rglob("*")]
+        for p in frozen:
+            p.chmod(0o500 if p.is_dir() else 0o400)
+        self.addCleanup(lambda: [p.chmod(0o700) for p in frozen if p.exists()])
+        return lambda: {p: p.read_bytes() for p in cache.rglob("*") if p.is_file()}
+
+    def test_a_cache_that_cannot_be_written_is_still_searched_and_left_alone(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.superfind("index")
+        contents = self.freeze_cache()
+        before = contents()
+        result = self.run_superfind("search", "kubernetes")
+        self.assertEqual((result.returncode, result.stdout.split("\t")[4], result.stderr), (0, "Cluster upgrade", ""))
+        self.session("b2", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        result = self.run_superfind("search", "--json", "kubernetes")
+        self.assertEqual((result.returncode, [json.loads(r)["title"] for r in result.stdout.splitlines()]), (0, ["Cluster upgrade"]))
+        self.assertRegex(result.stderr, r"^superfind search: results may miss what changed in 1 session since .+, "
+                                        r"because the index in .+ can't be updated from here\n$")
+        listed = self.run_superfind("search")
+        self.assertEqual([r.split("\t")[4] for r in listed.stdout.splitlines()], ["Invoice file names", "Cluster upgrade"])
+        shown = self.run_superfind("show", "b2")
+        self.assertEqual((shown.returncode, shown.stdout.splitlines()[0], shown.stderr), (0, "# Invoice file names", ""))
+        self.env["TYPESAFE_API_KEY"] = "unused"
+        for command in ("index", "label"):
+            refused = self.run_superfind(command)
+            self.assertEqual((refused.returncode, refused.stdout), (1, ""), command)
+            self.assertRegex(refused.stderr, rf"^superfind {command}: .+ can't be written from here, so nothing was saved\n$")
+        self.assertEqual(contents(), before)
+
+    def test_a_cache_that_cannot_be_written_still_reads_what_its_last_writer_left_in_the_log(self):
+        import sqlite3
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.superfind("index")
+        holder = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
+        holder.execute("SELECT count(*) FROM docs").fetchone()
+        self.session("b2", user("rename the invoice PDF files"), claude("Renamed them."), title="Invoice file names")
+        self.superfind("index")
+        self.assertTrue((self.home / ".cache" / "superfind" / "search.db-wal").stat().st_size > 0)
+        contents = self.freeze_cache()
+        before = contents()
+        result = self.run_superfind("search", "invoice")
+        after = contents()
+        holder.close()
+        self.assertEqual((result.returncode, result.stdout.split("\t")[4], result.stderr), (0, "Invoice file names", ""))
+        self.assertEqual(after, before)
+
+    def test_a_cache_that_cannot_be_written_and_has_no_index_says_how_to_fix_it(self):
+        self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")
+        self.freeze_cache()
+        result = self.run_superfind("search", "kubernetes")
+        self.assertEqual((result.returncode, result.stdout), (1, ""))
+        self.assertRegex(result.stderr, r"^superfind search: there's no usable index in .+, and it can't be written from here\. "
+                                        r"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written\n$")
+
     def break_search_index(self):
         import sqlite3
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
@@ -452,9 +538,6 @@ class SuperfindBehavior(unittest.TestCase):
                          (1, "superfind label: needs a TypeSafe key in TYPESAFE_API_KEY or ~/.config/superfind/env\n"))
 
     def test_labels_for_deleted_sessions_are_forgotten(self):
-        import http.server
-        import threading
-
         class Finished(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"]))
@@ -467,24 +550,19 @@ class SuperfindBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Finished)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Finished)
         gone = self.session("gone", user("try a spike"), tool("Bash"), claude("Spiked."), title="Spike")
         self.judged(gone, "waiting")
         gone.unlink()
         kept = self.session("kept", user("deploy the ledger migration"), tool("Bash"), claude("Deployed."),
                             title="Ledger migration")
         os.utime(kept, (time.time() - 600, time.time() - 600))
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url)
         self.superfind("label")
         status = json.loads((self.home / ".cache" / "superfind" / "status.json").read_text())
         self.assertEqual({p: e["status"] for p, e in status.items()}, {str(kept): "finished"})
 
     def test_typesafe_requests_are_ascii_json_with_sessions_in_list_order(self):
-        import http.server
-        import threading
         bodies = []
 
         class Recorder(http.server.BaseHTTPRequestHandler):
@@ -497,15 +575,12 @@ class SuperfindBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Recorder)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Recorder)
         self.session("a1", user("rename the invoice PDF files"), tool("Edit"), claude("Renamed them."),
                      title="Invoice file names")
         self.session("b2", user("fix the café layout"), tool("Edit"), claude("Fixed."),
                      title="Fix <b> & “quotes” 🚀 in café")
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}",
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url,
                         PATH="/usr/bin:/bin")
         self.run_superfind("ask", "where did we fix the cafe")
         raw = bodies[0].decode("ascii")
@@ -530,8 +605,6 @@ class SuperfindBehavior(unittest.TestCase):
                 self.assertEqual(body.splitlines(), ["  " + l for l in expected])
 
     def test_a_transcript_that_could_not_be_read_is_not_labeled_until_it_can_be(self):
-        import http.server
-        import threading
         judged = []
 
         class Waiting(http.server.BaseHTTPRequestHandler):
@@ -546,17 +619,14 @@ class SuperfindBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Waiting)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Waiting)
         path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
                             claude("Should I run it on production?"), title="Ledger migration")
         self.superfind("index")
         path.chmod(0)
         self.addCleanup(path.chmod, 0o644)
         os.utime(path, (time.time() - 600, time.time() - 600))
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}")
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url)
         unreadable = self.run_superfind("label")
         status = self.home / ".cache" / "superfind" / "status.json"
         self.assertEqual((unreadable.returncode, judged), (1, []))
@@ -613,9 +683,6 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
-        import http.server
-        import threading
-
         class Malformed(http.server.BaseHTTPRequestHandler):
             def do_POST(self):
                 self.rfile.read(int(self.headers["Content-Length"]))
@@ -628,13 +695,10 @@ class SuperfindBehavior(unittest.TestCase):
             def log_message(self, *args):
                 pass
 
-        server = http.server.HTTPServer(("127.0.0.1", 0), Malformed)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        url = serve(self, Malformed)
         self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Should I run it on production?"),
                      title="Ledger migration")
-        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=f"http://127.0.0.1:{server.server_port}",
+        self.env.update(TYPESAFE_API_KEY="test", TYPESAFE_URL=url,
                         PATH="/usr/bin:/bin")
         self.superfind("index")
         result = self.run_superfind("ask", "where did we migrate the ledger")
@@ -838,8 +902,10 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.superfind("command", str(path)), f"cd /tmp && grok --resume {uid(1)}\n")
 
     def test_a_grok_home_other_than_the_default_is_passed_to_grok(self):
-        work = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), home="work-grok")
-        self.grok_session(uid(2), "/tmp", grok_user("rename the export job"), grok_reply("Renamed.", tools=1))
+        work = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                                 grok_reply("Fixed."), home="work-grok")
+        self.grok_session(uid(2), "/tmp", grok_user("rename the export job"), grok_reply("Renaming.", tools=1), grok_result(),
+                          grok_reply("Renamed."))
         home = self.home.resolve()
         self.env["SUPERFIND_GROK_DIRS"] = str(home / "work-grok")
         self.assertEqual(self.rows(), ["rename the export job  1d ago · tmp · .grok",
@@ -871,7 +937,8 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("omega"), ["Retries"])
 
     def test_a_grok_summary_rewrite_does_not_make_the_session_active(self):
-        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixed.", tools=1), title="Build fix")
+        chat = self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                                 grok_reply("Fixed."), title="Build fix")
         two_days = time.time() - 2 * 86400 - 60
         os.utime(chat, (two_days, two_days))
         os.utime(chat.parent / "summary.json")
@@ -1095,7 +1162,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 14)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 15)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3
@@ -1645,8 +1712,8 @@ class SuperfindBehavior(unittest.TestCase):
                 result = subprocess.run([shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
                                         "HOME": str(self.home)}, capture_output=True, text=True)
                 self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (shell, command, result.stderr))
-            moved = self.home / "bin"
-            moved.mkdir(exist_ok=True)
+            moved = self.home / "bin" / shell
+            moved.mkdir(parents=True)
             shutil.copy(SUPERFIND, moved / "superfind")
             snapshot.write_text(functions.replace(str(Path(SUPERFIND).resolve()), "/gone/superfind"))
             result = subprocess.run([shell, "-c", f"source {snapshot}; superfind --version"],

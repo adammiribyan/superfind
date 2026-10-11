@@ -21,7 +21,7 @@ type Agent struct {
 	resume   string
 	IDOf     func(path string) string
 	Names    func(home string) map[string]string
-	reader   func(path string) (reader, error)
+	reader   func(path string, start Transcript) (reader, error)
 	trail    func(t *Trail) func(raw []byte) bool
 	parts    func(path string) []string
 	parent   func(path string) string
@@ -30,7 +30,7 @@ type Agent struct {
 var Agents = []*Agent{
 	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "SUPERFIND_CLAUDE_DIRS",
 		glob: "projects/*/*.jsonl", resume: "claude --resume", IDOf: stem,
-		reader: func(string) (reader, error) { return newParser(), nil }, trail: claudeTrail, parts: claudeParts},
+		reader: func(_ string, start Transcript) (reader, error) { return &parser{t: start}, nil }, trail: claudeTrail, parts: claudeParts},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
 		reader: newCodexReader, trail: codexTrail, parent: codexParent},
