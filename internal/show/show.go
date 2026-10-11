@@ -12,6 +12,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/mask"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -36,7 +37,7 @@ type Conversation struct {
 	Truncated bool
 }
 
-func Clean(s string) string { return Mask(agent.Printable(s)) }
+func Clean(s string) string { return mask.Secrets(agent.Printable(s)) }
 
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {
