@@ -8,6 +8,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - Without a TypeSafe key, sessions that ended on an interruption, mid-command, or on a request the agent never answered are marked **unfinished**, and `is:unfinished` finds them. superfind reads this from the session file and sends nothing. **waiting on you** still needs a key, and with a key Jev still decides both labels.
+- `superfind report` prints the sessions that changed in the last 24 hours, newest first and grouped by project, as Markdown for a note or an agent. `after:` and `before:` take a date, `today`, `yesterday`, or a span such as `12h`, `3d`, or `2w`, and the `is:` and `agent:` filters work as in search. Each session shows its agent, branch, how it ended, its age, the start of its id for `superfind show`, and your last request, masked. A label superfind inferred gets its own line that says whether Jev or the ending rule made it. `report --json` prints one object per session, with the inferred label kept apart under `inferred`, and includes sessions another program started, as `search --json` does. It reads local files only and never calls TypeSafe.
 
 ### Changed
 

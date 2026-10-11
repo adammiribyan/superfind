@@ -34,12 +34,18 @@ type Session struct {
 	Ending     agent.Event `json:"ending,omitempty"`
 }
 
+func (s Session) Root() string { return strings.SplitN(s.Cwd, worktreeMark, 2)[0] }
+
 func (s Session) Project() string {
-	root := strings.SplitN(s.Cwd, worktreeMark, 2)[0]
+	root := s.Root()
 	if name := filepath.Base(root); name != "" && name != "/" && name != "." {
 		return name
 	}
 	return root
+}
+
+func (s Session) RequestClipped() bool {
+	return strings.HasSuffix(s.LastPrompt, "…") && clusters(s.LastPrompt) >= promptRunes
 }
 
 func (s Session) Throwaway() bool {
@@ -54,6 +60,7 @@ type Row struct {
 	Home       string
 	Path       string
 	Status     string
+	StatusBy   string
 	FolderGone bool
 }
 
@@ -61,7 +68,7 @@ func Annotate(rows []Row) []Row {
 	known, keyless := statuses(), typesafe.Key() == ""
 	out := make([]Row, len(rows))
 	for i, r := range rows {
-		r.Status = statusLabel(r, known, keyless)
+		r.Status, r.StatusBy = statusLabel(r, known, keyless)
 		r.FolderGone = !folderExists(r.Session.Cwd)
 		out[i] = r
 	}

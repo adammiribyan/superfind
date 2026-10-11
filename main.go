@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
@@ -45,6 +46,9 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
   superfind ask WORDS [--json]
                           print the sessions that best fit what you describe, even in other words;
                           takes the same is: and agent: filters
+  superfind report [FILTERS] [--json]
+                          print the sessions that changed in the last 24 hours, by project, as
+                          Markdown; after: and before: take a date, today, yesterday, or 12h, 3d, 2w
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
@@ -105,6 +109,28 @@ first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude
 without one. Takes the same is: and agent: filters as search, and prints the same fields.
 With --json, it prints one JSON object per session, as search --json does.
 `,
+	"report": `superfind report [FILTERS] [--json]
+
+Print the sessions that changed in a window of time, newest first, grouped by project, as
+Markdown to paste into a note or hand to an agent. Each session gets its title, agent, branch,
+how it ended, how long ago it changed, the start of its id for superfind show, and your last
+request in it. A label superfind inferred, waiting on you or unfinished, gets its own line that
+says where it came from. The window is the last 24 hours unless you give after: or before:.
+Short sessions with no real work are left out, and so are sessions another program started,
+unless you ask for them with is:agent. It reads only local files and sends nothing: a Jev label
+appears only when the picker or superfind label already made it.
+
+  after:WHEN      sessions that changed at or after WHEN
+  before:WHEN     sessions that changed before WHEN; with only before:, there is no start
+                  WHEN is a date like 2026-10-09 or today or yesterday, each from the start of
+                  that day, or a span back from now like 12h, 3d, or 2w
+  is:waiting      only sessions waiting on you; is:unfinished works the same way
+  is:agent        only sessions another program started
+  agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
+  --json          print one JSON object per session instead, with how it ended, its tool
+                  calls, and your last request, and the inferred label apart under inferred;
+                  like search --json, it includes sessions another program started
+`,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
 Print where a session left off: your last real request and the end of the reply.
@@ -156,7 +182,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "search", "ask", "preview", "show", "command", "index", "label"}
+var commandNames = []string{"init", "pick", "search", "ask", "report", "preview", "show", "command", "index", "label"}
 
 const zshSetup = `_superfind_run() {
   if [[ -x %[1]s ]]; then
@@ -420,6 +446,43 @@ func runShow(args []string) {
 	}
 }
 
+func runReport(args []string) {
+	var filters []string
+	asJSON := false
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			asJSON = true
+		case strings.HasPrefix(arg, "-"):
+			usageError("superfind report: there is no " + arg + " option. See superfind help report.")
+		default:
+			filters = append(filters, arg)
+		}
+	}
+	after, before, rest, err := session.ParseReport(strings.Join(filters, " "), time.Now())
+	if err != nil {
+		usageError("superfind report: " + err.Error() + ".")
+	}
+	if words, _ := session.Narrow(rest, nil); words != "" {
+		usageError("superfind report takes filters, not words; use superfind search for words.")
+	}
+	narrow := session.Narrow
+	if asJSON {
+		narrow = session.NarrowEvery
+	}
+	all := session.Annotate(mustIndex("report"))
+	_, rows := narrow(rest, all)
+	rows = session.Changed(rows, after, before)
+	if asJSON {
+		err = show.WriteReport(stdout, rows)
+	} else {
+		err = show.WriteReportText(stdout, rows, session.ShortIDs(all), after, before)
+	}
+	if err != nil {
+		fail("superfind: couldn't write the output: " + err.Error())
+	}
+}
+
 var output *bufio.Writer
 
 func exit(code int) {
@@ -635,6 +698,8 @@ func run(args []string) {
 		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "show":
 		runShow(args[1:])
+	case "report":
+		runReport(args[1:])
 	case "pick":
 		chosen, err := tui.Pick()
 		if err != nil {

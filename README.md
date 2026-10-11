@@ -157,6 +157,7 @@ superfind                    # open the picker; sfd is short for it
 superfind init zsh|bash      # print the shell setup
 superfind search <words>     # print sessions that contain every word (--json)
 superfind ask <words>        # print the sessions that best fit your description (--json)
+superfind report             # print the sessions that changed in the last 24 hours (after:, before:, --json)
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
 superfind show <session>     # print a session's conversation (--json, --tail N, --max-bytes N)
 superfind command <session>  # print the command that resumes a session
@@ -198,6 +199,40 @@ The fields are described under [What `show` prints](#what-show-prints), which pr
 
 - `kind` is `agent` when another program started the session, and `interactive` otherwise.
 - `match` is the passage that holds your words, about ten words long, or empty when you gave no words or no passage holds them all. `ask` finds sessions by meaning, so its results often have an empty `match`.
+
+### What changed since a time
+
+`superfind report` prints the sessions that changed in a window of time, newest first, grouped by project, as Markdown to paste into a note or hand to an agent. Here is `superfind report after:yesterday`:
+
+```markdown
+# Sessions changed since Saturday, 10 October 2026, 00:00
+
+## billing
+
+- **Payment retries**: Claude · main · ended on an interruption · 3h · id 0199a1b2
+  - Last request: make retries safe to repeat
+  - Inferred: unfinished, from how it ended
+- **Export job**: Codex · feat/export · ended with a reply · 5h · id 019a3c4d
+  - Last request: rename the export job
+```
+
+Each session line ends with the start of its id, 8 characters or more, long enough that no other session's id starts the same way, so `superfind show` takes it. A heading is the project's folder name, or its full path when two projects with the same name changed in the window.
+
+With no window given, it is the last 24 hours. `after:WHEN` and `before:WHEN` set it, and compare against when a session last changed. With only `before:`, the window has no start. `WHEN` is a date such as `2026-10-09`, or `today` or `yesterday`, each from the start of that day in your time zone, or a span back from now such as `12h`, `3d`, or `2w`. `after:` has to be earlier than `before:`. The `is:` and `agent:` filters work as they do in search. An unknown `is:` or `agent:` value is a usage mistake, and filter names can be in any case. Sessions another program started appear in the Markdown only with `is:agent`. Short sessions with no real work are left out. Words are a usage mistake; use `search` for those.
+
+`report` reads only local files and sends nothing. A label from Jev appears only when `superfind label` or the picker has already made and cached it; without a TypeSafe key, the label comes from how the session ended (see [Waiting on you](#waiting-on-you)). The last request is masked as `show` masks it (see [Masked secrets](#masked-secrets)).
+
+`report --json` prints one JSON object per line, with the fields of a search result plus these. Like `search --json`, it includes sessions another program started, with `kind` set to `agent`:
+
+```json
+{"schema":1,"agent":"claude","id":"0f6c…", …,"status":"unfinished", …,"match":"",
+ "ending":"interrupted","tool_calls":4,"last_request":"make retries safe to repeat",
+ "inferred":{"label":"unfinished","by":"ending"}}
+```
+
+- `ending` is how the session file ends: `replied`, `interrupted`, `mid_command` (a tool call whose result never arrived), or `unanswered` (a request with no reply). It is `null` when the file doesn't show how it ended.
+- `tool_calls` counts the tool calls in the session, and `last_request` is your last request in it, up to 400 characters, ending at a whole word when longer.
+- `inferred` holds what superfind guessed rather than read: `label` is `waiting`, `unfinished`, or `null`, and `by` is `jev` when a cached Jev verdict made it or `ending` when the keyless rule did, or `null`. `status` repeats the label for scripts written for `search --json`. `active`, `folder_gone`, and `resume` are worked out as in `search --json`, and the other fields are read from the session file.
 
 ### Naming a session
 
