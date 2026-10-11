@@ -195,7 +195,7 @@ superfind command "$id"               # the command that resumes it
 The fields are described under [What `show` prints](#what-show-prints), which prints the same ones. Two more matter here:
 
 - `kind` is `agent` when another program started the session, and `interactive` otherwise.
-- `match` is a passage of about ten words that holds your words, or empty when you gave no words or none of them is in the conversation. In a conversation longer than about 2,000 characters, it comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common, such as `the`. `ask` finds sessions by meaning, so its results often have an empty `match`.
+- `match` is a passage of about ten words that holds your words, or empty when you gave no words or none of them is in the conversation. In a conversation longer than about 2,000 characters, it comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common, such as `the`. `ask` finds sessions by meaning, so when the conversation doesn't hold all your words, its `match` is a passage that holds some of them. Common words such as `we` or `the` don't count, so `match` is empty when none of your other words is in the conversation. An `ask` `match` shows where the conversation touches your words, not how good a fit the session is: a word also matches longer words that start with it, so `add` matches `address`.
 
 ### Naming a session
 

@@ -12,6 +12,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - `search --json` takes about as long as plain `search`, even for a word in nearly every session. On 600 generated sessions, `search --json the` took 13 seconds and now takes under a quarter of a second. `ask` also prepares its question faster, and the preview finds the passage that matched sooner in long sessions.
+- `ask --json` fills `match` with a passage that holds some of your words when the conversation doesn't hold them all. Common words such as `the` don't count. A session rarely holds every word of a description, so most `ask` results used to have an empty `match`.
 - In a conversation longer than about 2,000 characters, `match` can show a different passage than before. It comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common. Shorter conversations show the same passage as before.
 
 ## [0.10.0] - 2026-10-10

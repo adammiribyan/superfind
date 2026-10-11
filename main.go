@@ -440,8 +440,8 @@ func usageError(message string) {
 	exit(2)
 }
 
-func writeRecords(rows []session.Row, db *sql.DB, query string) {
-	if err := show.WriteRecords(stdout, rows, db, query); err != nil {
+func writeRecords(rows []session.Row, db *sql.DB, query string, byMeaning bool) {
+	if err := show.WriteRecords(stdout, rows, db, query, byMeaning); err != nil {
 		fail("superfind: couldn't write the output: " + err.Error())
 	}
 }
@@ -533,7 +533,7 @@ func run(args []string) {
 			fail("superfind search: " + err.Error())
 		}
 		if asJSON {
-			writeRecords(found, db, query)
+			writeRecords(found, db, query, false)
 			return
 		}
 		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
@@ -548,7 +548,7 @@ func run(args []string) {
 		}
 		query, eligible := narrow(words, rows)
 		if query == "" && asJSON {
-			writeRecords(session.RecentFirst(eligible), db, "")
+			writeRecords(session.RecentFirst(eligible), db, "", false)
 			return
 		}
 		if query == "" {
@@ -567,7 +567,7 @@ func run(args []string) {
 			fail(failure.Error())
 		}
 		if asJSON {
-			writeRecords(session.InOrder(rows, paths), db, query)
+			writeRecords(session.InOrder(rows, paths), db, query, true)
 			return
 		}
 		printRows(session.InOrder(rows, paths), shown)

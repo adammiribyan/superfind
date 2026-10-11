@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	passageTokens   = 10
+	PassageTokens   = 10
 	wholeRunes      = 2048
 	leadingRunes    = 256
 	widestWindow    = 16384
@@ -87,7 +87,7 @@ const (
 )
 
 func Passages(db *sql.DB, query string) map[string]string {
-	found, _ := marked(db, phrasesOf(query), false, passageTokens, "")
+	found, _ := marked(db, phrasesOf(query), false, PassageTokens, "")
 	for path, text := range found {
 		found[path] = unmarked(text, "", "")
 	}
@@ -95,7 +95,7 @@ func Passages(db *sql.DB, query string) map[string]string {
 }
 
 func Snippet(db *sql.DB, path, query, before, after string) string {
-	found, _ := marked(db, phrasesOf(query), false, passageTokens, path)
+	found, _ := marked(db, phrasesOf(query), false, PassageTokens, path)
 	return unmarked(found[path], before, after)
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -110,9 +111,20 @@ func WriteText(w io.Writer, r session.Record, c Conversation) error {
 	return nil
 }
 
-func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string) error {
+func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string, anyWord bool) error {
 	words, _ := session.Narrow(query, nil)
 	passages := session.Passages(db, words)
+	if passages == nil {
+		passages = map[string]string{}
+	}
+	if anyWord && slices.ContainsFunc(rows, func(r session.Row) bool { return passages[r.Path] == "" }) {
+		some, _ := session.PassagesOfAny(db, session.MeaningfulWords(words), session.PassageTokens)
+		for path, text := range some {
+			if passages[path] == "" {
+				passages[path] = text
+			}
+		}
+	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	for _, r := range rows {
