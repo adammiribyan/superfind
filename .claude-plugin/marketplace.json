@@ -1,0 +1,15 @@
+{
+  "name": "superfind",
+  "description": "superfind's skill for coding agents",
+  "owner": {
+    "name": "Adam Miribyan",
+    "url": "https://github.com/adammiribyan"
+  },
+  "plugins": [
+    {
+      "name": "superfind",
+      "source": "./",
+      "description": "Find, read, and resume past Claude Code, Codex, and Grok sessions with the superfind CLI"
+    }
+  ]
+}
