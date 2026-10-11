@@ -15,14 +15,16 @@ func ResumeCommand(a *Agent, home, cwd, id string) string {
 	return "cd " + ShellQuote(SurvivingDir(cwd)) + " && " + env + a.resume + " " + ShellQuote(id)
 }
 
-var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@%_+=:,./-]+$`)
+var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@_+:,./-]+$`)
 
 func ShellQuote(s string) string {
 	if s != "" && shellSafe.MatchString(s) {
 		return s
 	}
-	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+	return "'" + quoteMarks.Replace(s) + "'"
 }
+
+var quoteMarks = strings.NewReplacer(`'`, `'"'"'`, `\`, `'"\\"'`)
 
 func SurvivingDir(dir string) string {
 	for {

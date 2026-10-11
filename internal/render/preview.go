@@ -114,7 +114,7 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 	}
 	answered := reply != "" && (lastAsk < 0 || turns[len(turns)-1].Role == "assistant")
 	if answered {
-		replied = render(reply, width)
+		replied = renderEnd(reply, width, 18)
 	}
 	build := func(askLines []string, keepReply int) []string {
 		var body []string
