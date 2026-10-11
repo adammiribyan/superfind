@@ -61,6 +61,10 @@ jobs:
           got=$(go run . --version)
           want="superfind ${GITHUB_REF_NAME#v}"
           [ "$got" = "$want" ] || { echo "::error::tag $GITHUB_REF_NAME needs $want, but the code says $got"; exit 1; }
+      - name: Write llms-full.txt from this build
+        run: |
+          go build -o bin/superfind .
+          python3 scripts/llms.py
       - name: Build, sign, notarize, and upload to a draft release
         uses: goreleaser/goreleaser-action@v6
         with:

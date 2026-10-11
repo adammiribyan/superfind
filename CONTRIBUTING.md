@@ -54,7 +54,7 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 - If users will notice the change, update the README and add a line under the top version in [CHANGELOG.md](CHANGELOG.md).
 - Write commit messages that say what changed for the user, such as `fix: keep the selection when the list refreshes`.
 - If you change the picker's look, re-record the demo (below) so the README stays true.
-- If you change `llms.txt`, a command's help, or the JSON output, run `python3 scripts/llms.py` and commit `llms-full.txt`. A behavior test fails while it is out of date. A new JSON field needs a line in the script's `FIELDS`.
+- `llms-full.txt` isn't committed. `python3 scripts/llms.py` writes it from `llms.txt`, every command's help, and real JSON output, and a behavior test fails if it can't. A new JSON field needs a line in the script's `FIELDS`.
 
 ## Demo
 
@@ -78,6 +78,6 @@ For maintainers:
    git push origin v0.9.0
    ```
 
-Pushing the tag starts the release workflow. It first runs every check on macOS and Linux, and stops if any fails. Then it checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
+Pushing the tag starts the release workflow. It first runs every check on macOS and Linux, and stops if any fails. Then it checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release, along with `install.sh` and an `llms-full.txt` that `scripts/llms.py` writes from that build. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
 
 The workflow needs these repository secrets: `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`, and `HOMEBREW_TAP_TOKEN`.
