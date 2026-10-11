@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Write llms-full.txt, the whole superfind reference in one file for AI assistants.
 
-  scripts/llms.py            rewrite llms-full.txt
-  scripts/llms.py --check    exit 1 if llms-full.txt is out of date
+  scripts/llms.py            write llms-full.txt at the repo root
+  scripts/llms.py PATH       write it to PATH instead
+
+The release workflow runs it and attaches the file to each release.
 
 It builds the file from llms.txt, the help that the built binary prints, and the
 JSON that the binary prints for a made-up session in a throwaway home folder. Set
@@ -164,12 +166,8 @@ def build():
 
 
 def main():
-    text = build()
-    if "--check" in sys.argv[1:]:
-        if not OUTPUT.exists() or OUTPUT.read_text(encoding="utf-8") != text:
-            sys.exit("llms-full.txt is out of date. Run scripts/llms.py and commit the result.")
-        return
-    OUTPUT.write_text(text, encoding="utf-8")
+    output = Path(sys.argv[1]) if len(sys.argv) > 1 else OUTPUT
+    output.write_text(build(), encoding="utf-8")
 
 
 if __name__ == "__main__":

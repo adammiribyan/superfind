@@ -18,10 +18,24 @@ def rank_every_card(questions):
 
 
 class LlmsFiles(SuperfindBehavior):
-    def test_llms_full_txt_matches_what_the_generator_writes(self):
-        result = subprocess.run([sys.executable, str(ROOT / "scripts" / "llms.py"), "--check"],
+    def test_the_generator_writes_a_full_reference_from_the_binary(self):
+        output = self.home / "llms-full.txt"
+        result = subprocess.run([sys.executable, str(ROOT / "scripts" / "llms.py"), str(output)],
                                 env={**os.environ, "SUPERFIND_BIN": str(SUPERFIND)}, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        text = output.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith((ROOT / "llms.txt").read_text(encoding="utf-8").split("\n## ")[0]), text[:300])
+        listed = re.search(r"The commands are (.+)\.\n", self.run_superfind("no-such-command").stderr).group(1)
+        for command in re.split(r", and |, ", listed) + ["version"]:
+            self.assertIn(f"### superfind help {command}\n", text)
+            self.assertIn(self.superfind("help", command), text)
+        examples = [json.loads(e) for e in re.findall(r"```json\n(.+?)\n```", text, re.S)]
+        self.assertEqual([e["id"] for e in examples], [uid(1), uid(1)])
+        for field in list(examples[1]) + list(examples[1]["turns"][0]):
+            self.assertIn(f"- `{field}`: ", text)
+        self.assertNotIn("superfind-llms-", text)
+        self.assertIn('"cwd": "/Users/you/code/storefront"', text)
+        self.assertIn("- `kind`: ", text)
 
     def test_every_superfind_command_in_llms_txt_runs(self):
         self.session(uid(1), user("the checkout button double-charges on slow networks", cwd="/work/storefront"),
