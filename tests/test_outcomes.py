@@ -237,6 +237,18 @@ class Outcomes(Blame):
                        title="Refunds")
         self.assertEqual(self.outcomes(1, "commit", "repo"), [(made, str(self.work)), (kept, str(receipts))])
 
+    def test_a_codex_commit_lands_on_the_repository_of_the_folder_it_ran_in(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        receipts = self.work.parent / "receipts"
+        kept = self.made_in(receipts, "feat: keep a receipt for each charge", t)
+        self.codex_session(uid(1), codex_meta(cwd=str(self.work)), codex_user("keep receipts"),
+                           codex_at(t, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -qam 'feat: keep a receipt for each charge'", "workdir": str(receipts)})),
+                           codex_at(t + 1, "response_item", type="function_call_output", call_id="c1", output="Process exited with code 0"),
+                           codex_reply("Committed."))
+        self.assertEqual(self.outcomes(1, "commit", "repo"), [(kept, str(receipts))])
+
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)
         self.claude_at(1, title="Just talk")

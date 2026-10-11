@@ -24,6 +24,7 @@ type Commit struct {
 	Command string
 	SHA     string
 	At      float64
+	Dir     string
 }
 
 type PR struct {
@@ -84,9 +85,9 @@ func chained(command string) bool {
 	return at != nil && strings.ContainsAny(unquoted(command[at[1]:]), ";|&\n")
 }
 
-func (t *Trail) ran(command string, at float64) bool {
+func (t *Trail) ran(command, dir string, at float64) bool {
 	if commits(command) {
-		t.Commits = append(t.Commits, Commit{Command: command, At: at})
+		t.Commits = append(t.Commits, Commit{Command: command, At: at, Dir: dir})
 		return true
 	}
 	return strings.Contains(command, "gh pr create")
@@ -300,7 +301,7 @@ func claudeTrail(t *Trail) func([]byte) bool {
 					waiting[b.ID] = pending{edits: []Edit{{p, at}}}
 				}
 			case b.Type == "tool_use" && b.Name == "Bash":
-				if t.ran(b.Input.Command, at) {
+				if t.ran(b.Input.Command, "", at) {
 					waiting[b.ID] = pending{command: b.Input.Command}
 				}
 			case b.Type == "tool_result":
@@ -382,7 +383,7 @@ func codexTrail(t *Trail) func([]byte) bool {
 			}
 		case l.Type == "event_msg" && p.Type == "item_completed" && p.Item.Type == "CommandExecution":
 			command := commandText(p.Item.Command)
-			if t.ran(command, at) {
+			if t.ran(command, cwd, at) {
 				t.answered(pending{command: command}, p.Item.Output, "", p.Item.ExitCode != nil && *p.Item.ExitCode != 0)
 			}
 		case l.Type == "response_item" && (p.Type == "function_call" || p.Type == "custom_tool_call"):
@@ -398,8 +399,8 @@ func codexTrail(t *Trail) func([]byte) bool {
 				break
 			}
 			var w pending
+			base := cmp.Or(args.Workdir, cwd)
 			if p.Name != "exec" && (p.Name == "apply_patch" || strings.Contains(input, "apply_patch")) {
-				base := cmp.Or(args.Workdir, cwd)
 				for _, m := range patchedFile.FindAllStringSubmatch(input, -1) {
 					if path := strings.TrimSpace(m[1] + m[2]); path != "" {
 						if !filepath.IsAbs(path) {
@@ -409,7 +410,7 @@ func codexTrail(t *Trail) func([]byte) bool {
 					}
 				}
 			}
-			if p.Name != "apply_patch" && t.ran(input, at) {
+			if p.Name != "apply_patch" && t.ran(input, base, at) {
 				w.command = input
 			}
 			if w.command != "" || len(w.edits) > 0 {
@@ -500,7 +501,7 @@ func grokTrail(t *Trail) func([]byte) bool {
 					t.Edits = append(t.Edits, Edit{args.FilePath, 0})
 				}
 			case "run_terminal_command":
-				if t.ran(args.Command, 0) {
+				if t.ran(args.Command, "", 0) {
 					waiting[c.ID] = pending{command: args.Command}
 				}
 			}

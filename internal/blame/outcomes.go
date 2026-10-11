@@ -116,7 +116,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		}
 	}
 	for i, c := range trail.Commits {
-		where[i] = cmp.Or(topOf(agent.SurvivingDir(folderOf(c.Command, r.Session.Cwd))), topOf(agent.SurvivingDir(r.Session.Cwd)))
+		where[i] = cmp.Or(topOf(agent.SurvivingDir(folderOf(c.Command, cmp.Or(c.Dir, r.Session.Cwd)))), topOf(agent.SurvivingDir(r.Session.Cwd)))
 		if where[i] != "" {
 			earliest(where[i], c.At)
 		}
