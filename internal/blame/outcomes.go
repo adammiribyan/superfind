@@ -372,38 +372,52 @@ func (rp *repo) reverted(o Outcome) Outcome {
 	if o.Stage != Merged {
 		return o
 	}
-	for _, e := range rp.log {
-		if !rp.onDefault[e.SHA] || e.landed < o.at {
+	shas, subject := []string{o.Commit, o.Landed}, o.Subject
+	for _, e := range slices.Backward(rp.log) {
+		if !rp.onDefault[e.SHA] || e.landed < o.at || !reverts(e, shas, subject) {
 			continue
 		}
-		note := revertNote.FindStringSubmatch(e.body)
-		byNote := note != nil && (strings.HasPrefix(o.Commit, note[1]) || strings.HasPrefix(o.Landed, note[1]))
-		if byNote || (o.Subject != "" && bare(e.Subject) == plain(`Revert "`+o.Subject+`"`)) {
+		if o.Stage == Merged {
 			o.Stage, o.RevertedBy = Reverted, e.SHA
+		} else {
+			o.Stage, o.RevertedBy = Merged, ""
 		}
+		shas, subject = []string{e.SHA}, e.Subject
 	}
 	return o
 }
 
+func reverts(e entry, shas []string, subject string) bool {
+	notes := revertNote.FindAllStringSubmatch(e.body, -1)
+	if len(notes) == 0 {
+		return subject != "" && bare(e.Subject) == plain(`Revert "`+subject+`"`)
+	}
+	return slices.ContainsFunc(notes, func(note []string) bool {
+		return slices.ContainsFunc(shas, func(sha string) bool { return sha != "" && strings.HasPrefix(sha, note[1]) })
+	})
+}
+
 func (rp *repo) pullRequest(number int, made []Outcome) (Outcome, bool) {
 	o := Outcome{Kind: PullRequest, PR: number, Repo: rp.top, Branch: rp.branch, Stage: Opened}
-	for _, e := range rp.log {
-		if e.PR != number || !rp.onDefault[e.SHA] {
-			continue
-		}
+	if i := slices.IndexFunc(rp.log, func(e entry) bool { return e.PR == number && rp.onDefault[e.SHA] }); i >= 0 {
+		e := rp.log[i]
 		o = rp.landedAs(o, e)
-		o.Subject = pullSuffix.ReplaceAllString(e.Subject, "")
-		if len(e.parents) > 1 {
+		if o.Subject = pullSuffix.ReplaceAllString(e.Subject, ""); len(e.parents) > 1 {
 			o.Subject = ""
+		}
+		o = rp.reverted(o)
+		if len(e.parents) > 1 {
 			carried, _ := git(rp.top, "rev-list", e.parents[0]+".."+e.SHA)
-			for i := range made {
-				if made[i].Repo == rp.top && made[i].PR == 0 && made[i].Commit != "" && strings.Contains(carried, made[i].Commit) {
-					made[i].PR = number
+			for j := range made {
+				m := &made[j]
+				if m.Repo != rp.top || m.PR != 0 || m.Commit == "" || !strings.Contains(carried, m.Commit) {
+					continue
+				}
+				if m.PR = number; m.Stage == Merged && o.Stage == Reverted {
+					m.Stage, m.RevertedBy = Reverted, o.RevertedBy
 				}
 			}
 		}
-		o = rp.reverted(o)
-		break
 	}
 	if slices.ContainsFunc(made, func(m Outcome) bool { return m.Repo == rp.top && m.PR == number }) {
 		return Outcome{}, false

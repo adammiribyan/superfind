@@ -137,6 +137,48 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(1, "commit", "stage", "landed", "reverted_by"), [(made, "reverted", made, revert)])
         self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · merged into main, then reverted by {revert[:7]}"])
 
+    def test_a_revert_counts_only_for_the_commits_its_notes_name(self):
+        t = self.now - 3600
+        older = self.commit("feat: refund a charge in full", {"old.go": "old\n"}, t - 600)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        settled = self.commit("fix: refund only settled charges", {"settled.go": "settled\n"}, t + 60)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] feat: refund a charge in full"),
+                       claude_tool(t + 60, "b2", "Bash", command='git commit -qm "fix: refund only settled charges"'),
+                       claude_result(t + 61, "b2", f"[main {settled[:7]}] fix: refund only settled charges"), title="Refunds")
+        self.git("revert", "--no-edit", older, at=t + 600)
+        keys = ("commit", "stage", "reverted_by")
+        self.assertEqual(self.outcomes(1, *keys), [(made, "merged", ""), (settled, "merged", "")])
+        both = self.commit("chore: back out the refund work", {"refund.go": "", "settled.go": ""}, t + 900,
+                           body=f"This reverts commit {settled}.\n\nThis reverts commit {made}.")
+        self.assertEqual(self.outcomes(1, *keys), [(made, "reverted", both), (settled, "reverted", both)])
+
+    def test_reverting_the_revert_makes_a_commit_merged_again(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
+        self.git("revert", "--no-edit", "HEAD", at=t + 600)
+        self.git("revert", "--no-edit", "HEAD", at=t + 900)
+        self.assertEqual(self.outcomes(1, "commit", "stage", "reverted_by"), [(made, "merged", "")])
+        self.git("revert", "--no-edit", "HEAD", at=t + 1200)
+        again = self.git("rev-parse", "HEAD")
+        self.assertEqual(self.outcomes(1, "commit", "stage", "reverted_by"), [(made, "reverted", again)])
+
+    def test_reverting_a_pull_request_s_merge_reverts_the_commits_it_carried(self):
+        t = self.now - 7200
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "feat")
+        made = self.commit("fix: refund only settled charges", {"refund.go": "settled\n"}, t)
+        self.git("checkout", "-q", "main")
+        self.git("merge", "-q", "--no-ff", "feat", "-m", "Merge pull request #8 from acme/feat", at=t + 600)
+        merge = self.git("rev-parse", "HEAD")
+        self.git("revert", "--no-edit", "-m", "1", merge, at=t + 900)
+        revert = self.git("rev-parse", "HEAD")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "fix: refund only settled charges"'),
+                       line(type="pr-link", prRepository="acme/billing", prNumber=8), title="Settled refunds")
+        self.assertEqual(self.outcomes(1, "kind", "commit", "pr", "stage", "reverted_by"), [("commit", made, 8, "reverted", revert)])
+
     def test_a_commit_found_by_its_message_is_the_one_made_near_that_time(self):
         t = self.now - 3 * 3600
         near = self.commit("fix: retry a charge only once", {"charge.go": "1\n"}, t)
