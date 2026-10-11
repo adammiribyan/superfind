@@ -47,7 +47,7 @@ aurs:
   - name: superfind-bin
     homepage: https://github.com/adammiribyan/superfind
     description: Terminal picker for resuming Claude Code, Codex, and Grok sessions
-    license: MIT
+    license: Apache-2.0
     maintainers: ["Adam Miribyan <adam@adam.am>"]
     package: |-
       install -Dm755 ./superfind "${pkgdir}/usr/bin/superfind"
