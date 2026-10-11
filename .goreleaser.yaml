@@ -31,6 +31,9 @@ archives:
 
 checksum:
   name_template: checksums.txt
+  extra_files:
+    - glob: ./llms-full.txt
+    - glob: ./install.sh
 
 homebrew_casks:
   - name: superfind
@@ -49,3 +52,6 @@ release:
     name: superfind
   draft: true
   replace_existing_draft: true
+  extra_files:
+    - glob: ./llms-full.txt
+    - glob: ./install.sh
