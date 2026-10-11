@@ -216,7 +216,7 @@ func load(top string, since float64) *repo {
 	for _, sha := range strings.Fields(remote) {
 		rp.onRemote[sha] = true
 	}
-	out, _ := git(top, "log", "--all", "--reflog", bound, "--format="+logFormat+"%x1e")
+	out, _ := git(top, "log", "--no-show-signature", "--all", "--reflog", bound, "--format="+logFormat+"%x1e")
 	for _, raw := range strings.Split(out, "\x1e") {
 		if e, ok := parseEntry(strings.TrimLeft(raw, "\n")); ok {
 			rp.log = append(rp.log, e)
@@ -262,7 +262,7 @@ func (rp *repo) bySHA(sha string) (entry, bool) {
 			return e, true
 		}
 	}
-	out, err := git(rp.top, "show", "-s", "--format="+logFormat, sha+"^{commit}")
+	out, err := git(rp.top, "show", "--no-show-signature", "-s", "--format="+logFormat, sha+"^{commit}")
 	if err != nil {
 		return entry{}, false
 	}

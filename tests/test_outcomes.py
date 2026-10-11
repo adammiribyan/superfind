@@ -153,6 +153,26 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(1, "subject"), [("fix: stop logging [masked Anthropic key]",)])
         self.assertRegex(self.text(1)[0], rf"^made {made[:7]} fix: stop logging \[masked Anthropic key\] · merged into main \S+ ago$")
 
+    def test_a_signed_commit_is_read_without_running_the_signature_program(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        raw = self.git("cat-file", "commit", made)
+        head, rest = raw.split("\n\n", 1)
+        signed = f"{head}\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\n{rest}\n"
+        sha = subprocess.run(["git", "hash-object", "-t", "commit", "-w", "--stdin"], cwd=self.work, input=signed,
+                             capture_output=True, text=True, check=True).stdout.strip()
+        self.git("update-ref", "refs/heads/main", sha)
+        marker, program = self.home / "gpg-ran", self.home / "gpg"
+        program.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+        program.chmod(0o755)
+        self.git("config", "gpg.program", str(program))
+        self.git("config", "log.showSignature", "true")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'),
+                       claude_result(t + 1, "b1", f"[main {sha[:7]}] feat: refund a charge in full"), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "subject", "stage"), [(sha, "feat: refund a charge in full", "merged")])
+        self.assertFalse(marker.exists())
+
     def test_of_two_copies_of_a_commit_the_one_on_main_counts(self):
         t = self.now - 3600
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
