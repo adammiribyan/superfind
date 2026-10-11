@@ -7,6 +7,13 @@ import (
 	"testing"
 )
 
+func TestAReleaseBuildDownloadsFromGitHubWhateverTheEnvironmentSays(t *testing.T) {
+	t.Setenv("SUPERFIND_RELEASES_URL", "http://127.0.0.1:1/releases")
+	if got := DefaultSource().Base; got != "https://github.com/adammiribyan/superfind/releases" {
+		t.Fatalf("DefaultSource().Base = %q with SUPERFIND_RELEASES_URL set", got)
+	}
+}
+
 func TestAReleaseKeyIsCommitted(t *testing.T) {
 	if len(trusted) > 0 {
 		return
