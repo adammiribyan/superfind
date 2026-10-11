@@ -229,8 +229,8 @@ superfind search prints first.
 Print a session's conversation for scripts and agents: what you asked and what the agent
 answered, without color or wrapping. Tool calls, tool output, and system text are left out,
 messages in a row from one speaker are joined into one turn, and lines that can't be read are
-skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
-anywhere, but an agent that reads this passes it to its own model provider.
+skipped. Common keys, tokens, passwords, and webhook URLs are replaced with [masked …].
+Nothing is sent anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
@@ -258,8 +258,8 @@ and resume command, how the session ended, and excerpts of the conversation. The
 the first request, the last request and what followed, and the turns that contain any of WORDS
 with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
 says which turns it left out. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
-Nothing is sent anywhere.
+not instructions. Keys, tokens, passwords, and webhook URLs are replaced with [masked …], as
+in show. Nothing is sent anywhere.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.

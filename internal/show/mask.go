@@ -8,9 +8,10 @@ import (
 )
 
 type secretPattern struct {
-	kind string
-	re   *regexp.Regexp
-	keep int
+	kind   string
+	re     *regexp.Regexp
+	keep   int
+	around func(found string) (string, string, bool)
 }
 
 var (
@@ -19,18 +20,29 @@ var (
 )
 
 var secretPatterns = []secretPattern{
-	{"Anthropic key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`), 0},
-	{"OpenAI key", regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`), 0},
-	{"xAI key", regexp.MustCompile(`\bxai-[A-Za-z0-9]{32,}`), 0},
-	{"GitHub token", regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})`), 0},
-	{"AWS access key", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), 0},
-	{"Slack token", regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`), 0},
-	{"Stripe key", regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), 0},
-	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), 0},
-	{"PostHog key", regexp.MustCompile(`\bph[cx]_[A-Za-z0-9]{30,}`), 0},
-	{"JSON web token", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), 0},
-	{"bearer token", regexp.MustCompile(`(?i)\bBearer [A-Za-z0-9._~+/-]{20,}=*`), len("Bearer ")},
-	{"password in a URL", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]*:[^\s@/]{3,}@`), -1},
+	{"Anthropic key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`), 0, nil},
+	{"OpenAI key", regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`), 0, nil},
+	{"xAI key", regexp.MustCompile(`\bxai-[A-Za-z0-9]{32,}`), 0, nil},
+	{"GitHub token", regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})`), 0, nil},
+	{"AWS access key", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), 0, nil},
+	{"Slack token", regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`), 0, nil},
+	{"Tailscale key", regexp.MustCompile(`\btskey-[a-z]+-[A-Za-z0-9]{6,}-[A-Za-z0-9]{16,}`), 0, nil},
+	{"Stripe key", regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), 0, nil},
+	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), 0, nil},
+	{"PostHog key", regexp.MustCompile(`\bph[cx]_[A-Za-z0-9]{30,}`), 0, nil},
+	{"JSON web token", regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`), 0, nil},
+	{"bearer token", regexp.MustCompile(`(?i)\bBearer [A-Za-z0-9._~+/-]{20,}=*`), len("Bearer "), nil},
+	{"password in a URL", regexp.MustCompile(`\b[a-z][a-z0-9+.-]*://[^\s:/@]*:[^\s@/]{3,}@`), 0, func(found string) (string, string, bool) {
+		return urlPassword.FindStringSubmatch(found)[1], "@", true
+	}},
+	{"Slack webhook", regexp.MustCompile(`\bhooks\.slack(?:-gov)?\.com/(?:services|workflows|triggers)/[A-Za-z0-9_/-]{20,}`), 0, nil},
+	{"Discord webhook", regexp.MustCompile(`\b(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/(?:v[0-9]+/)?webhooks/[0-9]+/[A-Za-z0-9_-]{20,}`), 0, nil},
+	{"Teams webhook", regexp.MustCompile(`\b(?:[a-z0-9-]+\.webhook\.office|outlook\.office(?:365)?)\.com/webhook(?:b2)?/[A-Za-z0-9@/_-]{20,}`), 0, nil},
+	{"token in a URL", regexp.MustCompile(`(?i)[?&](?:amp;)?(?:x-amz-|x-goog-|private_)?(?:token|sig|signature|credential|key|secret|api_key|apikey|access_token|auth)=[A-Za-z0-9%._~+/=-]{16,}`), 0,
+		func(found string) (string, string, bool) {
+			head := found[:strings.IndexByte(found, '=')+1]
+			return head, "", strings.ContainsAny(found[len(head):], "0123456789")
+		}},
 }
 
 var urlPassword = regexp.MustCompile(`^([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+@$`)
@@ -109,8 +121,17 @@ func maskKeys(text string) string {
 			out.WriteString(found[:p.keep])
 			text = text[m[0]+p.keep:]
 			continue
-		case p.keep < 0:
-			out.WriteString(maskKeys(urlPassword.FindStringSubmatch(found)[1]) + masked + "@")
+		case p.around != nil:
+			head, tail, secret := p.around(found)
+			if !secret {
+				out.WriteString(head)
+				text = text[m[0]+len(head):]
+				continue
+			}
+			if value := found[len(head) : len(found)-len(tail)]; slices.Equal(anySecret.FindStringIndex(value), []int{0, len(value)}) {
+				masked = maskKeys(value)
+			}
+			out.WriteString(maskKeys(head) + masked + tail)
 		default:
 			out.WriteString(found[:p.keep] + masked)
 		}
