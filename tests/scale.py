@@ -199,7 +199,8 @@ def restore(before):
 
 
 def measure(binary, root, cache, *args):
-    env = dict(os.environ, HOME=str(root), XDG_CACHE_HOME=str(cache))
+    env = dict(os.environ, HOME=str(root), XDG_CACHE_HOME=str(cache), SUPERFIND_TELEMETRY="off",
+               SUPERFIND_CHECKIN_URL="http://127.0.0.1:1/v1/checkin")
     for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CLAUDE_DIRS", "SUPERFIND_CODEX_DIRS",
                  "SUPERFIND_GROK_DIRS"):
         env.pop(name, None)

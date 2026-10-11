@@ -98,7 +98,7 @@ def git(folder, *args):
 
 def run(home, *args):
     env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": os.environ.get("PATH", ""),
-           "NO_COLOR": "1", "TYPESAFE_API_KEY": "", "COLUMNS": "100"}
+           "NO_COLOR": "1", "TYPESAFE_API_KEY": "", "COLUMNS": "100", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
     result = subprocess.run([str(SUPERFIND), *args], env=env, capture_output=True, encoding="utf-8")
     if result.returncode != 0 or result.stderr:
         sys.exit(f"scripts/llms.py: superfind {' '.join(args)} exited {result.returncode}: {result.stderr}")
@@ -143,7 +143,7 @@ def overview():
 
 def commands(home):
     result = subprocess.run([str(SUPERFIND), "no-such-command"], capture_output=True, encoding="utf-8",
-                            env={"HOME": str(home), "PATH": os.environ.get("PATH", "")})
+                            env={"HOME": str(home), "PATH": os.environ.get("PATH", ""), "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"})
     if result.returncode != 2:
         sys.exit(f"scripts/llms.py: an unknown command exited {result.returncode}, not 2: {result.stderr}")
     listed = re.search(r"The commands are (.+)\.\n", result.stderr).group(1)

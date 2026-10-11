@@ -143,7 +143,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.projects = self.home / ".claude" / "projects" / "-work-billing"
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
-                    "PWD": "/elsewhere", "TYPESAFE_API_KEY": ""}
+                    "PWD": "/elsewhere", "TYPESAFE_API_KEY": "", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
                      "NO_COLOR", "SUPERFIND_SECONDARY"):
             self.env.pop(name, None)
@@ -1352,7 +1352,8 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn("superfind help COMMAND", result.stdout, flag)
 
     def test_every_command_explains_itself(self):
-        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "upgrade", "version"):
+        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "upgrade", "telemetry",
+                        "version"):
             for args in (("help", command), (command, "--help"), (command, "-h")):
                 result = self.run_superfind(*args)
                 self.assertEqual((result.returncode, result.stderr), (0, ""), args)
@@ -1365,7 +1366,8 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, label, and upgrade", result.stderr)
+            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, label, upgrade, and telemetry",
+                          result.stderr)
 
     def test_pick_refuses_options_it_does_not_understand(self):
         result = self.run_superfind("pick", "--rnu")

@@ -46,7 +46,8 @@ class PickerBehavior(unittest.TestCase):
         (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
         (no_ghostty / "osascript").chmod(0o755)
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
-                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color"}
+                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color",
+                    "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
 
     def tearDown(self):
         tmux("kill-session", "-t", self.session_name)
@@ -556,6 +557,30 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("Down", "Enter")
         self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
+    def test_the_first_picker_after_an_update_says_whats_new_once_and_prints_what_it_always_did(self):
+        version = subprocess.run([str(SUPERFIND), "--version"], capture_output=True, text=True).stdout.split()[1]
+        changelog = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text().splitlines()
+        section = changelog.index(next(l for l in changelog if l.startswith(f"## [{version}]")))
+        headline = next(l for l in changelog[section + 1:] if l.strip())[2:]
+        notice = f"New in {version} · {headline}"
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        marker = self.home / ".local" / "state" / "superfind" / "shown" / "version"
+        self.assertEqual(marker.read_text(), f"{version}\n")
+        marker.write_text("0.10.0\n")
+        last = subprocess.run([str(SUPERFIND), "last"], env=self.env, cwd="/tmp", stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
+        self.assertEqual((last.returncode, last.stdout), (0, "Checkout double charge\ncd /tmp && claude --resume new\n"))
+        self.open_picker()
+        self.wait_for(notice)
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+        tmux("kill-session", "-t", self.session_name)
+        Path(f"{self.out}.code").unlink()
+        self.open_picker()
+        self.assertNotIn("New in", self.settled_screen())
+        self.assertEqual(marker.read_text(), f"{version}\n")
 
     def test_escape_cancels_without_printing_anything(self):
         self.three_sessions()
@@ -1163,7 +1188,7 @@ class PtyPicker(unittest.TestCase):
         (projects / "a1.jsonl").write_text(user("migrate the ledger") + "\n" + tool("Bash") + "\n" +
                                           claude("Migrated.") + "\n" + line(type="ai-title", aiTitle="Ledger") + "\n")
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
-               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", **self.EXTRA_ENV}
+               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **self.EXTRA_ENV}
         if self.INDEX:
             subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
         else:
@@ -1386,7 +1411,7 @@ esac
     def env(self, inside=None):
         env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "TYPESAFE_API_KEY": "", "NO_COLOR": "1",
                "PATH": f"{self.stub}:" + os.path.dirname(shutil.which("tmux")) + ":/usr/bin:/bin", "TERM": "xterm-256color",
-               "TMUX_TMPDIR": self.sockets, "PWD": "/tmp"}
+               "TMUX_TMPDIR": self.sockets, "PWD": "/tmp", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         if inside:
             env["TMUX"] = inside
         return env

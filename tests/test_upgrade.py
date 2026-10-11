@@ -138,7 +138,7 @@ class Upgrade(unittest.TestCase):
 
     def env(self, url=None, **extra):
         return {"HOME": str(self.home), "PATH": os.environ["PATH"], "XDG_CACHE_HOME": str(self.home / ".cache"),
-                "SUPERFIND_RELEASES_URL": url or self.releases.url, "SUPERFIND_TELEMETRY": "off", **extra}
+                "SUPERFIND_RELEASES_URL": url or self.releases.url, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **extra}
 
     def upgrade(self, *args, binary=None, url=None, **extra):
         return subprocess.run([str(binary or self.bin / "superfind"), "upgrade", *args], env=self.env(url, **extra),
@@ -149,6 +149,11 @@ class Upgrade(unittest.TestCase):
 
     def tree(self):
         return sorted(str(p.relative_to(self.home)) for p in self.home.rglob("*"))
+
+    def queued(self):
+        shown = subprocess.run([str(self.bin / "superfind"), "telemetry", "--json"], env=self.env(SUPERFIND_TELEMETRY=""),
+                               capture_output=True, text=True, check=True)
+        return [(e["name"], e["props"]) for e in json.loads(shown.stdout)["events"]]
 
     def publish_new(self):
         self.releases.publish(NEW, binary=built(NEW))
@@ -173,7 +178,7 @@ class Upgrade(unittest.TestCase):
         receipt = (self.state / "install.json").read_text()
 
         self.publish_new()
-        result = self.upgrade()
+        result = self.upgrade(SUPERFIND_TELEMETRY="")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         self.assertEqual(result.stdout, f"installed superfind {NEW} in place of {OLD} at {self.bin}/superfind\n"
                          f"the release is signed with release key {KEY_ID} and matches its checksums.txt; "
@@ -186,6 +191,7 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(self.releases.requests[-4:], ["HEAD /latest", f"GET /download/v{NEW}/checksums.txt",
                                                        f"GET /download/v{NEW}/checksums.txt.minisig",
                                                        f"GET /download/v{NEW}/superfind_{NEW}_{PLATFORM}.tar.gz"])
+        self.assertEqual(self.queued(), [("upgraded", {"method": "script", "outcome": "installed"})])
 
     def test_rollback_swaps_with_the_kept_copy_and_a_second_rollback_swaps_back(self):
         self.install(OLD)
@@ -295,12 +301,14 @@ class Upgrade(unittest.TestCase):
                 self.releases.latest = NEW
                 if tamper:
                     tamper(folder)
-                result = self.upgrade()
+                result = self.upgrade(SUPERFIND_TELEMETRY="")
                 self.assertEqual((result.returncode, result.stdout), (1, ""))
                 self.assertTrue(result.stderr.startswith(want), result.stderr)
                 self.assertEqual((self.bin / "superfind").read_bytes(), installed)
                 self.assertEqual(sorted(p.name for p in self.bin.iterdir()), ["superfind"])
                 self.assertFalse((self.state / "previous").exists())
+                self.assertEqual(self.queued(), [("upgraded", {"method": "script", "outcome": "failed"})])
+                shutil.rmtree(self.state / "events")
 
     def test_a_homebrew_copy_is_left_alone_with_the_brew_command(self):
         cask = self.home / "Caskroom" / "superfind" / OLD

@@ -1,6 +1,8 @@
 {
   "name": "superfind-checkin",
   "main": "src/index.ts",
+  // The account that owns the superfind.dev zone, so a deploy from another login fails instead of uploading elsewhere.
+  "account_id": "c757df04f12e74d069a8c7ca16beec02",
   "compatibility_date": "2026-10-01",
   "routes": [{ "pattern": "superfind.dev/v1/*", "zone_name": "superfind.dev" }],
   "workers_dev": false,

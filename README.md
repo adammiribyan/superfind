@@ -6,146 +6,92 @@
 </p>
 
 <p align="center">The session picker for your coding agents.</p>
+<p align="center">Claude Code · Codex · Grok</p>
 
-Search by keyword or describe what you remember. Preview where you left off. Press Enter to resume with the original agent in the session's project folder, right in your current terminal.
+Find a past session by keyword or by what you remember of it, see where you left off, and press Enter to pick it up again in the right folder.
 
 ![Find and resume sessions across Claude Code, Codex, and Grok](demo/superfind.gif)
 
 ## Install
 
-Works on macOS and Linux with zsh, bash, or fish.
-
 ```sh
 curl -fsSL https://superfind.dev/install | sh
 ```
 
-Open a new terminal tab, then run:
-
-```sh
-superfind
-```
-
-You need the corresponding agent CLI installed to resume a session.
+Open a new terminal tab and run `sfd`. Works on macOS and Linux with zsh, bash, or fish.
 
 <details>
-<summary>Install with Homebrew, Go, or from source</summary>
+<summary>Homebrew, Go, or from source</summary>
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
-# or, with Go 1.21+
 go install github.com/adammiribyan/superfind@latest
 ```
 
-For either, add this to `~/.zshrc`:
+Then add the shell setup to your startup file and open a new tab:
 
 ```sh
-eval "$(superfind init zsh)"
+eval "$(superfind init zsh)"      # ~/.zshrc
+eval "$(superfind init bash)"     # ~/.bashrc, or ~/.bash_profile on macOS
+superfind init fish | source      # ~/.config/fish/config.fish
 ```
 
-For bash, add `eval "$(superfind init bash)"` to `~/.bashrc`, or `~/.bash_profile` on macOS. For fish, add `superfind init fish | source` to `~/.config/fish/config.fish`. Open a new terminal tab after setup.
-
-To build from source, with Go 1.21 or newer:
-
-```sh
-git clone https://github.com/adammiribyan/superfind.git
-cd superfind
-./install.sh
-```
+From source: clone the repo and run `./install.sh`.
 
 </details>
 
-## Upgrade
-
-```sh
-superfind upgrade
-```
-
-For a copy the install script put in `~/.local/bin`, this installs the newest release in place, after checking that the release is signed with the superfind release key, and keeps the old copy: `superfind upgrade --rollback` goes back to it. `superfind upgrade --check` only says whether a newer release is out. Other copies are left alone, and `superfind upgrade` prints the command for them:
-
-```sh
-brew upgrade --cask adammiribyan/tap/superfind      # Homebrew
-go install github.com/adammiribyan/superfind@latest  # Go
-git pull && ./install.sh                             # a clone
-```
-
 ## Use
 
-Open the picker with `sfd`, `superfind`, or **Ctrl-X**, then **c**. Type to search titles, projects, branches, and conversations.
+Run `sfd`, or press **Ctrl-X** then **c**, and start typing.
 
 | Key | Action |
 | --- | --- |
 | ↑ / ↓ | Select a session |
-| Enter | Resume the selected session |
-| Ctrl-R | Search by description |
-| Tab | Switch between the last exchange and recent conversation |
+| Enter | Resume it |
+| Ctrl-R | Search by description, like `where we fixed duplicate charges` |
+| Tab | Switch the preview between the last exchange and the conversation |
 | Esc | Go back or close |
 
-Try a description like `where we fixed duplicate charges`, then press **Ctrl-R**. Search by description requires Claude Code installed and logged in, or a TypeSafe API key.
+Narrow the list with `agent:codex`, `in:here`, `is:open`, or `after:3d`. `sfd last` resumes the newest session in the current folder.
 
-Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`. Use `is:unfinished` for sessions that stopped partway. Use `is:open` for sessions an agent has open right now; their rows say **open**.
-
-Press Enter on a session that's already open to go to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
+Resuming needs the agent that made the session. Search by description uses Claude Code, or a [TypeSafe](https://docs.typesafe.ai) key if you set `TYPESAFE_API_KEY`.
 
 <details>
-<summary>Faster search and session labels with TypeSafe</summary>
+<summary>Open with a key in Ghostty or Omarchy</summary>
 
-Get a key from [TypeSafe](https://docs.typesafe.ai) and set:
-
-```sh
-export TYPESAFE_API_KEY=your-key
-```
-
-This also labels sessions **waiting on you**. Use `is:waiting` to filter them.
-
-</details>
-
-<details>
-<summary>Open with Cmd-Shift-O in Ghostty</summary>
-
-Add this to your Ghostty config and reload it:
+The install script sets these up. In Ghostty, Cmd-Shift-O:
 
 ```text
 keybind = super+shift+o=text:\x18c
 ```
 
-</details>
-
-<details>
-<summary>Open with Super-Shift-Ctrl-F on Omarchy</summary>
-
-The install script adds this to your Hyprland bindings, or says what to add when the key is already taken. Run `hyprctl reload` to use it right away.
-
-```text
-o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui superfind pick --run")
-```
+On Omarchy, Super-Shift-Ctrl-F opens superfind in a new terminal.
 
 </details>
 
 ## Scripts and agents
 
-Give your agent context from an earlier conversation, or build a journal across all your agents. These examples use `jq`.
+`search`, `show`, `last`, and `handoff` print JSON with `--json`. For example, read the end of the latest session about a migration:
 
 ```sh
-# Find a migration discussion and read its last six turns.
-id=$(superfind search --json migration |
-  jq -sr 'map(select(.kind == "interactive")) | .[0].id // empty')
-superfind show "$id" --json --tail 6
-
-# Export a session journal: date, agent, project, and title.
-superfind search --json |
-  jq -r 'select(.kind == "interactive") |
-    [.updated[:10], .agent, .project, .title] | @tsv'
+superfind show "$(superfind search --json migration | jq -r '.id' | head -1)" --tail 6
 ```
 
-To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts.
+`superfind handoff ID` briefs another agent on a session. `superfind help` lists every command, and agents can read [llms-full.txt](https://superfind.dev/llms-full.txt) or install [the skill](skills/README.md).
 
-See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt). Agents can also learn when to use superfind from [its skill](skills/README.md), for Claude Code, Codex, and Grok.
+## Update
+
+```sh
+superfind upgrade
+```
+
+If you installed with Homebrew or Go, it tells you the command to run instead.
 
 ## Privacy
 
-Keyword search runs locally. superfind never changes your original session files and has no telemetry, analytics, or update checks.
+Keyword search runs on your machine, and superfind never changes your session files. Search by description sends your query and parts of your sessions to Claude Code's model, or to TypeSafe if you set a key. With a TypeSafe key, superfind also sends the end of recent sessions to TypeSafe to label the ones waiting on you.
 
-Search by description sends your query and session excerpts to TypeSafe when configured, or Anthropic through Claude Code otherwise. With a TypeSafe key, background labeling also sends recent session endings to TypeSafe.
+Once a day, when you open the picker, superfind checks for a new version and sends a random install ID, its version, your OS and CPU type, how it was installed, and whether an upgrade you ran worked. Nothing from your sessions is sent. `superfind telemetry off` turns it off, and `superfind help telemetry` shows exactly what is sent.
 
 ---
 

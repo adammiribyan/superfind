@@ -656,3 +656,42 @@ func TestTheQuestionKeepsItsFirstSentenceWhereTheWholeLineDoesNotFit(t *testing.
 		}
 	}
 }
+
+const whatsNew = "New in 0.11.0 · Handoff, last, filters, fish, and a skill for agents"
+
+func TestTheNoticeStaysUnderTheSearchBoxAndGivesWayToASearchMessage(t *testing.T) {
+	m := transcriptPicker(t, 2)
+	m.db = searchDB(t, map[string]string{m.rows[0].Path: "Ledger migration"})
+	m.notice = whatsNew
+	line := func(m picker) string { return strings.TrimRight(frame(m, 100, 30)[4], " ") }
+	if got := line(m); got != "  "+whatsNew {
+		t.Errorf("on open the line under the search box reads %q, want the notice", got)
+	}
+	m = settle(m, tea.KeyPressMsg{Code: 'l', Text: "l"}, tea.KeyPressMsg{Code: 'e', Text: "e"})
+	if got := line(m); got != "  "+whatsNew {
+		t.Errorf("after typing a search that matches it reads %q, want the notice", got)
+	}
+	m = settle(m, tea.KeyPressMsg{Code: 'z', Text: "z"})
+	if got := line(m); got != "  No session contains these words. ctrl-r asks by description." {
+		t.Errorf("with no match it reads %q, want the no-match hint", got)
+	}
+	m = settle(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	if got := line(m); got != "  "+whatsNew {
+		t.Errorf("after clearing the search it reads %q, want the notice back", got)
+	}
+}
+
+func TestACompactPickerGivesTheNoticeALineOnlyWhenThereIsOne(t *testing.T) {
+	m := transcriptPicker(t, 8)
+	if got := strings.TrimRight(frame(m, 80, 20)[2], " "); got != "  Ledger migration  active now                                   tmp        1m" {
+		t.Errorf("with no notice line 2 reads %q, want the first session", got)
+	}
+	m.notice = whatsNew
+	lines := frame(m, 80, 20)
+	if got := strings.TrimRight(lines[2], " "); got != "  "+whatsNew {
+		t.Errorf("with a notice line 2 reads %q, want the notice", got)
+	}
+	if got := strings.TrimRight(lines[3], " "); got != "  Ledger migration  active now                                   tmp        1m" {
+		t.Errorf("with a notice line 3 reads %q, want the first session", got)
+	}
+}
