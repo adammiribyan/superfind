@@ -17,7 +17,7 @@ Never run bare `superfind`, `sfd`, or `superfind pick`: they open an interactive
 - `ask` sends the query, and a card for every session that fits its filters (title, project, last request, and a passage, not masked), to TypeSafe, or to Anthropic through Claude Code. Use it only when keywords find nothing, narrow it with filters, and tell the user first.
 - `--json` prints JSON Lines, one object per line, best match first. It is not an array: use `jq -s` for one, or `--limit N`.
 - `--json` also lists sessions another program started, such as `claude -p` or `codex exec`, with `"kind": "agent"`. Keep `select(.kind == "interactive")` to find the user's own sessions.
-- The session you are running in can show up too, with `"active": true`. Skip it unless the user means it.
+- The session you are running in shows up too, since it holds the user's words, with `"active": true`. Skip active sessions unless the user means one.
 - Don't run a resume command yourself: it starts an interactive agent. Give the user the command that superfind prints.
 
 ## Filters
@@ -48,14 +48,15 @@ Recall what was decided: find the session, then read the turns that mention the 
 
 ```sh
 session=$(superfind search --json idempotency |
-  jq -sr 'map(select(.kind == "interactive")) | .[0].path // empty')
+  jq -sr 'map(select(.kind == "interactive" and (.active | not))) | .[0].path // empty')
 superfind handoff "${session:?no session matched}" idempotency
 ```
 
-Continue another agent's work in this folder, such as the newest Codex session started here:
+Continue another agent's work in this folder, such as the latest Codex session from this folder:
 
 ```sh
-session=$(superfind last --json agent:codex | jq -r .path)
+session=$(superfind search --json agent:codex in:here |
+  jq -sr 'map(select(.kind == "interactive" and (.active | not))) | .[0].path // empty')
 superfind handoff "${session:?no Codex session here}"
 ```
 
@@ -77,14 +78,15 @@ superfind blame src/billing/retry.go --json | jq -c '{id, agent, title, match}'
 superfind blame HEAD --json | jq -c '{id, agent, title, match}'
 ```
 
-Give the user the command that resumes a session, or the newest one from this folder:
+Give the user the command that resumes a session:
 
 ```sh
 session=$(superfind search --json webhook retry |
   jq -sr 'map(select(.kind == "interactive" and (.active | not))) | .[0].path // empty')
 superfind command "${session:?no session matched}"
-superfind last --json agent:codex | jq -r .resume
 ```
+
+`superfind last --json FILTERS` prints the newest session started in this folder, with its `resume` command, but doesn't skip an active one.
 
 Search by description when keywords miss. This sends text off the machine:
 

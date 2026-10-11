@@ -57,6 +57,7 @@ class Skill(SuperfindBehavior):
         self.assertLessEqual(used, known)
 
     def fixtures(self):
+        self.scrub()
         self.clock = time.time() - 6 * 3600
         work = (self.home / "work" / "billing").resolve()
         (work / "src" / "billing").mkdir(parents=True)
@@ -84,14 +85,17 @@ class Skill(SuperfindBehavior):
                            codex_user("add refunds to the webhook handler"), codex_reply("Refunds are half done."))
         return work
 
+    def scrub(self):
+        for name in ("BASH_ENV", "ENV", "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"):
+            self.env.pop(name, None)
+        self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+
     def shell(self, work):
         tools = self.home / "tools"
         tools.mkdir()
         (tools / "superfind").symlink_to(SUPERFIND.resolve())
-        for name in ("BASH_ENV", "ENV", "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"):
-            self.env.pop(name, None)
-        self.env.update(PWD=str(work), PATH=f"{tools}:{Path(JQ).parent}:/usr/bin:/bin", GIT_CONFIG_NOSYSTEM="1",
-                        GIT_CONFIG_GLOBAL=os.devnull)
+        self.scrub()
+        self.env.update(PWD=str(work), PATH=f"{tools}:{Path(JQ).parent}:/usr/bin:/bin")
 
     def run_recipe(self, recipe, work, env=None):
         return subprocess.run(["bash", "--noprofile", "--norc", "-c", "set -euo pipefail\n" + recipe], cwd=work,
@@ -111,7 +115,7 @@ class Skill(SuperfindBehavior):
                   ["\tclaude\tbilling\tunfinished\tInvoice migration\n", f"\tclaude\tInvoice migration\t{self.session_path(uid(2))}\n"],
                   [f'"id":"{uid(1)}","agent":"claude","title":"Webhook retry charges twice","match":"made ',
                    ': fix: retry a webhook only once"}\n', '"match":"made this commit"}\n'],
-                  [f"cd {work} && claude --resume {uid(1)}\ncd {work} && codex resume {uid(3)}\n"],
+                  [f"cd {work} && claude --resume {uid(1)}\n"],
                   [f'"id":"{uid(1)}","agent":"claude","title":"Webhook retry charges twice"']]
         found = recipes()
         self.assertEqual(len(found), len(wanted))
@@ -141,6 +145,23 @@ class Skill(SuperfindBehavior):
             self.assertNotIn(uid(9), result.stdout, recipe)
 
     @unittest.skipUnless(JQ, "the recipes need jq")
+    def test_the_recipes_skip_the_session_that_runs_them(self):
+        work = self.fixtures()
+        self.clock = time.time() - 5
+        self.session(uid(7), user("where did we fix the webhook retry? what about idempotency?", cwd=str(work)),
+                     title="Webhook retry idempotency question")
+        self.codex_session(uid(8), codex_meta(cwd=str(work), branch="main"), codex_user(CODEX_ENVIRONMENT),
+                           codex_user("continue the refunds work"))
+        self.shell(work)
+        self.assertEqual(json.loads(self.superfind("search", "--json", "--limit", "1", "idempotency"))["id"], uid(7))
+        for recipe, want in ((recipes()[1], uid(1)), (recipes()[2], uid(3)), (recipes()[5], uid(1))):
+            result = self.run_recipe(recipe, work)
+            self.assertEqual((result.returncode, result.stderr), (0, ""), recipe)
+            self.assertIn(want, result.stdout, recipe)
+            self.assertNotIn(uid(7), result.stdout, recipe)
+            self.assertNotIn(uid(8), result.stdout, recipe)
+
+    @unittest.skipUnless(JQ, "the recipes need jq")
     def test_a_recipe_that_finds_nothing_says_so_instead_of_misusing_superfind(self):
         work = (self.home / "work" / "empty").resolve()
         work.mkdir(parents=True)
@@ -148,8 +169,7 @@ class Skill(SuperfindBehavior):
         for recipe in (recipes()[1], recipes()[2], recipes()[5]):
             result = self.run_recipe(recipe, work)
             self.assertNotIn(result.returncode, (0, 2), recipe)
-            self.assertRegex(result.stderr, r"(session: no (Codex )?session (matched|here)|"
-                                            r"superfind last: no session that fits these filters started in this folder.*)\n$", recipe)
+            self.assertRegex(result.stderr, r"session: no (Codex )?session (matched|here)\n$", recipe)
 
 
 def line_from_program(cwd):
