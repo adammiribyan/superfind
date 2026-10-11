@@ -54,6 +54,20 @@ cd superfind
 
 </details>
 
+## Upgrade
+
+```sh
+superfind upgrade
+```
+
+For a copy the install script put in `~/.local/bin`, this installs the newest release in place, after checking that the release is signed with the superfind release key, and keeps the old copy: `superfind upgrade --rollback` goes back to it. `superfind upgrade --check` only says whether a newer release is out. Other copies are left alone, and `superfind upgrade` prints the command for them:
+
+```sh
+brew upgrade --cask adammiribyan/tap/superfind      # Homebrew
+go install github.com/adammiribyan/superfind@latest  # Go
+git pull && ./install.sh                             # a clone
+```
+
 ## Use
 
 Open the picker with `sfd`, `superfind`, or **Ctrl-X**, then **c**. Type to search titles, projects, branches, and conversations.

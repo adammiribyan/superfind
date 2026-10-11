@@ -1352,7 +1352,7 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn("superfind help COMMAND", result.stdout, flag)
 
     def test_every_command_explains_itself(self):
-        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "version"):
+        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "upgrade", "version"):
             for args in (("help", command), (command, "--help"), (command, "-h")):
                 result = self.run_superfind(*args)
                 self.assertEqual((result.returncode, result.stderr), (0, ""), args)
@@ -1365,7 +1365,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, and label", result.stderr)
+            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, label, and upgrade", result.stderr)
 
     def test_pick_refuses_options_it_does_not_understand(self):
         result = self.run_superfind("pick", "--rnu")
