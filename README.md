@@ -79,7 +79,7 @@ Get a key from [TypeSafe](https://docs.typesafe.ai) and set:
 export TYPESAFE_API_KEY=your-key
 ```
 
-This also labels sessions **waiting on you**. Without a key, superfind still marks sessions **unfinished** when work stopped partway, reading only the session files. Use `is:waiting` or `is:unfinished` to filter them.
+This also labels sessions **waiting on you** or **unfinished**. Use `is:waiting` or `is:unfinished` to filter them.
 
 </details>
 
