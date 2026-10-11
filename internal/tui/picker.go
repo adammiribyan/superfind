@@ -911,10 +911,11 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) hints() [][2]string {
-	enter := "resume"
-	if r := m.focused(); m.asksToConfirm() {
+	enter, r := "resume", m.focused()
+	switch {
+	case m.asksToConfirm():
 		enter = "resume a copy"
-	} else if r != nil && r.Open != nil && r.Open.Tmux != nil && m.inTmux {
+	case r != nil && r.Open != nil && r.Open.Tmux != nil && m.inTmux:
 		enter = "go to it"
 	}
 	switch {
