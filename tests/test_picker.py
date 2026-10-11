@@ -1460,6 +1460,17 @@ esac
         self.assertEqual(self.result(), (1, ""))
         self.assertEqual(self.focused(), "")
 
+    def test_enter_on_a_session_outside_ghostty_asks_first_even_when_a_ghostty_tab_shares_its_terminal(self):
+        self.open_elsewhere()
+        self.osascript("match", self.tmux("display-message", "-p", "-t", "work:1", "#{pane_tty}").strip())
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Escape")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), "")
+
     def test_enter_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_hands_the_shell_nothing(self):
         tty, other = self.in_a_ghostty_tab()
         self.osascript("match", f"{other}, {tty}")
