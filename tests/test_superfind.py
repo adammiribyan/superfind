@@ -945,6 +945,38 @@ class SuperfindBehavior(unittest.TestCase):
         self.env["CODEX_HOME"] = str(home / ".codex-work")
         self.assertEqual(self.superfind("command", str(work)), f"cd /tmp && codex resume {uid(1)}\n")
 
+    def linked_account(self, provider, folder):
+        account = self.home / ".local/state/omarchy/agents/accounts" / provider / "work"
+        account.mkdir(parents=True)
+        shared = self.home / f".{provider}" / folder
+        shared.mkdir(parents=True, exist_ok=True)
+        (account / folder).symlink_to(shared)
+        return account
+
+    def test_a_session_shared_with_an_omarchy_style_account_folder_is_listed_once_and_resumes_as_that_account(self):
+        self.env["CLAUDE_CONFIG_DIR"] = str(self.linked_account("claude", "projects"))
+        self.session("a1", user("fix the login redirect bug"), tool("Bash"), claude("Fixed."), title="Login redirect")
+        self.assertEqual(self.rows(), ["Login redirect  1d ago · tmp"])
+        printed = self.superfind("search", "").split("\t")[0]
+        self.assertEqual(self.superfind("command", printed), "cd /tmp && claude --resume a1\n")
+
+    def test_a_codex_home_whose_sessions_link_to_another_home_lists_each_session_once_with_its_thread_name(self):
+        account = self.linked_account("codex", "sessions")
+        self.env["CODEX_HOME"] = str(account)
+        self.codex_session(uid(1), codex_meta(), codex_user("fix the build"), codex_call(), codex_output(), codex_reply("Fixed."))
+        self.codex_name(uid(1), "Build fix", home=account.relative_to(self.home))
+        self.assertEqual(self.rows(), ["Build fix  1d ago · tmp"])
+        printed = self.superfind("search", "").split("\t")[0]
+        self.assertEqual(self.superfind("command", printed), f"cd /tmp && codex resume {uid(1)}\n")
+
+    def test_a_grok_home_whose_sessions_link_to_another_home_lists_each_session_once(self):
+        self.env["GROK_HOME"] = str(self.linked_account("grok", "sessions"))
+        self.grok_session(uid(1), "/tmp", grok_user("fix the build"), grok_reply("Fixing.", tools=1), grok_result(),
+                          grok_reply("Fixed."))
+        self.assertEqual(self.rows(), ["fix the build  1d ago · tmp"])
+        printed = self.superfind("search", "").split("\t")[0]
+        self.assertEqual(self.superfind("command", printed), f"cd /tmp && grok --resume {uid(1)}\n")
+
     def test_a_long_codex_session_preview_shows_its_last_request(self):
         path = self.codex_session(uid(1), codex_meta(), codex_user("load the fixtures"), codex_call(),
                                   codex_output("x" * (1 << 20) + "y" * 300_000), codex_reply("Loaded."),

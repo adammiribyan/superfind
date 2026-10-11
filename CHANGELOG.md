@@ -2,6 +2,7 @@
 
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
+
 ## [Unreleased]
 
 ### Added
@@ -47,6 +48,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
+- When two folders share one sessions folder through a link, as Omarchy's agent accounts do, each session is listed once. If `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `GROK_HOME` points at one of them, sessions resume as that account. Before, each session showed twice, and one copy resumed as the other account.
 - A resume command whose folder contains a backslash now runs correctly in fish as well as in zsh and bash. Session ids and agent homes that start with `=` or are exactly `%self` are now quoted, so zsh and fish no longer expand them.
 - superfind works inside a sandbox that can't write to its cache, such as Codex's `read-only` mode. Every command used to fail there with "locking the index: operation not permitted". Now it reads the index as it was last written and changes nothing in the cache. `search` and `ask` say on stderr when sessions changed since then, because they match the words those sessions held at the last index. `index` and `label` exit 1 there. With no usable index, superfind says to run `superfind index` once outside the sandbox or to set `XDG_CACHE_HOME`.
 - `superfind blame <commit>` prints the session that made a commit, from any agent: the one that ran its `git commit`, then any that opened its pull request. A squash merge leads to the sessions that made the commits it squashed. `blame <file>` lists the sessions that edited a file, or made or opened the pull request of one of its last 30 commits, and `blame <file>:<line>` blames the commit that last changed that line. Each line's summary starts with what the session did, such as `made this commit` or `opened #19`, and `--json` puts it in `match`.
