@@ -26,6 +26,8 @@ func StateDir() string {
 	return filepath.Join(agent.Home(), ".local", "state", "superfind")
 }
 
+func StatePath(name string) string { return filepath.Join(StateDir(), name) }
+
 func MakeDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err

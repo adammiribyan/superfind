@@ -7,6 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `superfind upgrade` installs the newest release in place of a copy that the install script put in `~/.local/bin`, after checking that the release's `checksums.txt` is signed with the superfind release key and that the archive matches it. It keeps the copy it replaced, and `superfind upgrade --rollback` swaps back to it; a second `--rollback` swaps forward again. `--check` says whether a newer release is out and changes nothing, and `--version X` installs that release, also to go back to an older one. A copy from Homebrew, `go install`, or a clone is left alone: upgrade prints the command that updates it. The install script now writes a receipt, `~/.local/state/superfind/install.json`, so upgrade knows which copy it may replace.
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
 - In `superfind handoff ID WORDS`, a word that names a file the session edited, such as `charge.rb` or `app/charge.rb`, adds the text around each edit of that file. Each edit is marked `[edited app/charge.rb]`, or `[a subagent edited …]` for a Claude Code subagent, with the errors from the tool calls around it as `[error: …]`. Grok sessions get no error notes. The handoff lists the turns with edits, and `--json` has them as `edited`.
 

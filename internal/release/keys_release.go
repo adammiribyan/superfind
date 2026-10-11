@@ -11,3 +11,5 @@ import (
 var embedded embed.FS
 
 var keyFiles, _ = fs.Sub(embedded, "keys")
+
+func releasesBase() string { return githubReleases }
