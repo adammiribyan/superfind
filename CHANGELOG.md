@@ -6,6 +6,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
 - `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
 - `llms.txt` and `llms-full.txt` at the repo root describe superfind's install, commands, JSON fields, and exit codes for AI assistants and agents. `llms-full.txt` is generated from `llms.txt`, the help, and real output, and a test fails when it falls out of date.
