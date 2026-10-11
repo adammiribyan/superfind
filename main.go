@@ -39,14 +39,20 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           or  eval "$(superfind init bash)"  to ~/.bashrc
   superfind pick          open the picker; prints the chosen session's title, then the command
                           that resumes it
+  superfind last [FILTERS] [--json]
+                          resume the newest session from this folder (after shell setup);
+                          without the shell setup, or in a script, print its title and the
+                          command that resumes it
   superfind search WORDS [--json]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent, and
-                          is:agent shows sessions another program started
+                          agent:claude, agent:codex, and agent:grok by the agent,
+                          is:agent shows sessions another program started, and in:here,
+                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
+                          and last activity
   superfind ask WORDS [--json]
                           print the sessions that best fit what you describe, even in other words;
-                          takes the same is: and agent: filters
+                          takes the same filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
@@ -84,6 +90,28 @@ into its folder and runs its agent's resume command, which lands in your shell h
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+Type filters in the search box to narrow the list, such as in:here, branch:main,
+after:yesterday, or agent:codex; superfind help search lists them all.
+`,
+	"last": `superfind last [FILTERS] [--json]
+
+Resume the newest session started in this folder or in a folder that holds it, with no keys to
+press. Sessions started in a folder inside this one don't count. Your home folder and / count
+only for sessions started right there.
+Very short sessions count only when nothing else fits, and sessions another program started
+are left out unless you add is:agent.
+
+With the shell setup from superfind init, when its input and output are a terminal and no
+option starting with - is given, superfind last cds into the session's folder and resumes it,
+as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
+it prints the session's title on the first line and the command that resumes it on the second,
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
+know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
+
+  agent:codex     only Codex sessions; every search filter works, such as branch:main or
+                  after:yesterday
+  --json          print the session as one JSON object, as search --json does
 `,
 	"search": `superfind search WORDS [--json]
 
@@ -95,18 +123,30 @@ unless you ask for them with is:agent.
   is:waiting      only sessions waiting on you; is:unfinished works the same way
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
+  in:here         only sessions from this folder or a folder that holds it, not from folders
+                  inside it; your home folder and / count only for sessions started right there
+  branch:main     only sessions that ended on that branch, in any letter case; several
+                  branch: filters mean any of them
+  after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
+                  date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
+  before:DAY      only sessions last active before that day; after:2026-10-09
+                  before:2026-10-10 is October 9
   --json          print one JSON object per session instead, including the ones another
                   program started, each with its kind and the passage that matched
 
+Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
+different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
+
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with --, put --
-before it.
+before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
 `,
 	"ask": `superfind ask WORDS [--json]
 
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
-without one. Takes the same is: and agent: filters as search, and prints the same fields.
+without one. Takes the same filters as search, such as agent:codex or in:here, and prints
+the same fields.
 With --json, it prints one JSON object per session, as search --json does.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
@@ -187,7 +227,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "search", "ask", "preview", "show", "command", "blame", "index", "label"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "command", "blame", "index", "label"}
 
 const zshSetup = `_superfind_run() {
   if [[ -x %[1]s ]]; then
@@ -197,16 +237,24 @@ const zshSetup = `_superfind_run() {
   fi
 }
 
+_superfind_resume() {
+  print -r -- $'Resuming \e[1m'"${1%%%%$'\n'*}"$'\e[0m'
+  print -s -- "${1#*$'\n'}"
+  eval "${1#*$'\n'}"
+}
+
 superfind() {
-  if (( $# )); then
+  local out arg
+  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
+    for arg in "${@:2}"; do
+      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    done
+  elif (( $# )); then
     _superfind_run "$@"
     return
   fi
-  local out
-  out=$(_superfind_run pick) || return
-  print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
-  print -s -- "${out#*$'\n'}"
-  eval "${out#*$'\n'}"
+  out=$(_superfind_run "${@:-pick}") || return
+  _superfind_resume "$out"
 }
 
 sfd() { superfind "$@"; }
@@ -241,12 +289,16 @@ _superfind_resume() {
 }
 
 superfind() {
-  if (( $# )); then
+  local out arg
+  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
+    for arg in "${@:2}"; do
+      [[ $arg == -* ]] && { _superfind_run "$@"; return; }
+    done
+  elif (( $# )); then
     _superfind_run "$@"
     return
   fi
-  local out
-  out=$(_superfind_run pick) || return
+  out=$(_superfind_run "${@:-pick}") || return
   _superfind_resume "$out"
 }
 
@@ -282,6 +334,33 @@ func field(s string) string {
 		}
 		return r
 	}, s)
+}
+
+func handoff(r session.Row) {
+	fmt.Fprintln(stdout, handoffTitle(r))
+	fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
+}
+
+func runLast(args []string) {
+	text, asJSON := searchWords("last", args)
+	q := mustParse("last", text)
+	if q.Unknown != nil {
+		usageError("superfind last: " + q.Unknown.Error())
+	}
+	if q.Words != "" {
+		usageError("superfind last: takes filters, such as agent:codex or branch:main, not words. To search this folder, use superfind search in:here WORDS.")
+	}
+	r, ok := session.Last(q, session.Annotate(mustIndex("last")))
+	switch {
+	case !ok && text == "":
+		fail("superfind last: no session started in this folder or a folder that holds it.")
+	case !ok:
+		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
+	case asJSON:
+		writeRecords([]session.Row{r}, nil, "")
+	default:
+		handoff(r)
+	}
 }
 
 func handoffTitle(r session.Row) string {
@@ -549,6 +628,14 @@ func writeRecords(rows []session.Row, db *sql.DB, query string) {
 	}
 }
 
+func mustParse(command, text string) session.Query {
+	q := session.Parse(text)
+	if q.Problem != nil {
+		usageError("superfind " + command + ": " + q.Problem.Error())
+	}
+	return q
+}
+
 func searchWords(command string, args []string) (string, bool) {
 	var words []string
 	asJSON := false
@@ -561,6 +648,8 @@ func searchWords(command string, args []string) (string, bool) {
 			continue
 		case arg == "--deep" && command == "search":
 			usageError("superfind search: --deep is now its own command: superfind ask WORDS")
+		case strings.HasPrefix(arg, "--") && command == "last":
+			usageError("superfind last: there is no " + arg + " option. See superfind help last.")
 		case strings.HasPrefix(arg, "--"):
 			usageError("superfind " + command + ": there is no " + arg + " option. To search for it, put -- first: superfind " +
 				command + " -- " + arg)
@@ -620,6 +709,7 @@ func run(args []string) {
 		fmt.Fprintf(stdout, "%d %s indexed\n", n, noun)
 	case "search":
 		query, asJSON := searchWords("search", args[1:])
+		q := mustParse("search", query)
 		find := session.Search
 		if asJSON {
 			find = session.SearchEvery
@@ -639,17 +729,14 @@ func run(args []string) {
 			writeRecords(found, db, query)
 			return
 		}
-		printRows(found, render.TagsFor(session.SameKind(rows, session.AsksForAgents(query))))
+		printRows(found, render.TagsFor(session.SameKind(rows, q.Agents)))
 	case "ask":
-		rows := session.Annotate(mustIndex("ask"))
-		shown := render.TagsFor(session.SameKind(rows, session.AsksForAgents(strings.Join(args[1:], " "))))
-		db := mustOpenSearch()
 		words, asJSON := searchWords("ask", args[1:])
-		narrow := session.Narrow
-		if asJSON {
-			narrow = session.NarrowEvery
-		}
-		query, eligible := narrow(words, rows)
+		q := mustParse("ask", words)
+		rows := session.Annotate(mustIndex("ask"))
+		shown := render.TagsFor(session.SameKind(rows, q.Agents))
+		db := mustOpenSearch()
+		query, eligible := q.Words, q.Rows(rows, asJSON)
 		if query == "" && asJSON {
 			writeRecords(session.RecentFirst(eligible), db, "")
 			return
@@ -749,8 +836,9 @@ func run(args []string) {
 			exit(1)
 			return
 		}
-		fmt.Fprintln(stdout, handoffTitle(*chosen))
-		fmt.Fprintln(stdout, agent.ResumeCommand(chosen.Agent, chosen.Home, chosen.Session.Cwd, chosen.Session.ID))
+		handoff(*chosen)
+	case "last":
+		runLast(args[1:])
 	default:
 		unknownCommand(args[0])
 	}
