@@ -97,12 +97,18 @@ keybind = super+shift+o=text:\x18c
 
 ## Scripts and agents
 
-Find a conversation, read it, or get its resume command:
+Give your agent context from an earlier conversation, or build a journal across all your agents. These examples use `jq`.
 
 ```sh
-superfind search --json idempotency
-superfind show <id> --json --tail 10
-superfind command <id>
+# Find a migration discussion and read its last six turns.
+id=$(superfind search --json migration |
+  jq -sr 'map(select(.kind == "interactive")) | .[0].id // empty')
+superfind show "$id" --json --tail 6
+
+# Export a session journal: date, agent, project, and title.
+superfind search --json |
+  jq -r 'select(.kind == "interactive") |
+    [.updated[:10], .agent, .project, .title] | @tsv'
 ```
 
 See `superfind --help` for all commands and `superfind help <command>` for details.
