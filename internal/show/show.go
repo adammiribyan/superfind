@@ -52,11 +52,11 @@ const (
 	bodiesBytes = 12000
 )
 
-func Bodies(bodies []string, limited bool) []string {
-	out, left := make([]string, len(bodies)), bodiesBytes
+func Bodies(bodies []string, maxBytes int) []string {
+	out, left := make([]string, len(bodies)), min(bodiesBytes, maxBytes/2)
 	for i := len(bodies) - 1; i >= 0; i-- {
 		most := bodyBytes
-		if limited {
+		if maxBytes > 0 {
 			most = max(min(most, left), 0)
 		}
 		out[i] = body(bodies[i], most)

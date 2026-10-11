@@ -252,6 +252,9 @@ class Outcomes(Blame):
         self.assertTrue(bodies[-1].startswith("Step 7. why") and bodies[-1].endswith("…") and len(bodies[-1].encode()) <= 2003)
         self.assertEqual(bodies[0], "…")
         self.assertLessEqual(sum(len(b.encode()) for b in bodies), 12000 + 8 * 3)
+        small = json.loads(self.run_superfind("show", uid(1), "--json", "--max-bytes", "3000").stdout)["outcomes"]
+        self.assertLessEqual(sum(len(o["body"].encode()) for o in small), 1500 + 8 * 3)
+        self.assertTrue(small[-1]["body"].startswith("Step 7. why") and small[0]["body"] == "…")
         whole = json.loads(self.run_superfind("show", uid(1), "--json", "--max-bytes", "0").stdout)["outcomes"]
         self.assertTrue(all(o["body"].startswith(f"Step {i}. why") and len(o["body"].encode()) <= 2003 for i, o in enumerate(whole)))
 

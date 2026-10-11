@@ -8,7 +8,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
-- `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes, newest first, unless `--max-bytes 0`. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
+- `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
 
 
 ## [0.11.0] - 2026-10-11

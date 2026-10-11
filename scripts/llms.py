@@ -77,7 +77,7 @@ OUTCOME_FIELDS = {
     "pr": "The pull request that carried the commit, or that the session opened, or `0` when none is known.",
     "subject": "The commit's subject from git. For a pull request, the subject it landed with, or empty.",
     "body": "The commit's message after its subject, masked like the turns and cut to 2,000 bytes, with `…` where it "
-            "was cut. The bodies share 12,000 bytes, newest commit first, unless `--max-bytes 0`. Empty for a pull "
+            "was cut. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest commit first; `--max-bytes 0` lifts that. Empty for a pull "
             "request, and for a commit that a squash merge carried after its branch was deleted.",
     "repo": "The repository's top folder.",
     "stage": "How far it got. A commit is `committed`, `pushed` (on a remote branch), `merged` (on the default branch, "

@@ -125,7 +125,7 @@ superfind search --json |
 
 To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts.
 
-`superfind show ID` lists the commits the session made and the pull requests it opened, and how far each got. With `--json` they are `outcomes`, and each commit has a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes, with `…` where it was cut. The bodies share 12,000 bytes, newest commit first, unless you pass `--max-bytes 0`. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
+`superfind show ID` lists the commits the session made and the pull requests it opened, and how far each got. With `--json` they are `outcomes`, and each commit has a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes, with `…` where it was cut. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest commit first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
 
 See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt). Agents can also learn when to use superfind from [its skill](skills/README.md), for Claude Code, Codex, and Grok.
 
