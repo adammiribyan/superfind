@@ -22,6 +22,16 @@ class Outcomes(Blame):
         subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
         self.git("remote", "set-url", "origin", str(bare))
 
+    def made_in(self, folder, subject, at):
+        work, self.work = self.work, folder
+        try:
+            if not folder.exists():
+                folder.mkdir(parents=True)
+                self.git("init", "-q", "-b", "main")
+            return self.commit(subject, {"made.txt": subject}, at)
+        finally:
+            self.work = work
+
     def test_each_agent_s_commit_says_whether_it_merged_was_pushed_or_stayed_local(self):
         t = self.now - 3600
         self.origin()
@@ -208,6 +218,14 @@ class Outcomes(Blame):
                      claude_tool(t + 60, "b2", "Bash", command='cd work/billing && git commit -qm "fix: refund only settled charges"'),
                      claude("Done."))
         self.assertEqual(self.outcomes(2, "commit", "repo"), [(later, str(self.work))])
+
+    def test_a_repository_whose_folder_name_ends_in_a_space_is_found(self):
+        t = self.now - 3600
+        folder = self.work.parent / "receipts "
+        made = self.made_in(folder, "feat: keep a receipt for each charge", t)
+        self.session(uid(1), user("receipts", cwd=str(folder)),
+                     claude_tool(t, "b1", "Bash", command='git commit -qm "feat: keep a receipt for each charge"'), claude("Done."))
+        self.assertEqual(self.outcomes(1, "commit", "repo"), [(made, str(folder))])
 
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)

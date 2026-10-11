@@ -98,7 +98,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 			return top
 		}
 		out, err := git(dir, "rev-parse", "--show-toplevel")
-		tops[dir] = strings.TrimSpace(out)
+		tops[dir] = strings.TrimSuffix(out, "\n")
 		if err != nil {
 			tops[dir] = ""
 		}
