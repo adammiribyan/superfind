@@ -44,7 +44,7 @@ func TestAClaudeTrailHasItsEditsCommitsAndPullRequests(t *testing.T) {
 		`{"type":"pr-link","prRepository":"acme/billing","prNumber":7}`)
 	want := Trail{
 		Edits:   []Edit{{"/w/a.go", 1791540000}, {"/w/b.go", 1791540300}},
-		Commits: []Commit{{commitCommand, "1a2b3c4d", 1791540120}},
+		Commits: []Commit{{commitCommand, "1a2b3c4d", 1791540120, ""}},
 		PRs:     []PR{{"acme/billing", 7}},
 	}
 	if !reflect.DeepEqual(tr, want) {
@@ -56,7 +56,7 @@ func TestAClaudeTrailTakesTheShaFromGitOperationWhenTheCommitWasQuiet(t *testing
 	tr := trailOf(t, Named("claude"), filepath.Join(t.TempDir(), "s.jsonl"),
 		`{"type":"assistant","timestamp":"2026-10-09T10:02:00Z","message":{"content":[{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"git commit -qm wip"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:02:01Z","toolUseResult":{"stdout":"","gitOperation":{"commit":{"sha":"9f8e7d6c","kind":"committed"}}},"message":{"content":[{"type":"tool_result","tool_use_id":"b2","content":""}]}}`)
-	if want := []Commit{{"git commit -qm wip", "9f8e7d6c", 1791540120}}; !reflect.DeepEqual(tr.Commits, want) {
+	if want := []Commit{{"git commit -qm wip", "9f8e7d6c", 1791540120, ""}}; !reflect.DeepEqual(tr.Commits, want) {
 		t.Fatalf("got %+v", tr.Commits)
 	}
 }
@@ -78,7 +78,7 @@ func TestACodexTrailReadsFileChangesPatchesAndCommandsWithTheirOutput(t *testing
 		`{"timestamp":"2026-10-09T10:04:00Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":["/bin/zsh","-lc","gh pr create --fill"],"aggregated_output":"https://github.com/acme/billing/pull/12\n"}}}`)
 	want := Trail{
 		Edits:   []Edit{{"/w/src/a.ts", 1791540060}, {"/w/src/old.ts", 1791540060}, {"/w/src/b.ts", 1791540120}},
-		Commits: []Commit{{"git commit -m 'feat: add the b module'", "0abc1234", 1791540180}},
+		Commits: []Commit{{"git commit -m 'feat: add the b module'", "0abc1234", 1791540180, "/w"}},
 		PRs:     []PR{{"acme/billing", 12}},
 	}
 	if !reflect.DeepEqual(tr, want) {
@@ -93,7 +93,7 @@ func TestAGrokTrailReadsEditsAndTerminalCommits(t *testing.T) {
 		`{"type":"tool_result","tool_call_id":"t2","content":"[main 5d6e7f80] fix: keep the crumbs on one line"}`)
 	want := Trail{
 		Edits:   []Edit{{"/w/a.rb", 0}},
-		Commits: []Commit{{"git commit -am 'fix: keep the crumbs on one line'", "5d6e7f80", 0}},
+		Commits: []Commit{{"git commit -am 'fix: keep the crumbs on one line'", "5d6e7f80", 0, ""}},
 	}
 	if !reflect.DeepEqual(tr, want) {
 		t.Fatalf("got %+v\nwant %+v", tr, want)

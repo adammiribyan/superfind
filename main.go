@@ -220,10 +220,16 @@ messages in a row from one speaker are joined into one turn, and lines that can'
 skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
 anywhere, but an agent that reads this passes it to its own model provider.
 
+Under its header, show lists the commits the session made and the pull requests it opened,
+and how far each got: committed, pushed, merged into the default branch (directly or in a
+squash), or merged and then reverted. A pull request is opened, merged, or reverted. It reads
+only local git, so it knows what your last fetch knows. Merged means the change was accepted,
+not that it was right.
+
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
 
-  --json          print one JSON object: the session's fields and its turns
+  --json          print one JSON object: the session's fields, its outcomes, and its turns
   --tail N        print only the last N turns
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
@@ -731,7 +737,7 @@ func runShow(args []string) {
 	if target == "" {
 		usageError("superfind show: which session? Pass its id, or a path that superfind search prints first.")
 	}
-	r, indexed, _ := findSession("show", target)
+	r, indexed, rows := findSession("show", target)
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
@@ -739,11 +745,19 @@ func runShow(args []string) {
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
+	outcomes, err := blame.Outcomes(r, rows)
+	if err != nil {
+		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
+	}
+	for i := range outcomes {
+		o := &outcomes[i]
+		o.Subject, o.Repo, o.Branch = show.Clean(o.Subject), show.Clean(o.Repo), show.Clean(o.Branch)
+	}
 	record := session.RecordOf(r, show.Clean)
 	if asJSON {
-		err = show.WriteJSON(stdout, record, conversation)
+		err = show.WriteJSON(stdout, record, conversation, outcomes)
 	} else {
-		err = show.WriteText(stdout, record, conversation)
+		err = show.WriteText(stdout, record, conversation, outcomes)
 	}
 	if err != nil {
 		fail("superfind show: " + err.Error())
