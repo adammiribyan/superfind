@@ -234,14 +234,18 @@ anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
-squash), or merged and then reverted. A pull request is opened, merged, or reverted. It reads
-only local git, so it knows what your last fetch knows. Merged means the change was accepted,
-not that it was right.
+squash), or merged and then reverted. A commit that no branch, tag, stash, or checkout holds
+any more, such as one whose branch was deleted before it merged, reads "committed, on no
+branch". A pull request is opened, merged, or reverted. It reads only local git, so it knows
+what your last fetch knows. Merged means the change was accepted, not that it was right.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
 
-  --json          print one JSON object: the session's fields, its outcomes, and its turns
+  --json          print one JSON object: the session's fields, its outcomes, and its turns.
+                  Each commit's body is its message after the subject, masked and cut to
+                  2,000 bytes. The bodies share 12,000 bytes or half of --max-bytes,
+                  whichever is less, newest first; --max-bytes 0 lifts that.
   --tail N        print only the last N turns
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
@@ -278,8 +282,10 @@ git repository, or pass a file in one.
                "Merge pull request #N" subject. A squash merge lists the sessions that made
                the commits it squashed. When no session left a record of either, it says so,
                then lists the sessions that edited its files in the three days before it.
-  FILE         lists the sessions that edited the file, or made or opened the pull request of
-               one of its last 30 commits, most recent first
+  FILE         lists the sessions that edited the file, or made one of its commits, or opened
+               that commit's pull request, most recent first. It reads the file's last 30
+               commits on this branch, and up to 30 more that only other branches, remotes,
+               and tags hold, leaving out merges that only carry work from elsewhere
   FILE:LINE    blames the commit that last changed that line. A file whose name ends in
                :LINE is read as that file.
   --json       print one JSON object per session, as search --json does, with what the
@@ -805,9 +811,14 @@ func runShow(args []string) {
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
 	}
+	bodies := make([]string, len(outcomes))
 	for i := range outcomes {
 		o := &outcomes[i]
 		o.Subject, o.Repo, o.Branch = show.Clean(o.Subject), show.Clean(o.Repo), show.Clean(o.Branch)
+		bodies[i] = o.Body
+	}
+	for i, b := range show.Bodies(bodies, opt.MaxBytes) {
+		outcomes[i].Body = b
 	}
 	record := session.RecordOf(r, show.Clean)
 	if asJSON {
@@ -909,7 +920,7 @@ func runBlame(args []string) {
 	}
 	switch {
 	case len(found) == 0 && t.File != "":
-		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its last 30 commits")
+		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its recent commits, on this branch or another")
 	case len(found) == 0:
 		fmt.Fprintln(stderr, "superfind blame: no session on this machine made "+field(target)+" or edited its files in the three days before it")
 	case t.File == "" && found[0].Guess:
