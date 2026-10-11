@@ -271,7 +271,7 @@ func fileTarget(path, note string) (Target, error) {
 	if _, noHead := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && noHead == nil {
 		return t, err
 	}
-	if elsewhere, err := log("--branches", "--remotes", "--not", "HEAD"); err == nil {
+	if elsewhere, err := log("--no-merges", "--branches", "--remotes", "--not", "HEAD"); err == nil {
 		out += elsewhere
 	}
 	for _, entry := range strings.Split(out, "\x1e") {
