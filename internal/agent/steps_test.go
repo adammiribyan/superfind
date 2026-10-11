@@ -39,7 +39,7 @@ func TestClaudeStepsSitAfterTheTextThatCameBeforeThem(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:00Z","message":{"content":[{"type":"text","text":"The retry resubmits the charge."},{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/w/charge.go","old_string":"a","new_string":"b"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"The file has been updated"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:30Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
-		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","message":{"content":[{"type":"tool_result","tool_use_id":"b1","is_error":true,"content":"Exit code 1\nFAIL TestCharge"}]}}`,
+		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","toolUseResult":"Error: Exit code 1\nFAIL TestCharge","message":{"content":[{"type":"tool_result","tool_use_id":"b1","is_error":true,"content":"Exit code 1\nFAIL TestCharge"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:01:00Z","message":{"content":[{"type":"text","text":"The test still charges twice."},{"type":"tool_use","id":"g1","name":"Agent","input":{"prompt":"write the refund"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:06:00Z","toolUseResult":{"agentId":"a1","status":"completed"},"message":{"content":[{"type":"tool_result","tool_use_id":"g1","content":"Wrote the refund."}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:07:00Z","message":{"content":[{"type":"text","text":"Fixed."}]}}`)
@@ -67,11 +67,12 @@ func TestCodexStepsHoldPatchesAndFailedCommands(t *testing.T) {
 		`{"timestamp":"2026-10-09T10:01:01Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"p1","output":"Success. Updated the following files:\nM charge.go"}}`,
 		`{"timestamp":"2026-10-09T10:01:30Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"c1","arguments":"{\"cmd\":\"go test\"}"}}`,
 		`{"timestamp":"2026-10-09T10:01:31Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"FAIL TestCharge\nProcess exited with code 1"}}`,
+		`{"timestamp":"2026-10-09T10:01:40Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c2","output":"Process exited with code 0\nOutput:\nlog: Process exited with code 3"}}`,
 		`{"timestamp":"2026-10-09T10:02:00Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Still failing."}]}}`,
 		`{"timestamp":"2026-10-09T10:02:30Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","status":"failed","exit_code":2,"aggregated_output":"no such table"}}}`,
 		`{"timestamp":"2026-10-09T10:02:40Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","status":"failed","changes":{"/w/refund.go":{}}}}}`)
 	want := []Step{{Message: 2, Edit: "/w/charge.go"}, {Message: 2, Error: "FAIL TestCharge\nProcess exited with code 1"},
-		{Message: 3, Error: "no such table"}, {Message: 3, Error: "the edit failed"}}
+		{Message: 3, Error: "no such table"}}
 	if !reflect.DeepEqual(steps, want) {
 		t.Fatalf("got %+v", steps)
 	}

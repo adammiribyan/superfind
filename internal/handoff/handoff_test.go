@@ -481,7 +481,7 @@ func TestAWordThatNamesAnEditedFileShowsTheTextAroundEachEdit(t *testing.T) {
 	long = append(long, steady(10, 10)...)
 	tr := run([]string{"fix the double charge"}, long, []string{"open the pull request"}, []string{"Opened it."})
 	at := len(tr.Messages[:1]) + 11
-	steps := []agent.Step{{Message: at, Error: "Exit code 1\nFAIL   TestCharge (0.01s)"}, {Message: at, Edit: "/work/billing/app/charge.go"},
+	steps := []agent.Step{{Message: at, Edit: "/work/billing/app/charge.go"}, {Message: at, Error: "Exit code 1\nFAIL   TestCharge (0.01s)"},
 		{Message: at, Edit: "/work/billing/app/other.go"}, {Message: at + 5, Edit: "/elsewhere/charge.go.bak"}}
 	p := Build(tr, Options{Words: []string{"charge.go"}, MaxBytes: 2500, Steps: steps})
 	turn := p.Turns[slices.IndexFunc(p.Turns, func(t Turn) bool { return t.Number == 2 })]
@@ -493,7 +493,7 @@ func TestAWordThatNamesAnEditedFileShowsTheTextAroundEachEdit(t *testing.T) {
 		t.Fatalf("edited %+v", p.Edited)
 	}
 	out := markdown(t, p)
-	for _, want := range []string{"- Edited `app/charge.go` in turn 2\n", "Lines in square brackets, such as [edited …] and [error: …], are superfind's notes"} {
+	for _, want := range []string{"- Edited `app/charge.go` in turn 2\n", "Lines that start with [edited, [a subagent edited, or [error: are superfind's notes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}
@@ -581,5 +581,37 @@ func TestAnEditWithNoReplyAroundItStaysInTheRecord(t *testing.T) {
 	p := Build(tr, Options{Words: []string{"charge.go"}, Steps: []agent.Step{{Message: 1, Edit: "/work/billing/charge.go"}}})
 	if p.Turns[0].Text != "fix the charge\n\n[edited charge.go]" || len(p.Edited) != 1 {
 		t.Fatalf("got %+v", p)
+	}
+}
+
+func TestAnEditNoteKeepsTheErrorsNearestTheEditInTheOrderTheyHappened(t *testing.T) {
+	tr := run([]string{"fix the charge"}, []string{"Editing.", "Done."})
+	steps := []agent.Step{{Message: 2, Error: "old failure one"}, {Message: 2, Error: "old failure two"}, {Message: 2, Error: "lint failed"},
+		{Message: 2, Edit: "/work/billing/Charge.go"}, {Message: 2, Error: "FAIL TestCharge"}, {Message: 2, Error: "Chunk ID: 1\nProcess exited with code 1\nOutput:\nFAIL TestCharge"},
+		{Message: 2, Error: "FAIL TestRefund"}}
+	p := Build(tr, Options{Words: []string{"charge.go"}, Steps: steps})
+	want := "Editing.\n\n[error: lint failed]\n[edited Charge.go]\n[error: FAIL TestCharge]\n[error: FAIL TestRefund]\n\nDone."
+	if p.Turns[1].Text != want {
+		t.Fatalf("got %q", p.Turns[1].Text)
+	}
+}
+
+func TestEveryWindowOfALongTurnStaysWithinTheLimit(t *testing.T) {
+	var messages []string
+	for i := range 60 {
+		messages = append(messages, fmt.Sprintf("message %d with the needle ", i)+strings.Repeat("wörd ", 40+i))
+	}
+	for _, limit := range []int{300, 1000, 5000} {
+		p := Build(run([]string{"start the work"}, messages, []string{"go on"}, messages), Options{Words: []string{"needle"}, MaxBytes: limit})
+		used := 0
+		for _, turn := range p.Turns {
+			if !utf8.ValidString(turn.Text) {
+				t.Fatalf("turn %d is not valid UTF-8", turn.Number)
+			}
+			used += len(turn.Text)
+		}
+		if used > limit+len(gapMark) {
+			t.Fatalf("limit %d: used %d", limit, used)
+		}
 	}
 }

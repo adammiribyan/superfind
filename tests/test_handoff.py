@@ -106,7 +106,7 @@ class Handoff(SuperfindBehavior):
             {"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": "/work/billing/app/charge.rb", "old_string": "a", "new_string": "b"}}]})
         done = line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "e1", "content": "The file has been updated"}]})
         test = line(type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "bin/rails test"}}]})
-        failed = line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": True,
+        failed = line(type="user", toolUseResult="Error: Exit code 1", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": True,
                                                                           "content": "Exit code 1\nFAIL ChargeTest#test_once"}]})
         agent = line(type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "g1", "name": "Agent", "input": {"prompt": "add the refund"}}]})
         report = line(type="user", toolUseResult={"agentId": "a7"}, message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "g1", "content": "Added it."}]})
@@ -121,7 +121,7 @@ class Handoff(SuperfindBehavior):
             line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "w1", "content": "File created"}]})]) + "\n")
         out = self.handoff(uid(6), "charge.rb", "--max-bytes", "3000")
         self.assertIn("- Looked for: `charge.rb` (1 turn matches)\n- Edited `app/charge.rb` in turn 2\n", out)
-        self.assertIn("Lines in square brackets, such as [edited …] and [error: …], are superfind's notes on the session's tool calls.", out)
+        self.assertIn("Lines that start with [edited, [a subagent edited, or [error: are superfind's notes on the session's tool calls.", out)
         self.assertIn("Moving the key derivation next to the charge call.\n>\n> [edited app/charge.rb]\n> [error: Exit code 1 FAIL ChargeTest#test_once]\n>\n"
                       "> The test fails because the key is per request, not per cart.", out)
         self.assertIn("> [a subagent edited app/charge.rb]\n>\n> The refund is in.", out)

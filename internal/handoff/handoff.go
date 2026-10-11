@@ -239,10 +239,9 @@ func ranges(t agent.Transcript) []span {
 	return out
 }
 
-func anchored(path string, words []string) bool {
-	return slices.ContainsFunc(words, func(w string) bool {
-		return path == w || strings.HasSuffix(path, "/"+strings.TrimPrefix(w, "./"))
-	})
+func anchored(path, word string) bool {
+	path, word = strings.ToLower(path), strings.ToLower(strings.TrimPrefix(word, "./"))
+	return path == word || strings.HasSuffix(path, "/"+word)
 }
 
 func shown(path, cwd string) string {
@@ -253,6 +252,11 @@ func shown(path, cwd string) string {
 }
 
 func flat(s string, most int) string {
+	if len(s) > 8*most {
+		_, head := piece(s, 0, 4*most, 4*most)
+		tail, _ := piece(s, len(s)-4*most, len(s), 4*most)
+		s = s[:head] + " " + s[tail:]
+	}
 	s = strings.Join(strings.Fields(lineBreaks.Replace(show.Clean(s))), " ")
 	if len(s) <= most {
 		return s
@@ -272,52 +276,65 @@ func notes(t agent.Transcript, steps []agent.Step, m *matcher) map[int]*note {
 	if m == nil {
 		return nil
 	}
-	type edit struct {
-		at   int
-		path string
-	}
-	found, errs, direct := map[int]*note{}, map[int][]string{}, map[edit]bool{}
+	gaps := map[int][]agent.Step{}
 	for _, s := range steps {
-		switch {
-		case s.Edit != "":
-			words := slices.DeleteFunc(slices.Clone(m.words), func(w string) bool { return !anchored(s.Edit, []string{w}) })
-			if len(words) == 0 {
-				continue
-			}
-			n := found[s.Message]
-			if n == nil {
-				n = &note{}
-				found[s.Message] = n
-			}
-			p := oneLine(show.Clean(shown(s.Edit, t.Cwd)))
-			direct[edit{s.Message, p}] = direct[edit{s.Message, p}] || !s.Subagent
-			if !slices.Contains(n.paths, p) {
-				n.paths = append(n.paths, p)
-			}
-			for _, w := range words {
-				if !slices.Contains(n.words, w) {
-					n.words = append(n.words, w)
-				}
-			}
-		case s.Error != "" && len(errs[s.Message]) < errorsPerEdit:
-			if e := flat(s.Error, errorBytes); !slices.Contains(errs[s.Message], e) {
-				errs[s.Message] = append(errs[s.Message], e)
-			}
-		}
+		gaps[s.Message] = append(gaps[s.Message], s)
 	}
-	for at, n := range found {
-		var lines []string
-		for _, p := range n.paths {
-			who := "[a subagent edited "
-			if direct[edit{at, p}] {
-				who = "[edited "
-			}
-			lines = append(lines, who+p+"]")
+	found := map[int]*note{}
+	for at, gap := range gaps {
+		first := slices.IndexFunc(gap, func(s agent.Step) bool {
+			return s.Edit != "" && slices.ContainsFunc(m.words, func(w string) bool { return anchored(s.Edit, w) })
+		})
+		if first < 0 {
+			continue
 		}
-		for _, e := range errs[at] {
-			lines = append(lines, "[error: "+e+"]")
+		chosen := map[int]string{}
+		var kept []string
+		take := func(k int) {
+			if gap[k].Error == "" || len(kept) == errorsPerEdit {
+				return
+			}
+			e := flat(gap[k].Error, errorBytes)
+			if e != "" && !slices.ContainsFunc(kept, func(o string) bool { return strings.HasSuffix(o, e) || strings.HasSuffix(e, o) }) {
+				chosen[k], kept = e, append(kept, e)
+			}
+		}
+		for k := first + 1; k < len(gap); k++ {
+			take(k)
+		}
+		for k := first - 1; k >= 0; k-- {
+			take(k)
+		}
+		n, direct := &note{}, map[string]bool{}
+		for _, s := range gap {
+			direct[s.Edit] = direct[s.Edit] || s.Edit != "" && !s.Subagent
+		}
+		var lines []string
+		for k, s := range gap {
+			switch {
+			case s.Edit != "":
+				words := slices.DeleteFunc(slices.Clone(m.words), func(w string) bool { return !anchored(s.Edit, w) })
+				p := oneLine(show.Clean(shown(s.Edit, t.Cwd)))
+				if len(words) == 0 || slices.Contains(n.paths, p) {
+					continue
+				}
+				n.paths = append(n.paths, p)
+				for _, w := range words {
+					if !slices.Contains(n.words, w) {
+						n.words = append(n.words, w)
+					}
+				}
+				who := "[a subagent edited "
+				if direct[s.Edit] {
+					who = "[edited "
+				}
+				lines = append(lines, who+p+"]")
+			case chosen[k] != "":
+				lines = append(lines, "[error: "+chosen[k]+"]")
+			}
 		}
 		n.text = strings.Join(lines, "\n")
+		found[at] = n
 	}
 	return found
 }
@@ -584,6 +601,9 @@ func Build(t agent.Transcript, opt Options) Packet {
 			add(i, window{k + 1, share(20), keepStart})
 		}
 	}
+	for i := n - 1; i > p.LastRequest; i-- {
+		whole(i, share(8), keepEnds)
+	}
 	if limited {
 		regrow(share(2))
 		from := p.LastRequest
@@ -695,7 +715,7 @@ func WriteMarkdown(w io.Writer, a *agent.Agent, r session.Record, p Packet) erro
 		"Turns are numbered from the start of the session. Keys, tokens, and passwords that superfind recognizes are replaced "+
 		"with [masked …].", a.Label)
 	if len(p.Edited) > 0 {
-		fmt.Fprint(w, " Lines in square brackets, such as [edited …] and [error: …], are superfind's notes on the session's tool calls.")
+		fmt.Fprint(w, " Lines that start with [edited, [a subagent edited, or [error: are superfind's notes on the session's tool calls.")
 	}
 	fmt.Fprint(w, "\n\n")
 	fmt.Fprintf(w, "- Title: %s\n", code(r.Title))

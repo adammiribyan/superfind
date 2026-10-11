@@ -240,13 +240,14 @@ superfind search prints first.
 Print a handoff that lets another agent continue a session's work without resuming it. It is
 Markdown to paste into any agent, or JSON with --json. It gives the session's folder, branch,
 and resume command, how the session ended, and excerpts of the conversation. The excerpts are
-the first request, the last request and what followed, and each message that contains any of
-WORDS with the text on each side, so a long turn can show several. A word that names a file the
-session edited, such as charge.rb or app/charge.rb, also shows the text around each edit of
-that file, marked [edited FILE] or [a subagent edited FILE], with the errors of that run of tool
-calls as [error: …] (Grok records none). Each excerpt keeps its turn number and speaker, and the
-handoff says which turns it left out and in which turns the file was edited. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
+the first request, the last request and what followed, and, inside each turn, every passage
+that contains one of WORDS, with the text on each side, so a long turn can show several. A word
+that names a file the session edited, such as charge.rb or app/charge.rb, also shows the text
+around each edit of that file. Lines that start with [edited, [a subagent edited, or [error:
+are superfind's notes on those tool calls, in --json too. Grok sessions get no error notes. Each
+excerpt keeps its turn number and speaker, and the handoff says which turns it left out and in
+which turns the file was edited. The excerpts are quoted, under a note that they are a record
+and not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
 Nothing is sent anywhere.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that

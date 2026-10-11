@@ -102,7 +102,11 @@ func claudeFailures(raw []byte) []string {
 	if !bytes.Contains(raw, []byte(`"is_error"`)) {
 		return nil
 	}
-	var l claudeTrailLine
+	var l struct {
+		Message struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+	}
 	if json.Unmarshal(raw, &l) != nil {
 		return nil
 	}
@@ -132,14 +136,14 @@ func codexFailures(raw []byte) []string {
 	switch {
 	case completed && p.Item.Type == "CommandExecution" && (p.Item.Status == "failed" || (p.Item.ExitCode != nil && *p.Item.ExitCode != 0)):
 		return []string{cmp.Or(strings.TrimSpace(p.Item.Output), "the command failed")}
-	case completed && p.Item.Type == "FileChange" && p.Item.Status == "failed":
-		return []string{"the edit failed"}
 	case output:
 		text := plainText(p.Output)
 		if text == "" {
 			text = string(p.Output)
 		}
-		if code := exitCode.FindStringSubmatch(text); (code != nil && code[1] != "0") || strings.HasPrefix(text, "apply_patch verification failed") {
+		header, _, _ := strings.Cut(text, "\nOutput:")
+		codes := exitCode.FindAllStringSubmatch(header, -1)
+		if len(codes) > 0 && codes[len(codes)-1][1] != "0" || strings.HasPrefix(text, "apply_patch verification failed") {
 			return []string{strings.TrimSpace(text)}
 		}
 	}
