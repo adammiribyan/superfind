@@ -84,7 +84,7 @@ func outcomeLine(o blame.Outcome) string {
 		return head + "pushed, not on " + branch
 	case o.Stage == blame.Opened:
 		return head + "not merged into " + branch
-	case o.Kind == blame.PullRequest:
+	case o.Kind == blame.PullRequest || (o.PR == 0 && o.Landed != o.Commit):
 		fate = "merged into " + branch + " as " + short(o.Landed)
 	case o.Landed != o.Commit:
 		fate = fmt.Sprintf("squashed into %s as %s (#%d)", branch, short(o.Landed), o.PR)

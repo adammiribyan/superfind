@@ -131,7 +131,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		repos[top] = load(top, bound)
 	}
 	var out []Outcome
-	missing, seen := 0, map[string]bool{}
+	missing := 0
 	for i, c := range trail.Commits {
 		rp := repos[where[i]]
 		if rp == nil {
@@ -143,9 +143,10 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 			missing++
 			continue
 		}
-		if key := strings.Join([]string{o.Repo, o.Commit, o.Landed, o.Subject}, "\x00"); !seen[key] {
-			seen[key] = true
+		if j := slices.IndexFunc(out, func(m Outcome) bool { return same(m, o) }); j < 0 {
 			out = append(out, o)
+		} else if !rp.onDefault[out[j].Commit] || rp.onDefault[o.Commit] {
+			out[j] = o
 		}
 	}
 	tried := map[string]bool{}
@@ -163,6 +164,13 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		}
 	}
 	return out, missing
+}
+
+func same(a, b Outcome) bool {
+	if a.Repo != b.Repo || plain(a.Subject) != plain(b.Subject) {
+		return false
+	}
+	return a.Commit == b.Commit && a.Landed == b.Landed || a.Landed != "" && a.Landed == b.Landed
 }
 
 const folderArg = `("[^"]*"|'[^']*'|[^\s;&|)]+)`
@@ -350,15 +358,33 @@ func (rp *repo) squash(after float64, carries func(string) bool) (entry, string,
 
 func (rp *repo) judge(e entry) Outcome {
 	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed}
-	if rp.onRemote[e.SHA] {
+	if rp.onDefault[e.SHA] {
+		return rp.reverted(rp.landedAs(o, e))
+	}
+	if squash, _, ok := rp.squash(e.At, func(p string) bool { return p == bare(e.Subject) }); ok {
+		return rp.reverted(rp.landedAs(o, squash))
+	}
+	if copied, ok := rp.copyOf(e, rp.onDefault); ok {
+		return rp.reverted(rp.landedAs(o, copied))
+	}
+	if _, ok := rp.copyOf(e, rp.onRemote); ok || rp.onRemote[e.SHA] {
 		o.Stage = Pushed
 	}
-	if rp.onDefault[e.SHA] {
-		o = rp.landedAs(o, e)
-	} else if squash, _, ok := rp.squash(e.At, func(p string) bool { return p == bare(e.Subject) }); ok {
-		o = rp.landedAs(o, squash)
+	return o
+}
+
+func (rp *repo) copyOf(e entry, on map[string]bool) (entry, bool) {
+	p := plain(e.Subject)
+	var found []entry
+	for _, c := range rp.log {
+		if on[c.SHA] && len(p) >= shortestSubject && plain(c.Subject) == p && c.At >= e.At-matchBefore && c.At <= e.At+matchAfter && c.landed >= e.landed {
+			found = append(found, c)
+		}
 	}
-	return rp.reverted(o)
+	if len(found) == 0 {
+		return entry{}, false
+	}
+	return slices.MinFunc(found, func(a, b entry) int { return cmp.Compare(a.landed, b.landed) }), true
 }
 
 func (rp *repo) landedAs(o Outcome, e entry) Outcome {
