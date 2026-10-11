@@ -146,7 +146,7 @@ For a commit, it lists the session that ran its `git commit`, then any that open
 
 It reads the commands and edits each agent recorded on this machine, so it misses a commit made by hand in a terminal or on another machine, and one whose message and hash the session never recorded. A session counts as making a commit when the output of its `git commit` showed that commit's hash, or when it ran `git commit` with that message, ignoring case and punctuation, from a folder in the repository or one that no longer exists. Grok records no times, so its edits count as recent whenever its session is.
 
-On the maintainer's machine, with hash evidence switched off, blame named the right session first for 485 of 505 commits from 10 repositories whose sessions printed the commit's hash (Claude Code, Codex, and 7 Grok commits), and a wrong one first for 6. It named the sessions behind all 21 squash merges on this repository's main branch. For 200 commits that teammates made on other machines, it named no session as the maker. For 63 of those it listed sessions that had edited the same files, and said that no session made the commit.
+On the maintainer's machine, with hash evidence switched off, blame named the right session first for 498 of 505 commits from 10 repositories whose sessions printed the commit's hash (Claude Code, Codex, and 7 Grok commits), and a wrong one first for 5. It named the sessions behind all 21 squash merges on this repository's main branch. For 200 commits that teammates made on other machines, it named no session as the maker. For 63 of those it listed sessions that had edited the same files, and said that no session made the commit.
 
 ## What leaves your machine
 

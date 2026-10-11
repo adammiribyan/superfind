@@ -167,6 +167,16 @@ class Blame(SuperfindBehavior):
         self.commit("feat: refund a settled charge", {"refund.go": "settled\n"}, t + 10)
         self.assertEqual(self.found("HEAD"), [(uid(1), "made this commit")])
 
+    def test_an_old_session_whose_codex_thread_edited_recently_is_in_the_fallback(self):
+        t = self.now - 3600
+        parent = self.codex_session(uid(1), codex_meta(cwd=str(self.work)), codex_user("refunds, with a helper"), codex_reply("Started one."))
+        os.utime(parent, (t - 5 * 86400, t - 5 * 86400))
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work), parent=uid(1)), codex_user("write refunds"),
+                           codex_at(t - 600, "event_msg", type="item_completed",
+                                    item={"type": "FileChange", "id": "f1", "status": "completed", "changes": {str(self.work / "refund.go"): {}}}))
+        self.commit("chore: by hand", {"refund.go": "refund\n"}, t)
+        self.assertEqual(self.found("HEAD"), [(uid(1), "edited 1 of the commit's 1 files")])
+
     def test_a_long_lived_pull_request_and_a_merge_commit_still_find_their_sessions(self):
         t = self.now - 3600
         self.git("remote", "add", "upstream", "https://github.com/Acme/Billing.git")

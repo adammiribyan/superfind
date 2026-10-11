@@ -344,7 +344,7 @@ func Blame(t Target, rows []session.Row) ([]Found, []error) {
 	if t.File == "" && !direct {
 		var recent []session.Row
 		for _, r := range rows {
-			if r.Session.Mtime >= t.Commits[0].At-editWindow {
+			if t.lastChanged(r) >= t.Commits[0].At-editWindow {
 				recent = append(recent, r)
 			}
 		}
@@ -358,6 +358,16 @@ func Blame(t Target, rows []session.Row) ([]Found, []error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].before(out[j], t.File != "") })
 	return out, problems
+}
+
+func (t Target) lastChanged(r session.Row) float64 {
+	latest := r.Session.Mtime
+	for _, path := range t.threads[r.Path] {
+		if info, err := os.Stat(path); err == nil {
+			latest = max(latest, float64(info.ModTime().UnixNano())/1e9)
+		}
+	}
+	return latest
 }
 
 func (t Target) scan(candidates []session.Row, needles [][]byte) ([]*Found, []error) {
