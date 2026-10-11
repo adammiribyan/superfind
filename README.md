@@ -123,7 +123,7 @@ superfind search --json |
     [.updated[:10], .agent, .project, .title] | @tsv'
 ```
 
-To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts.
+To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts. `superfind handoff ID charge.rb` adds the text around each edit of a file the session changed, and the errors from those steps.
 
 See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt). Agents can also learn when to use superfind from [its skill](skills/README.md), for Claude Code, Codex, and Grok.
 

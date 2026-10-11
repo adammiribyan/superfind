@@ -112,6 +112,7 @@ type Transcript struct {
 
 type reader interface {
 	feed(raw []byte) bool
+	said() int
 	done() Transcript
 }
 

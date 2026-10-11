@@ -8,6 +8,12 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
+- `superfind handoff ID FILE` shows the text around each edit of a file the session changed, for a word that names it, such as `charge.rb` or `app/charge.rb`. Each edit is marked `[edited app/charge.rb]`, or `[a subagent edited …]` for a Claude Code subagent, followed by the errors from the same run of tool calls as `[error: …]`. Grok records no errors. The handoff lists the turns with edits, and `--json` has them as `edited`.
+
+### Changed
+
+- `superfind handoff ID WORDS` looks for your words in each message, not each turn, so a long agent run can show several excerpts, and matches keep at least half of `--max-bytes` when the requests and ending are long.
+
 
 ## [0.11.0] - 2026-10-11
 

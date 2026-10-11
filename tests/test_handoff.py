@@ -2,8 +2,8 @@ import json
 import re
 import unittest
 
-from test_superfind import (CODEX_ENVIRONMENT, SuperfindBehavior, claude, codex_meta, codex_reply, codex_user, tool, uid,
-                            user)
+from test_superfind import (CODEX_ENVIRONMENT, SuperfindBehavior, claude, codex_item, codex_meta, codex_reply, codex_user, grok_reply,
+                            grok_user, line, tool, uid, user)
 
 
 KEY = "sk-ant-api03-" + "Q" * 40
@@ -98,6 +98,55 @@ class Handoff(SuperfindBehavior):
         self.assertIn("- Folder: `/work/api`, branch `auth`", out)
         self.assertIn("### Turn 1 · user · first request · last request · matches cookies\n\n> move the session tokens to cookies\n", out)
         self.assertIn("### Turn 2 · codex\n\n> SameSite=Lax it is.\n", out)
+
+    def test_a_file_the_session_edited_pulls_in_the_text_around_each_edit(self):
+        routine = [claude(f"Step {i} went fine. " + "routine " * 40) for i in range(12)]
+        edit = line(type="assistant", message={"role": "assistant", "content": [
+            {"type": "text", "text": "Moving the key derivation next to the charge call."},
+            {"type": "tool_use", "id": "e1", "name": "Edit", "input": {"file_path": "/work/billing/app/charge.rb", "old_string": "a", "new_string": "b"}}]})
+        done = line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "e1", "content": "The file has been updated"}]})
+        test = line(type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "bin/rails test"}}]})
+        failed = line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": True,
+                                                                          "content": "Exit code 1\nFAIL ChargeTest#test_once"}]})
+        agent = line(type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "g1", "name": "Agent", "input": {"prompt": "add the refund"}}]})
+        report = line(type="user", toolUseResult={"agentId": "a7"}, message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "g1", "content": "Added it."}]})
+        path = self.session(uid(6), user("fix the double charge", cwd="/work/billing"), *routine[:6], edit, done, test, failed,
+                            claude("The test fails because the key is per request, not per cart."), *routine[6:], agent, report,
+                            claude("The refund is in."), user("open the pull request", cwd="/work/billing"), claude("Opened it."),
+                            title="Double charge")
+        sub = path.with_suffix("") / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a7.jsonl").write_text("\n".join([
+            line(type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "w1", "name": "Write", "input": {"file_path": "/work/billing/app/charge.rb", "content": "x"}}]}),
+            line(type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "w1", "content": "File created"}]})]) + "\n")
+        out = self.handoff(uid(6), "charge.rb", "--max-bytes", "3000")
+        self.assertIn("- Looked for: `charge.rb` (1 turn matches)\n- Edited `app/charge.rb` in turn 2\n", out)
+        self.assertIn("Lines in square brackets, such as [edited …] and [error: …], are superfind's notes on the session's tool calls.", out)
+        self.assertIn("Moving the key derivation next to the charge call.\n>\n> [edited app/charge.rb]\n> [error: Exit code 1 FAIL ChargeTest#test_once]\n>\n"
+                      "> The test fails because the key is per request, not per cart.", out)
+        self.assertIn("> [a subagent edited app/charge.rb]\n>\n> The refund is in.", out)
+        packet = json.loads(self.handoff(uid(6), "--json", "app/charge.rb"))
+        self.assertEqual(packet["edited"], [{"path": "app/charge.rb", "turns": [2]}])
+        self.assertEqual(json.loads(self.handoff(uid(6), "--json", "charge"))["edited"], [])
+
+    def test_codex_and_grok_edits_pull_in_their_text_too(self):
+        def codex_at(**payload):
+            return line(timestamp="2026-10-09T10:01:00Z", type="response_item", payload=payload)
+        self.codex_session(uid(7), codex_meta(cwd="/work/api"), codex_user(CODEX_ENVIRONMENT), codex_user("move the tokens to cookies"),
+                           codex_reply("Patching the session store."),
+                           codex_at(type="custom_tool_call", name="apply_patch", call_id="p1", input="*** Begin Patch\n*** Update File: lib/store.rb\n*** End Patch"),
+                           codex_at(type="custom_tool_call_output", call_id="p1", output="Success. Updated the following files:\nM lib/store.rb"),
+                           codex_at(type="function_call", name="exec_command", call_id="c1", arguments=json.dumps({"cmd": "rake"})),
+                           codex_at(type="function_call_output", call_id="c1", output="cookie too large\nProcess exited with code 1"),
+                           codex_reply("SameSite=Lax it is."))
+        out = self.handoff(uid(7), "store.rb")
+        self.assertIn("> Patching the session store.\n>\n> [edited lib/store.rb]\n> [error: cookie too large Process exited with code 1]\n>\n> SameSite=Lax it is.", out)
+        self.grok_session(uid(8), "/work/web", grok_user("fix the header"), line(type="assistant", content="Editing the layout.", model_id="grok-4.7",
+                          tool_calls=[{"id": "g1", "name": "search_replace", "arguments": json.dumps({"file_path": "/work/web/app/layout.css"})}]),
+                          line(type="tool_result", content="ok", tool_call_id="g1"), grok_reply("Fixed the header."))
+        out = self.handoff(uid(8), "layout.css")
+        self.assertIn("- Edited `app/layout.css` in turn 2\n", out)
+        self.assertIn("> Editing the layout.\n>\n> [edited app/layout.css]\n>\n> Fixed the header.", out)
 
     def test_handoff_sends_nothing_anywhere(self):
         self.checkout()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -416,5 +417,97 @@ func TestTruncatedSaysWhetherTheLimitLeftAnythingOut(t *testing.T) {
 	}
 	if !some.Truncated || len(some.Turns) == 12 {
 		t.Fatalf("left out %d turns, truncated=%v", 12-len(some.Turns), some.Truncated)
+	}
+}
+
+func run(texts ...[]string) agent.Transcript {
+	t := agent.Transcript{Last: agent.Replied, Cwd: "/work/billing"}
+	for i, messages := range texts {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		t.Turns = append(t.Turns, agent.Turn{Role: role, Text: strings.Join(messages, "\n\n")})
+		t.Messages = append(t.Messages, messages...)
+	}
+	return t
+}
+
+func steady(n int, from int) []string {
+	var out []string
+	for i := range n {
+		out = append(out, fmt.Sprintf("Step %d of the migration went fine. ", from+i)+strings.Repeat("routine ", 30))
+	}
+	return out
+}
+
+func TestEveryMatchInALongAgentRunGetsItsOwnWindow(t *testing.T) {
+	long := append(append(steady(12, 0), "The NEEDLE first: the retry resubmits the charge."), steady(12, 12)...)
+	long = append(append(long, "The NEEDLE again: Stripe keeps idempotency keys for 24 hours."), steady(12, 24)...)
+	p := Build(run([]string{"migrate the billing tables"}, long, []string{"ship it"}, []string{"Shipped."}),
+		Options{Words: []string{"needle"}, MaxBytes: 3000})
+	turn := p.Turns[slices.IndexFunc(p.Turns, func(t Turn) bool { return t.Number == 2 })]
+	for _, want := range []string{"the retry resubmits the charge", "Stripe keeps idempotency keys"} {
+		if !strings.Contains(turn.Text, want) {
+			t.Errorf("missing %q in turn 2:\n%s", want, turn.Text)
+		}
+	}
+	if p.Matching != 1 || p.MatchesLeft != 0 || strings.Count(turn.Text, gapMark) != 1 {
+		t.Fatalf("matching %d, left %d:\n%s", p.Matching, p.MatchesLeft, turn.Text)
+	}
+}
+
+func TestMatchesKeepRoomWhenTheRequestsAndTheEndingAreLong(t *testing.T) {
+	long := strings.Repeat("plain words ", 200)
+	texts := [][]string{{"please " + long}}
+	for i := range 3 {
+		texts = append(texts, []string{long}, []string{fmt.Sprintf("the webhook retry %d ", i) + strings.Repeat("x ", 300)})
+	}
+	texts = append(texts, []string{long}, []string{"now " + long}, []string{long}, []string{"ok go"}, []string{long})
+	p := Build(run(texts...), Options{Words: []string{"webhook"}, MaxBytes: 2400})
+	shown := 0
+	for _, turn := range p.Turns {
+		if len(turn.Matches) > 0 {
+			shown++
+		}
+	}
+	if got := numbers(p); p.Matching != 3 || shown != 3 || !slices.Contains(got, 1) || !slices.Contains(got, 9) || !slices.Contains(got, 11) {
+		t.Fatalf("showed %d of %d matching turns: %v", shown, p.Matching, got)
+	}
+}
+
+func TestAWordThatNamesAnEditedFileShowsTheTextAroundEachEdit(t *testing.T) {
+	long := append(steady(10, 0), "Moving the key derivation next to the charge call.", "The test passes now; the key comes from the cart id.")
+	long = append(long, steady(10, 10)...)
+	tr := run([]string{"fix the double charge"}, long, []string{"open the pull request"}, []string{"Opened it."})
+	at := len(tr.Messages[:1]) + 11
+	steps := []agent.Step{{Message: at, Error: "Exit code 1\nFAIL   TestCharge (0.01s)"}, {Message: at, Edit: "/work/billing/app/charge.go"},
+		{Message: at, Edit: "/work/billing/app/other.go"}, {Message: at + 5, Edit: "/elsewhere/charge.go.bak"}}
+	p := Build(tr, Options{Words: []string{"charge.go"}, MaxBytes: 2500, Steps: steps})
+	turn := p.Turns[slices.IndexFunc(p.Turns, func(t Turn) bool { return t.Number == 2 })]
+	want := "Moving the key derivation next to the charge call.\n\n[edited app/charge.go]\n[error: Exit code 1 FAIL TestCharge (0.01s)]\n\nThe test passes now"
+	if !strings.Contains(turn.Text, want) || !slices.Equal(turn.Matches, []string{"charge.go"}) || strings.Contains(turn.Text, "other.go") {
+		t.Fatalf("turn 2:\n%s", turn.Text)
+	}
+	if !reflect.DeepEqual(p.Edited, []Edited{{"app/charge.go", []int{2}}}) {
+		t.Fatalf("edited %+v", p.Edited)
+	}
+	out := markdown(t, p)
+	for _, want := range []string{"- Edited `app/charge.go` in turn 2\n", "Lines in square brackets, such as [edited …] and [error: …], are superfind's notes"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if plain := markdown(t, Build(tr, Options{Words: []string{"charge"}, MaxBytes: 2500, Steps: steps})); strings.Contains(plain, "[edited") ||
+		strings.Contains(plain, "square brackets") {
+		t.Fatalf("a word that names no edited file added notes:\n%s", plain)
+	}
+}
+
+func TestASubagentsEditIsMarkedAsOne(t *testing.T) {
+	tr := run([]string{"fix the double charge"}, []string{"Sending a subagent.", "It fixed the retry."})
+	p := Build(tr, Options{Words: []string{"app/charge.go"}, Steps: []agent.Step{{Message: 2, Edit: "/work/billing/app/charge.go", Subagent: true}}})
+	if !strings.Contains(p.Turns[1].Text, "Sending a subagent.\n\n[a subagent edited app/charge.go]\n\nIt fixed the retry.") {
+		t.Fatalf("got %q", p.Turns[1].Text)
 	}
 }
