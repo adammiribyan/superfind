@@ -38,6 +38,7 @@ class PickerBehavior(unittest.TestCase):
         self.out = self.home / "out"
         self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
+        self.here = Path("/")
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
                     "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
 
@@ -67,7 +68,8 @@ class PickerBehavior(unittest.TestCase):
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
-        tmux("new-session", "-d", "-s", self.session_name, "-x", str(width), "-y", str(height), command, *style)
+        tmux("new-session", "-d", "-s", self.session_name, "-c", str(self.here), "-x", str(width), "-y", str(height), command,
+             *style)
         self.wait_for(header)
 
     def screen(self, *flags):
@@ -576,6 +578,10 @@ class PickerBehavior(unittest.TestCase):
         self.keys("charged")
         self.wait_for("Search failed: the search index couldn't be read")
         self.assertNotIn("No session", self.screen())
+        self.keys(" after:4")
+        time.sleep(0.5)
+        self.assertIn("Search failed: the search index couldn't be read", self.screen())
+        self.assertNotIn("after: takes", self.screen())
 
     def test_a_preview_that_could_not_be_read_is_read_again_once_it_can_be(self):
         self.three_sessions()
@@ -610,6 +616,43 @@ class PickerBehavior(unittest.TestCase):
         self.keys("pwd", "Enter")
         self.wait_for("Resuming")
         self.assertIn("\n/tmp", self.screen())
+
+    def last_through_shell(self, shell):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.folder_sessions()
+        self.session("shop-new", "Newest elsewhere", user("charge once", cwd=str(self.home / "shop")), tool("Edit"),
+                     claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        tmux("new-session", "-d", "-s", self.session_name, "-x", "160", "-y", "32", f"env -i {env} {start}")
+        time.sleep(0.5)
+        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        self.keys(f"cd {self.home / 'app'}", "Enter")
+        self.keys("IFS=:", "Enter")
+        self.keys("superfind last --json", "Enter")
+        self.wait_for('"schema":1')
+        time.sleep(0.5)
+        self.assertNotIn("Resuming", self.screen())
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.keys("clear", "Enter")
+        self.keys("superfind last", "Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
+        folder = self.home / "app"
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), f"{folder} --resume app\n")
+        self.keys("pwd", "Enter")
+        self.wait_for("Resuming")
+        self.assertIn("Resuming Ledger migration", self.screen())
+        self.wait_for(f"\n{folder}\n")
+
+    def test_typing_superfind_last_in_zsh_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("zsh")
+
+    def test_typing_superfind_last_in_bash_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("bash")
 
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])
@@ -916,6 +959,57 @@ class PickerBehavior(unittest.TestCase):
         self.open_picker()
         self.keys("where did we stop double charges", "M-Enter")
         self.wait_for("Ask failed: Claude Code didn't answer.")
+
+    def folder_sessions(self):
+        for name in ("app/sub", "shop"):
+            (self.home / name).mkdir(parents=True)
+        self.session("app", "Ledger migration", user("migrate the ledger", cwd=str(self.home / "app"), branch="main"),
+                     tool("Bash"), claude("Done."))
+        self.session("sub", "Invoice layout", user("wrap names", cwd=str(self.home / "app" / "sub"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("shop", "Checkout double charge", user("charge once", cwd=str(self.home / "shop"), branch="fix"),
+                     tool("Edit"), claude("Done."))
+        self.session("dotfiles", "Dotfiles cleanup", user("tidy", cwd=str(self.home), branch="main"), tool("Bash"),
+                     claude("Done."))
+        self.session("old", "Old ledger fix", user("fix the ledger", cwd=str(self.home / "app"), branch="fix"),
+                     tool("Bash"), claude("Done."))
+        os.utime(self.projects / "old.jsonl", (time.time() - 10 * 86400, time.time() - 10 * 86400))
+        self.here = self.home / "app"
+        self.env["PWD"] = str(self.here)
+
+    def test_filters_in_the_picker_list_what_search_prints_in_the_same_order(self):
+        self.folder_sessions()
+        self.open_picker()
+        for query in ("in:here", "in:here branch:FIX", "branch:fix after:5d", "in:here ledger"):
+            printed = subprocess.run([str(SUPERFIND), "search", *query.split()], env=self.env, cwd=self.here,
+                                     capture_output=True, text=True, check=True).stdout
+            want = [row.split("\t")[4] for row in printed.splitlines()]
+            self.keys("C-u", query)
+            self.assertTrue(self.until(lambda: self.titles() == want), (query, want, self.screen()))
+        self.keys("C-u", "in:here")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration", "Old ledger fix"]), self.screen())
+
+    def test_a_half_typed_filter_keeps_the_list_says_what_it_takes_and_cannot_ask(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.out}.asked\necho '{{\"result\": \"[0]\"}}'\n")
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.three_sessions()
+        self.open_picker()
+        self.keys("ledger after:4")
+        self.wait_for("after: takes a date like 2026-10-09, yesterday, or 3d.")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
+        self.keys("C-r")
+        time.sleep(1)
+        self.assertFalse(Path(f"{self.out}.asked").exists())
+        self.assertIn("after: takes a date", self.screen())
+        self.keys(*["BSpace"] * 7, "in:")
+        self.wait_for("in: takes here, as in in:here.")
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
+        self.keys(*["BSpace"] * 3, "after:4d")
+        self.assertTrue(self.until(lambda: "takes" not in self.screen()), self.screen())
+        self.assertTrue(self.until(lambda: self.titles() == ["Ledger migration"]), self.screen())
 
 
     def explaining_typesafe(self):
