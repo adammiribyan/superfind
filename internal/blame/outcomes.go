@@ -272,7 +272,7 @@ func (rp *repo) bySHA(sha string) (entry, bool) {
 func (rp *repo) byMessage(at float64, messages []string) (entry, bool) {
 	var near []entry
 	for _, e := range rp.log {
-		if slices.Contains(messages, plain(e.Subject)) && (at == 0 || (e.At >= at-matchBefore && e.At <= at+matchAfter)) {
+		if p := plain(e.Subject); len(p) >= shortestSubject && slices.Contains(messages, p) && (at == 0 || (e.At >= at-matchBefore && e.At <= at+matchAfter)) {
 			near = append(near, e)
 		}
 	}

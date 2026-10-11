@@ -134,6 +134,14 @@ class Outcomes(Blame):
         self.claude_at(1, claude_tool(t - 5, "b1", "Bash", command='git commit -qam "fix: retry a charge only once"'), title="Retry")
         self.assertEqual(self.outcomes(1, "commit", "stage"), [(near, "merged")])
 
+    def test_a_short_line_in_a_commit_s_body_does_not_claim_another_commit(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 600)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t - 30, body="wip")
+        self.commit("wip", {"scratch.go": "s\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -F - <<EOF\nfeat: refund a charge in full\n\nwip\nEOF'), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "subject"), [(made, "feat: refund a charge in full")])
+
     def test_of_two_copies_of_a_commit_the_one_on_main_counts(self):
         t = self.now - 3600
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
