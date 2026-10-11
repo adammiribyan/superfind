@@ -124,6 +124,6 @@ Search by description sends your query and session excerpts to TypeSafe when con
 
 [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md)
 
-Built by [Adam Miribyan](https://github.com/adammiribyan). [MIT licensed](LICENSE).
+Built by [Adam Miribyan](https://github.com/adammiribyan). [Apache 2.0 licensed](LICENSE).
 
 Independent of Anthropic, OpenAI, and xAI.
