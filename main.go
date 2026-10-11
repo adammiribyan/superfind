@@ -1055,7 +1055,7 @@ func main() {
 	}
 	output = bufio.NewWriter(stdout)
 	stdout = output
-	if v, err := release.ParseVersion(version); err == nil {
+	if v, err := release.ParseVersion(version); err == nil && (len(os.Args) < 2 || os.Args[1] != "upgrade") {
 		news.Arrive(v)
 	}
 	run(os.Args[1:])
