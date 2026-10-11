@@ -38,6 +38,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - Under the list, the preview now appears only when it has room for at least 6 lines below its heading. At 80×24 the list shows 5 sessions and the preview 7 lines, instead of 8 sessions and 3 lines. Beside the list, the preview is left out when the window is too short for 6 lines.
 - When nothing in the preview matched your search, it no longer leaves two blank lines above "you", so the conversation gets one more line.
 - When the footer is too narrow for every key, it leaves keys out in this order: "tab view", "ctrl-u clear search", "ctrl-r ask", "enter resume". "esc" goes last. A message too wide for the list leaves out its later sentences before anything else is cut.
+- The preview renders only the end of a long reply, the part it shows, and keeps code blocks that began earlier formatted as code. It looks the same as before. On a 126 MB test session that ends in a 40 MB reply, the preview took 2.4 to 2.7 s instead of 5.0 to 6.2 s.
 
 ### Fixed
 
