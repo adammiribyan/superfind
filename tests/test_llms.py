@@ -42,7 +42,7 @@ class LlmsFiles(SuperfindBehavior):
                      tool("Grep"), claude("Each request now carries an idempotency key derived from the cart id."),
                      title="Checkout double-charges")
         self.record_typesafe(answer=rank_every_card)
-        examples = re.findall(r"`(superfind (?:search|ask|show|command)[^`]*)`", (ROOT / "llms.txt").read_text())
+        examples = re.findall(r"`(superfind (?:search|ask|show|command|handoff)[^`]*)`", (ROOT / "llms.txt").read_text())
         self.assertGreaterEqual(len(examples), 4, examples)
         for example in examples:
             args = example.split()[1:]
@@ -57,8 +57,9 @@ class LlmsFiles(SuperfindBehavior):
 
     def test_the_shell_setup_and_exit_codes_in_llms_txt_are_true(self):
         text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-        shells = re.findall(r'`eval "\$\(superfind init (\w+)\)"`', text)
-        self.assertEqual(shells, ["zsh", "bash"])
+        shells = re.findall(r'`eval "\$\(superfind init (\w+)\)"`|`superfind init (\w+) \| source`', text)
+        shells = [a or b for a, b in shells]
+        self.assertEqual(shells, ["zsh", "bash", "fish"])
         for shell in shells:
             self.assertIn("superfind", self.superfind("init", shell))
         self.assertIn("Exit codes: 0 done, even when nothing matches; 1 failed; 2 a usage mistake or an ambiguous id", text)
@@ -81,7 +82,7 @@ class LlmsFiles(SuperfindBehavior):
 
     def test_llms_txt_names_every_command_scripts_use(self):
         text = (ROOT / "llms.txt").read_text()
-        for command in ("search", "ask", "show", "command"):
+        for command in ("search", "ask", "show", "command", "handoff"):
             self.assertIn(f"`superfind {command} ", text)
         self.assertIn("JSON Lines", text)
         self.assertIn("Exit codes: 0", text)

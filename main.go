@@ -23,6 +23,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
+	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
@@ -61,6 +62,9 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print where a session left off, or its recent conversation
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
                           print a session's conversation as plain text, for scripts and agents
+  superfind handoff SESSION [WORDS] [--json] [--max-bytes N]
+                          print excerpts of a session for another agent to continue from:
+                          where it left off, and the turns that mention WORDS
   superfind command SESSION
                           print the shell command that resumes a session
   superfind blame FILE|FILE:LINE|COMMIT [--json]
@@ -205,6 +209,25 @@ superfind search prints first.
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
 `,
+	"handoff": `superfind handoff SESSION [WORDS] [--json] [--max-bytes N]
+
+Print a handoff that lets another agent continue a session's work without resuming it. It is
+Markdown to paste into any agent, or JSON with --json. It gives the session's folder, branch,
+and resume command, how the session ended, and excerpts of the conversation. The excerpts are
+the first request, the last request and what followed, and the turns that contain any of WORDS
+with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
+says which turns it left out. The excerpts are quoted, under a note that they are a record and
+not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
+Nothing is sent anywhere.
+
+SESSION is a session id, a unique start of one (8 or more characters), or a path that
+superfind search prints first.
+
+  --json          print one JSON object: the session's fields and the excerpts
+  --max-bytes N   the most text the excerpts may hold, plus a few bytes for the … marks
+                  (default 12000; 0 for no limit, which prints every turn whole). Long turns
+                  are shortened around what matters.
+`,
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
 Print the sessions on this machine that made a commit, or that changed a file, from any agent,
@@ -250,7 +273,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "command", "blame", "index", "label"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label"}
 
 const zshSetup = `_superfind_run() {
   if [[ -x %[1]s ]]; then
@@ -634,6 +657,60 @@ func runShow(args []string) {
 	}
 }
 
+func runHandoff(args []string) {
+	opt := briefing.Options{MaxBytes: briefing.DefaultMaxBytes}
+	asJSON, target, rest := false, "", false
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case rest && target == "":
+			target = arg
+		case rest:
+			opt.Words = append(opt.Words, arg)
+		case arg == "--":
+			rest = true
+		case arg == "--json":
+			asJSON = true
+		case arg == "--max-bytes":
+			if i+1 == len(args) {
+				usageError("superfind handoff: --max-bytes needs a number. See superfind help handoff.")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 0 {
+				usageError("superfind handoff: --max-bytes needs a whole number, like --max-bytes 12000. See superfind help handoff.")
+			}
+			opt.MaxBytes = n
+		case strings.HasPrefix(arg, "--"):
+			usageError("superfind handoff: there is no " + arg + " option. To look for it, put -- first: superfind handoff SESSION -- " + arg)
+		case target == "":
+			target = arg
+		default:
+			opt.Words = append(opt.Words, arg)
+		}
+	}
+	if target == "" {
+		usageError("superfind handoff: which session? Pass its id, or a path that superfind search prints first.")
+	}
+	r, indexed, _ := findSession("handoff", target)
+	if !indexed {
+		fail("superfind handoff: not an indexed session: " + target)
+	}
+	t, err := agent.ReadTranscript(r.Agent, r.Path)
+	if err != nil {
+		fail("superfind handoff: couldn't read " + field(r.Path) + ": " + err.Error())
+	}
+	record := session.RecordOf(r, show.Clean)
+	packet := briefing.Build(t, opt)
+	if asJSON {
+		err = briefing.WriteJSON(stdout, r.Agent, record, packet)
+	} else {
+		err = briefing.WriteMarkdown(stdout, r.Agent, record, packet)
+	}
+	if err != nil {
+		fail("superfind handoff: " + err.Error())
+	}
+}
+
 func runBlame(args []string) {
 	asJSON, target, rest := false, "", false
 	for _, arg := range args {
@@ -942,6 +1019,8 @@ func run(args []string) {
 		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "show":
 		runShow(args[1:])
+	case "handoff":
+		runHandoff(args[1:])
 	case "blame":
 		runBlame(args[1:])
 	case "pick":
