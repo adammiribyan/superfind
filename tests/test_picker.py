@@ -41,8 +41,12 @@ class PickerBehavior(unittest.TestCase):
         self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
         self.here = Path("/")
+        no_ghostty = self.home / "no-ghostty"
+        no_ghostty.mkdir()
+        (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
+        (no_ghostty / "osascript").chmod(0o755)
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
-                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
+                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color"}
 
     def tearDown(self):
         tmux("kill-session", "-t", self.session_name)
@@ -62,11 +66,12 @@ class PickerBehavior(unittest.TestCase):
         self.clock += 3600
         os.utime(path, (self.clock, self.clock))
 
-    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False):
+    def open_picker(self, width=140, height=32, index_first=True, header="Claude sessions", linger=False, colors=False,
+                    pick="pick"):
         if index_first:
             subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
-        command = f"env -i {env} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
+        command = f"env -i {env} {SUPERFIND} {pick} > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code"
         if linger:
             command += "; sleep 60"
         style = [";", "set-option", "-t", self.session_name, "window-style", "fg=#dddddd,bg=#1e1e1e"] if colors else []
@@ -114,6 +119,61 @@ class PickerBehavior(unittest.TestCase):
             except ProcessLookupError:
                 pass
         return alive
+
+    def fake_claude(self):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
+
+    def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\n"))
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "claude never ran")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+
+    def test_run_cancelled_with_escape_runs_nothing(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+
+    def test_run_asks_before_a_second_copy_of_a_session_an_agent_has_open(self):
+        self.fake_claude()
+        self.three_sessions()
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
+                                                                 "startedAt": int(time.time() * 1000), "status": "idle"}))
+        self.open_picker(pick="pick --run")
+        self.keys("Down", "Enter")
+        self.wait_for("Open in another window.")
+        self.assertFalse(Path(f"{self.out}.code").exists(), "closed instead of asking first")
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.keys("Escape")
+        self.assertFalse(Path(f"{self.out}.code").exists(), "Esc left the picker instead of going back")
+        self.keys("Enter")
+        self.wait_for("Open in another window.")
+        self.keys("Enter")
+        self.assertTrue(self.until(lambda: Path(f"{self.out}.resumed").exists()), "Enter again did not resume a copy")
+
+    def test_run_checks_again_for_a_session_opened_while_the_picker_was_up(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
+                                                                 "startedAt": int(time.time() * 1000), "status": "idle"}))
+        self.keys("Down", "Enter")
+        self.wait_for("Open in another window.")
+        self.assertFalse(Path(f"{self.out}.resumed").exists(), "the session opened while the picker was up was resumed")
 
     def three_sessions(self):
         self.session("old", "Ledger migration", user("migrate the ledger tables to the new schema"), tool("Bash"),
@@ -310,7 +370,7 @@ class PickerBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
         (stub / "claude").chmod(0o755)
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
 
     def two_ledger_sessions(self):
         self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
@@ -423,7 +483,7 @@ class PickerBehavior(unittest.TestCase):
         status = self.home / ".cache" / "superfind" / "status.json"
         status.parent.mkdir(parents=True, exist_ok=True)
         status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.open_picker()
         self.keys("is:waiting invoice names", "C-r")
         self.wait_for("1/3")
@@ -835,7 +895,7 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
         (stub / "claude").chmod(0o755)
         self.three_sessions()
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
@@ -876,7 +936,7 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").write_text(f"#!/bin/sh\necho $PPID > {pids}.parent\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
         (stub / "claude").chmod(0o755)
         self.three_sessions()
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
@@ -1014,7 +1074,7 @@ class PickerBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.out}.asked\necho '{{\"result\": \"[0]\"}}'\n")
         (stub / "claude").chmod(0o755)
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.three_sessions()
         self.open_picker()
         self.keys("ledger after:4")

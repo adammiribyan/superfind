@@ -85,6 +85,37 @@ main() {
     echo "note: another superfind is installed at $other"
   fi
 
+  omarchy=""
+  for dir in "${OMARCHY_PATH:-}" "$HOME/.local/share/omarchy" /usr/share/omarchy; do
+    if [ -n "$dir" ] && [ -d "$dir" ]; then
+      omarchy="$dir"
+      break
+    fi
+  done
+  if [ -n "$omarchy" ]; then
+    hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
+    launch="omarchy-launch-tui $bin/superfind pick --run" unsafe=""
+    case "$bin" in
+      *[\"\'\\\$\`]*) launch="" ;;
+      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' pick --run" unsafe=1 ;;
+    esac
+    if [ -f "$hypr/bindings.conf" ] && [ ! -f "$hypr/bindings.lua" ]; then
+      bindings="$hypr/bindings.conf" chord='SUPER SHIFT CTRL, F,' binding="bindd = SUPER SHIFT CTRL, F, Superfind, exec, $launch"
+    else
+      bindings="$hypr/bindings.lua" chord='"SUPER + SHIFT + CTRL + F"' binding="o.bind(\"SUPER + SHIFT + CTRL + F\", \"Superfind\", \"$launch\")"
+    fi
+    if [ -z "$launch" ]; then
+      echo "to open superfind with Super-Shift-Ctrl-F, bind that key in $bindings to run $bin/superfind pick --run through omarchy-launch-tui"
+    elif grep -qF "$binding" "$bindings" 2>/dev/null; then
+      :
+    elif [ -n "$unsafe" ] || [ ! -f "$bindings" ] || grep -qF "$chord" "$bindings"; then
+      echo "to open superfind with Super-Shift-Ctrl-F, add this line to $bindings: $binding"
+    else
+      printf '\n%s\n' "$binding" >> "$bindings"
+      echo "added Super-Shift-Ctrl-F to $bindings (run hyprctl reload to use it now)"
+    fi
+  fi
+
   case "$(basename "${SHELL:-}")" in
     zsh) shell=zsh rc="$HOME/.zshrc" ;;
     bash)
@@ -117,7 +148,9 @@ main() {
   if [ -f "$ghostty_xdg" ] || [ -f "$ghostty_mac" ] || [ -d /Applications/Ghostty.app ] || command -v ghostty >/dev/null; then
     if [ -f "$ghostty_xdg" ] || [ ! -f "$ghostty_mac" ]; then ghostty="$ghostty_xdg"; else ghostty="$ghostty_mac"; fi
     keybind='keybind = super+shift+o=text:\x18c'
-    if ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
+    if [ -n "$omarchy" ]; then
+      echo "skipped the Ghostty keybind: on Omarchy, superfind gets a Hyprland key instead"
+    elif ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
       mkdir -p "$(dirname "$ghostty")"
       printf '\n%s\n' "$keybind" >> "$ghostty"
       echo "added Cmd-Shift-O to $ghostty (reload Ghostty config with Cmd-Shift-,)"
