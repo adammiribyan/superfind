@@ -317,6 +317,9 @@ class SuperfindBehavior(unittest.TestCase):
         result = self.run_superfind("ask", "where did we migrate the ledger")
         self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()], result.stderr.strip()),
                          (0, ["Ledger migration"], "Ask needs a TypeSafe key or Claude Code. These sessions contain your words instead."))
+        nothing = self.run_superfind("ask", "zebra crossings")
+        self.assertEqual((nothing.returncode, nothing.stdout, nothing.stderr.strip()),
+                         (0, "", "Ask needs a TypeSafe key or Claude Code. No session contains these words."))
 
     def test_a_hostile_transcript_name_cannot_inject_shell_commands(self):
         path = self.session("a;echo PWNED", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")

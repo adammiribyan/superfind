@@ -569,7 +569,10 @@ func run(args []string) {
 		if errors.As(err, &failure) {
 			fail(failure.Error())
 		}
-		if answer.Fallback != "" {
+		switch {
+		case answer.Fallback != "" && len(answer.Paths) == 0:
+			fmt.Fprintln(stderr, answer.Fallback+" No session contains these words.")
+		case answer.Fallback != "":
 			fmt.Fprintln(stderr, answer.Fallback+" These sessions contain your words instead.")
 		}
 		if asJSON {

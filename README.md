@@ -124,7 +124,7 @@ TYPESAFE_API_KEY=your-key
 
 Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`.
 
-When no ranker answers, ask ranks the sessions by your words instead. That happens when there's no TypeSafe key and Claude Code isn't installed, or when TypeSafe or Claude Code fails. It lists the sessions that contain any of your words, ranked by how well they match, with a word in the title counting three times as much as one in the conversation. The box is titled "Sessions with your words", and the line under it says why, for example "Ask needs a TypeSafe key or Claude Code." or "Ask failed: Claude Code didn't answer.". The second usually means Claude Code isn't logged in, so run `claude` once to log in. Nothing more leaves your machine: with a key, a TypeSafe failure still never tries Claude. On the same 21 searches, ranking by words put the right session first 9 times and in the top 3 11 times, in about 5 ms. `superfind ask` prints the same reason on stderr and exits 0.
+When no ranker answers, ask ranks the sessions by your words instead. That happens when there's no TypeSafe key and Claude Code isn't installed, or when TypeSafe or Claude Code fails. It lists the sessions that contain any of your words, ranked by how well they match, with a word in the title counting three times as much as one in the conversation. The box is titled "Sessions with your words", and the line under it says why, for example "Ask needs a TypeSafe key or Claude Code." or "Ask failed: Claude Code didn't answer.". The second usually means Claude Code isn't logged in, so run `claude` once to log in. Nothing more leaves your machine: with a key, a TypeSafe failure still never tries Claude. On a snapshot of the same 21 searches where Jev and Claude Haiku put the right session in the top 3 18 to 19 times, ranking by words put it first 9 times and in the top 3 11 times, in about 5 ms. `superfind ask` prints the same reason on stderr and exits 0.
 
 ## Waiting on you
 
@@ -272,8 +272,8 @@ A past session can contain text such as "ignore your previous instructions". `sh
 
 | Code | Means |
 |---|---|
-| 0 | Done. Also when a search finds nothing, and when some sessions couldn't be read: they're named on stderr, and the rest are used. |
-| 1 | It failed, for example no session with an id 8 or more characters long, a session that couldn't be read, or a failed ask. Also when you close the picker without choosing. |
+| 0 | Done. Also when a search finds nothing, when some sessions couldn't be read (they're named on stderr, and the rest are used), and when no ranker answered an ask (the sessions with your words are printed, and the reason is on stderr). |
+| 1 | It failed, for example no session with an id 8 or more characters long, a session that couldn't be read, or an ask whose index couldn't be read. Also when you close the picker without choosing. |
 | 2 | A usage mistake, including an unknown id shorter than 8 characters, or a start of an id that matches more than one session. |
 | 130 | `ask` was interrupted while ranking. |
 
