@@ -16,6 +16,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `superfind blame FILE` now also reads the file's commits that only other branches, remotes, and tags hold: up to 30 more, after the last 30 on this branch. A session that committed the file on a branch that was never merged, or that was squash-merged under a message that doesn't list its commits, now shows up with the commit it made. A merge on another branch counts only when it changed the file beyond what its parents had.
 - `superfind show` says "committed, on no branch" for a commit that no branch, tag, stash, or checkout holds any more, such as one whose branch was deleted before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
 
+### Fixed
+
+- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
+
 ## [0.12.0] - 2026-10-11
 
 > superfind upgrade installs new versions in place
