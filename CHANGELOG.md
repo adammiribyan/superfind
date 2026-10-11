@@ -8,6 +8,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - On Omarchy, the install script binds Super-Shift-Ctrl-F to open superfind in a new terminal, and leaves out the Ghostty key there. It works for the curl install too. `superfind pick --run` resumes the chosen session itself, for a terminal with no shell to hand the command to, and refuses a session an agent already has open, as `superfind last` does.
+- A `superfind` skill for coding agents, so that asking Claude Code, Codex, or Grok "where did we fix X last week?" or "continue my Codex session here" makes it search your sessions and read a handoff instead of guessing. Install it in most agents with `npx skills add adammiribyan/superfind`, or as a plugin from this repository in Claude Code, Codex, Grok, or Cursor; [skills/README.md](skills/README.md) has the commands.
 - In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
 - `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
