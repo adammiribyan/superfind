@@ -1,10 +1,4 @@
-Every *.pub file in this directory is a trusted superfind release key, in
-minisign's public key format. superfind embeds this directory, so a key added
-here is trusted by every build from then on, and a key removed here is
-trusted by no new build.
-
-Make a key with
-
-  go run ./internal/release/cmd/keygen ~/superfind-release.key > internal/release/keys/superfind-2026.pub
-
-CONTRIBUTING.md has the full steps.
+Every *.pub file here is a minisign public key that superfind trusts to sign
+releases. superfind embeds this directory when it is built, so a key added
+here is trusted by every build from then on. Each file is named after its key
+id. CONTRIBUTING.md says how to change keys.
