@@ -264,7 +264,7 @@ func fileTarget(path, note string) (Target, error) {
 	}
 	t.File, t.Note = filepath.ToSlash(rel), note
 	out, err := git(top, "log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e", "--", ":(literal)"+t.File)
-	if _, unborn := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && unborn == nil {
+	if _, noHead := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && noHead == nil {
 		return t, err
 	}
 	for _, entry := range strings.Split(out, "\x1e") {
@@ -509,7 +509,7 @@ func messageLines(command string, depth int) []string {
 		split := strings.Split(strings.ReplaceAll(text, `\n`, "\n"), "\n")
 		for i := range split {
 			paragraph := ""
-			for _, l := range split[i:] {
+			for _, l := range split[i:min(len(split), i+4)] {
 				if strings.TrimSpace(l) == "" {
 					break
 				}

@@ -52,13 +52,28 @@ type pending struct {
 	process string
 }
 
+func unquoted(s string) string {
+	b, open := []byte(s), byte(0)
+	for i, c := range b {
+		switch {
+		case open != 0 && c == open && (open == '\'' || b[i-1] != '\\'):
+			open = 0
+		case open != 0:
+			b[i] = ' '
+		case c == '"' || c == '\'':
+			open = c
+		}
+	}
+	return string(b)
+}
+
 func commits(command string) bool {
 	at := gitCommit.FindStringIndex(command)
 	if at == nil {
 		return false
 	}
 	rest := command[at[1]:]
-	if end := strings.IndexAny(rest, ";|&\n"); end >= 0 {
+	if end := strings.IndexAny(unquoted(rest), ";|&\n"); end >= 0 {
 		rest = rest[:end]
 	}
 	return !strings.Contains(rest, "--dry-run")
@@ -66,7 +81,7 @@ func commits(command string) bool {
 
 func chained(command string) bool {
 	at := gitCommit.FindStringIndex(command)
-	return at != nil && strings.ContainsAny(command[at[1]:], ";|&\n")
+	return at != nil && strings.ContainsAny(unquoted(command[at[1]:]), ";|&\n")
 }
 
 func (t *Trail) ran(command string, at float64) bool {

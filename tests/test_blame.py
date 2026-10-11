@@ -154,7 +154,7 @@ class Blame(SuperfindBehavior):
     def test_a_commit_a_codex_subagent_thread_made_names_the_session_that_started_it(self):
         t = self.now - 3600
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
-        self.codex_session(uid(1), codex_meta(cwd=str(self.work)), codex_user("refunds, with a helper"), codex_reply("Started one."))
+        self.codex_session(uid(1), codex_meta(cwd=str(self.work)), codex_user("start a helper"), codex_reply("Started one."))
         self.codex_session(uid(2), codex_meta(cwd=str(self.work), parent=uid(1)), codex_user("write refunds"),
                            codex_at(t, "response_item", type="function_call", name="exec_command", call_id="c1",
                                     arguments=json.dumps({"cmd": "git commit -qam 'feat: refund a charge in full'"})),

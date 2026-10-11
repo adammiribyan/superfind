@@ -146,3 +146,14 @@ func TestATrailIsReadOnlyWhenItsFileMentionsANeedleEvenAcrossChunks(t *testing.T
 		}
 	}
 }
+
+func TestAFailedCommitWhoseMessageHoldsSeparatorsIsDropped(t *testing.T) {
+	command := "git commit -m \"$(cat <<'EOF'\nfix: retry & refund\n\nBody.\nEOF\n)\""
+	quoted, _ := json.Marshal(command)
+	tr := trailOf(t, Named("claude"), filepath.Join(t.TempDir(), "s.jsonl"),
+		fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":%s}}]}}`, quoted),
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","is_error":true,"content":"pre-commit hook failed"}]}}`)
+	if len(tr.Commits) != 0 {
+		t.Fatalf("got %+v", tr.Commits)
+	}
+}
