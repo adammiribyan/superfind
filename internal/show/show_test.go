@@ -65,6 +65,7 @@ func TestMaskHidesAKeyWholeEvenWhenPartOfItLooksLikeAnotherKey(t *testing.T) {
 		{"password=-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "password=[masked private key]"},
 		{"xoxb-abcdefghij-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "[masked Slack token][masked private key]"},
 		{"sk-proj-" + strings.Repeat("B", 40) + "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn", "[masked OpenAI key][masked private key]"},
+		{"https://ghp_" + strings.Repeat("A", 36) + ":hunter22@example.com", "https://[masked GitHub token]:[masked password in a URL]@example.com"},
 	}
 	for _, c := range cases {
 		if got := Mask(c.in); got != c.want {
