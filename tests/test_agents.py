@@ -107,7 +107,8 @@ class ScriptsAndAgents(SuperfindBehavior):
     def test_show_and_handoff_mask_webhook_urls_from_each_agent(self):
         slack = "https://hooks.slack.com/services/T0ABCDEF1/B0ABCDEF2/" + "w3bh00k" * 4
         discord = "https://discord.com/api/webhooks/123456789012345678/" + "d1sc0rd_" * 8
-        said = f"post deploys to {slack} and {discord} please"
+        tailscale = "tskey-auth-k1A2b3C4CNTRL-" + "t41lsc4l3" * 4
+        said = f"post deploys to {slack} and {discord} please, then join with {tailscale}"
         self.session(uid(7), user(said, cwd="/work/ops"), claude("ok"), title="Deploy hooks")
         self.codex_session(uid(8), codex_meta(cwd="/work/ops"), codex_user(said), codex_reply("ok"))
         self.grok_session(uid(9), "/work/ops", GROK_SYSTEM, grok_user(said), grok_reply("ok"), title="Deploy hooks")
@@ -115,7 +116,9 @@ class ScriptsAndAgents(SuperfindBehavior):
             for out in (self.show(uid(n)), self.show(uid(n), "--json"), self.superfind("handoff", uid(n))):
                 self.assertNotIn("w3bh00k", out)
                 self.assertNotIn("d1sc0rd_", out)
+                self.assertNotIn("t41lsc4l3", out)
                 self.assertIn("https://[masked Slack webhook] and https://[masked Discord webhook]", out)
+                self.assertIn("then join with [masked Tailscale key]", out)
             self.assertIn("post deploys to https://[masked Slack webhook] and https://[masked Discord webhook] please", self.show(uid(n)))
 
     def test_show_leaves_text_that_only_looks_like_a_secret(self):
