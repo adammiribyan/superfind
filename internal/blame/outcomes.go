@@ -48,6 +48,7 @@ type Outcome struct {
 	RevertedBy string `json:"reverted_by"`
 	at         float64
 	authored   float64
+	dangling   bool
 }
 
 const (
@@ -80,6 +81,7 @@ type repo struct {
 	log                []entry
 	onDefault          map[string]bool
 	onRemote           map[string]bool
+	onRef              map[string]bool
 	dug                bool
 }
 
@@ -148,10 +150,11 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		}
 		if j := slices.IndexFunc(out, func(m Outcome) bool { return same(m, o) }); j < 0 {
 			out = append(out, o)
-		} else if !rp.onDefault[out[j].Commit] || rp.onDefault[o.Commit] {
+		} else if (o.Commit != "" || out[j].Commit == "") && (!rp.onDefault[out[j].Commit] || rp.onDefault[o.Commit]) {
 			out[j] = o
 		}
 	}
+	out = withoutRedone(out)
 	tried := map[string]bool{}
 	for _, p := range trail.PRs {
 		key := strings.ToLower(p.Repo) + "#" + strconv.Itoa(p.Number)
@@ -167,6 +170,22 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		}
 	}
 	return out, missing
+}
+
+func withoutRedone(out []Outcome) []Outcome {
+	redone := func(o Outcome) bool {
+		return o.dangling && o.Stage == Committed && slices.ContainsFunc(out, func(m Outcome) bool {
+			return m.Repo == o.Repo && m.Commit != "" && m.Commit != o.Commit && !m.dangling && plain(m.Subject) == plain(o.Subject) &&
+				m.authored >= o.authored && m.authored-o.authored <= matchAfter
+		})
+	}
+	var kept []Outcome
+	for _, o := range out {
+		if !redone(o) {
+			kept = append(kept, o)
+		}
+	}
+	return kept
 }
 
 func same(a, b Outcome) bool {
@@ -206,7 +225,7 @@ func moved(dir, to string) string {
 }
 
 func load(top string, since float64) *repo {
-	rp := &repo{top: top, onDefault: map[string]bool{}, onRemote: map[string]bool{}}
+	rp := &repo{top: top, onDefault: map[string]bool{}, onRemote: map[string]bool{}, onRef: map[string]bool{}}
 	if t, err := repoAt(top); err == nil {
 		rp.slugs = t.Slugs
 	}
@@ -241,6 +260,9 @@ func load(top string, since float64) *repo {
 	}
 	rp.bound = bound
 	rp.read("--all")
+	for _, e := range rp.log {
+		rp.onRef[e.SHA] = true
+	}
 	return rp
 }
 
@@ -387,7 +409,7 @@ func (rp *repo) squash(after float64, carries func(string) bool) (entry, string,
 }
 
 func (rp *repo) judge(e entry) Outcome {
-	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At}
+	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At, dangling: !rp.onRef[e.SHA]}
 	if rp.onDefault[e.SHA] {
 		return rp.reverted(rp.landedAs(o, e))
 	}
