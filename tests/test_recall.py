@@ -193,15 +193,24 @@ class Recall(SuperfindBehavior):
         self.edited_in(6, self.app, self.app / "srcx" / "other.go")
         self.edited_in(7, self.app, self.app / ".claude" / "worktrees" / "gone" / "src" / "ledger.go")
         self.edited_in(8, self.place("elsewhere/repo"), self.root / "elsewhere" / "repo" / "src" / "ledger.go")
-        edited_ledger = sorted(uid(n) for n in (1, 4, 5, 7))
+        self.edited_in(9, self.app, self.app / ".claude" / "worktrees" / "gone" / "vendor" / "src" / "ledger.go")
+        self.edited_in(10, self.app, self.app / "SRC" / "LEDGER.go")
+        self.codex_session(uid(11), codex_meta(cwd=str(self.app)), codex_user("start a helper"), codex_reply("Started one."))
+        self.codex_session(uid(12), codex_meta(cwd=str(self.app), parent=uid(11)), codex_user("fix the ledger"),
+                           codex_at(time.time() - 600, "response_item", type="custom_tool_call", name="apply_patch", call_id="p1",
+                                    input="*** Begin Patch\n*** Update File: src/ledger.go\n@@\n-a\n+b\n*** End Patch"),
+                           codex_at(time.time() - 599, "response_item", type="custom_tool_call_output", call_id="p1", output="Success."))
+        edited_ledger = sorted(uid(n) for n in (1, 4, 5, 7, 11))
         self.assertEqual(self.json_ids("file:src/ledger.go", here=self.app), edited_ledger)
         self.assertEqual(self.json_ids(f"file:{ledger}"), edited_ledger)
         self.assertEqual(self.json_ids("file:src", here=self.app), edited_ledger)
         self.assertEqual(self.json_ids("file:src/", here=self.app), edited_ledger)
         self.assertEqual(self.json_ids("file:srcx", here=self.app), [uid(6)])
         self.assertEqual(self.json_ids("file:src/ledger.go", here=self.place("elsewhere")), [])
+        self.assertEqual(self.json_ids("file:src/ledger.go", here=self.root / "elsewhere" / "repo"), [uid(8)])
+        self.assertEqual(self.json_ids("file:/", here=self.app), sorted(uid(n) for n in (1, 4, 5, 6, 7, 8, 9, 10, 11)))
         self.assertEqual(self.json_ids("file:src/ledger.go", "file:srcx/other.go", here=self.app), sorted(edited_ledger + [uid(6)]))
-        self.assertEqual(self.json_ids("file:src/ledger.go", "agent:codex", here=self.app), [uid(4)])
+        self.assertEqual(self.json_ids("file:src/ledger.go", "agent:codex", here=self.app), [uid(4), uid(11)])
 
     def test_has_commit_keeps_sessions_that_ran_git_commit(self):
         now = time.time()

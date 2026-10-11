@@ -19,21 +19,26 @@ func EditedFiles(values []string) map[string]bool {
 	}
 	defer db.Close()
 	for _, value := range values {
-		exact, like := places(value)
+		exact, worktrees := places(value)
 		for _, path := range exact {
+			low := strings.TrimSuffix(path, "/") + "/"
 			pairs, err := QueryPairs(db, "SELECT DISTINCT session, '' FROM files WHERE how = ? AND NOT failed AND "+
-				"(path = ? OR (path > ? AND path < ?))", Edited, path, path+"/", path+"0")
+				"(path = ? OR (path >= ? AND path < ?))", Edited, path, low, low[:len(low)-1]+"0")
 			if err == nil {
 				for _, p := range pairs {
 					sessions[p[0]] = true
 				}
 			}
 		}
-		for _, w := range like {
-			pairs, err := QueryPairs(db, "SELECT DISTINCT session, '' FROM files WHERE how = ? AND NOT failed AND path > ? AND path < ? AND "+
-				`(path LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\')`, Edited, w.under+"/", w.under+"0", w.pattern, w.pattern+"/%")
-			if err == nil {
-				for _, p := range pairs {
+		for _, w := range worktrees {
+			pairs, err := QueryPairs(db, "SELECT session, path FROM files WHERE how = ? AND NOT failed AND path > ? AND path < ?",
+				Edited, w.under+"/", w.under+"0")
+			if err != nil {
+				continue
+			}
+			for _, p := range pairs {
+				if _, inside, ok := strings.Cut(strings.TrimPrefix(p[1], w.under+"/"), "/"); ok &&
+					(w.rel == "." || inside == w.rel || strings.HasPrefix(inside, w.rel+"/")) {
 					sessions[p[0]] = true
 				}
 			}
@@ -42,7 +47,7 @@ func EditedFiles(values []string) map[string]bool {
 	return sessions
 }
 
-type worktreeFile struct{ under, pattern string }
+type worktreeFile struct{ under, rel string }
 
 func places(value string) (exact []string, like []worktreeFile) {
 	if strings.HasPrefix(value, "~/") {
@@ -90,19 +95,9 @@ func places(value string) (exact []string, like []worktreeFile) {
 	}
 	slices.Sort(roots)
 	for _, root := range slices.Compact(roots) {
-		under := filepath.Join(root, claudeWorktrees)
-		if rel == "." {
-			exact = append(exact, root)
-			like = append(like, worktreeFile{under, escapeLike(under) + "/%"})
-		} else {
-			exact = append(exact, filepath.Join(root, rel))
-			like = append(like, worktreeFile{under, escapeLike(under) + "/%/" + escapeLike(rel)})
-		}
+		exact = append(exact, filepath.Join(root, rel))
+		like = append(like, worktreeFile{filepath.Join(root, claudeWorktrees), rel})
 	}
 	slices.Sort(exact)
 	return slices.Compact(exact), like
-}
-
-func escapeLike(s string) string {
-	return strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(s)
 }

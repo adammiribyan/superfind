@@ -169,9 +169,11 @@ unless you ask for them with is:agent.
   before:DAY      only sessions last active before that day; after:2026-10-09
                   before:2026-10-10 is October 9
   file:PATH       only sessions that edited that file, or a file in that folder, with an
-                  edit tool, in any worktree of its repository, even one since removed; a
-                  relative PATH starts from this folder
-  has:commit      only sessions that ran a git commit that didn't fail
+                  edit tool, in any worktree of its repository, including a Claude Code
+                  worktree since removed; a relative PATH starts from this folder. superfind
+                  blame FILE also lists the sessions that made the file's commits
+  has:commit      only sessions that ran git commit; a commit that failed on its own
+                  doesn't count
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
