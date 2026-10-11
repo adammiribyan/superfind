@@ -47,6 +47,20 @@ func oneLine(s string) string {
 	}, agent.Printable(s))
 }
 
+const BodyBytes = 2000
+
+func Body(s string) string {
+	s = strings.TrimSpace(Clean(s))
+	if len(s) <= BodyBytes {
+		return s
+	}
+	cut := BodyBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
 func lastBytes(s string, n int) string {
 	if len(s) <= n {
 		return s

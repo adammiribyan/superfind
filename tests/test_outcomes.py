@@ -36,12 +36,14 @@ class Outcomes(Blame):
         t = self.now - 3600
         self.origin()
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t)
-        merged = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t + 60)
+        merged = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t + 60,
+                             body="Stripe refunds settle in 5 days, so the receipt says pending until then.")
         self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: refund a charge in full"'),
                        claude_result(t + 61, "b1", f"[main {merged[:7]}] feat: refund a charge in full"), title="Refunds")
         self.git("push", "-q", "origin", "main")
         self.git("checkout", "-q", "-b", "receipts")
-        pushed = self.commit("feat: keep a receipt for each charge", {"receipt.go": "r\n"}, t + 120)
+        pushed = self.commit("feat: keep a receipt for each charge", {"receipt.go": "r\n"}, t + 120,
+                             body="Receipts are immutable.\n\nA correction is a new receipt that names the old one.")
         self.git("push", "-q", "origin", "receipts")
         self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("keep receipts"),
                            codex_at(t + 120, "response_item", type="function_call", name="exec_command", call_id="c1",
@@ -57,6 +59,9 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(1, *keys), [("commit", merged, 0, "feat: refund a charge in full", str(self.work), "merged", "main", merged, "")])
         self.assertEqual(self.outcomes(2, *keys), [("commit", pushed, 0, "feat: keep a receipt for each charge", str(self.work), "pushed", "main", "", "")])
         self.assertEqual(self.outcomes(3, *keys), [("commit", local, 0, "fix: round each charge to the cent", str(self.work), "committed", "main", "", "")])
+        self.assertEqual([self.outcomes(n, "body") for n in (1, 2, 3)],
+                         [[("Stripe refunds settle in 5 days, so the receipt says pending until then.",)],
+                          [("Receipts are immutable.\n\nA correction is a new receipt that names the old one.",)], [("",)]])
         self.assertEqual(self.outcomes(1)[0]["landed_at"], self.git("show", "-s", "--format=%cd", "--date=format:%Y-%m-%dT%H:%M:%SZ", merged))
         self.assertRegex(self.text(1)[0], rf"^made {merged[:7]} feat: refund a charge in full · merged into main \S+ ago$")
         self.assertEqual(self.text(2), [f"made {pushed[:7]} feat: keep a receipt for each charge · pushed, not on main"])
@@ -218,6 +223,20 @@ class Outcomes(Blame):
         self.assertNotIn(key, result.stdout)
         self.assertEqual(self.outcomes(1, "subject"), [("fix: stop logging [masked Anthropic key]",)])
         self.assertRegex(self.text(1)[0], rf"^made {made[:7]} fix: stop logging \[masked Anthropic key\] · merged into main \S+ ago$")
+
+    def test_a_commit_s_body_is_masked_before_it_is_cut_to_2000_bytes(self):
+        t = self.now - 3600
+        key = "sk-ant-" + "a1B2c3D4e5" * 3
+        head = "Why: the old key leaked.\n" + "é" * 982 + " "
+        made = self.commit("fix: rotate the signing key", {"a.go": "a\n"}, t, body=head + key + "\n" + "tail " * 400)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "fix: rotate the signing key"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] fix: rotate the signing key"), title="Keys")
+        result = self.run_superfind("show", uid(1), "--json")
+        self.assertEqual(len(head.encode()), 1990)
+        self.assertNotIn("sk-ant-", result.stdout)
+        [got] = self.outcomes(1, "body")[0]
+        self.assertEqual(got, head + "[masked An…")
+        self.assertNotIn("Why: the old key", self.superfind("show", uid(1)))
 
     def test_a_signed_commit_is_read_without_running_the_signature_program(self):
         t = self.now - 3600

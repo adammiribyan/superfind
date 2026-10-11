@@ -9,6 +9,13 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
 
+## [Unreleased]
+
+### Added
+
+- `superfind show --json` gives each commit in `outcomes` a `body`: the commit message after its subject line, masked like the turns and cut to 2,000 bytes. A branch commit's message often says why, even when the squash on the default branch has only a title.
+
+
 ## [0.11.0] - 2026-10-11
 
 ### Added
