@@ -308,6 +308,106 @@ class SuperfindBehavior(unittest.TestCase):
         self.judged(running, "waiting")
         self.assertEqual(self.rows(""), ["Ledger migration  active now · tmp"])
 
+    def hours_ago(self, path, hours):
+        when = time.time() - hours * 3600
+        os.utime(path, (when, when))
+        return path
+
+    def report(self, *filters):
+        return [json.loads(row) for row in self.superfind("report", "--json", *filters).splitlines()]
+
+    def test_a_report_lists_the_sessions_that_changed_in_its_window_newest_first(self):
+        self.hours_ago(self.session("a1", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 5)
+        self.hours_ago(self.session("b2", user("bump the button padding"), tool("Edit"), claude("Done."), title="Button padding"), 2)
+        self.hours_ago(self.session("c3", user("migrate the ledger"), tool("Bash"), claude("Migrated."), title="Ledger migration"), 50)
+        self.hours_ago(self.session("d4", user("hi"), claude("Hello."), title="Say hi"), 1)
+        self.assertEqual([r["title"] for r in self.report()], ["Button padding", "Export job"])
+        self.assertEqual([r["title"] for r in self.report("after:3d")], ["Button padding", "Export job", "Ledger migration"])
+        self.assertEqual([r["title"] for r in self.report("after:3d", "before:3h")], ["Export job", "Ledger migration"])
+
+    def test_report_json_keeps_what_it_observed_apart_from_what_it_inferred(self):
+        self.hours_ago(self.session("a1", user("deploy the ledger migration with token sk-ant-" + "a" * 24), tool("Bash"),
+                                    claude("Running it on staging first."), interrupted(), title="Ledger migration"), 3)
+        waiting = self.hours_ago(self.session("b2", user("rotate the signing keys"), tool("Bash"), tool("Read"),
+                                              claude("Staging is done. Should I rotate production now?"), title="Key rotation"), 2)
+        self.judged(waiting, "waiting")
+        self.hours_ago(self.session("c3", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 4)
+        fields = ("title", "status", "match", "ending", "tool_calls", "last_request", "inferred")
+        self.assertEqual([{k: r[k] for k in fields} for r in self.report()], [
+            {"title": "Key rotation", "status": "waiting", "match": "", "ending": "replied", "tool_calls": 2,
+             "last_request": "rotate the signing keys", "inferred": {"label": "waiting", "by": "jev"}},
+            {"title": "Ledger migration", "status": "unfinished", "match": "", "ending": "interrupted", "tool_calls": 1,
+             "last_request": "deploy the ledger migration with token [masked Anthropic key]",
+             "inferred": {"label": "unfinished", "by": "ending"}},
+            {"title": "Export job", "status": "", "match": "", "ending": "replied", "tool_calls": 1,
+             "last_request": "rename the export job", "inferred": {"label": None, "by": None}},
+        ])
+
+    def test_a_report_in_markdown_groups_sessions_by_project_newest_first(self):
+        self.hours_ago(self.session("a1", user("rename the export job", cwd="/work/billing", branch="feat/export"), tool("Edit"),
+                                    claude("Renamed."), title="Export job"), 5)
+        self.hours_ago(self.session("b2", user("deploy the ledger migration", cwd="/work/ledger", branch=""), tool("Bash"),
+                                    claude("Should I run it on production now?"), title="Ledger migration"), 2)
+        self.hours_ago(self.session("c3", user("make retries safe to repeat", cwd="/work/billing"), tool("Bash"), interrupted(),
+                                    title="Payment retries"), 3)
+        self.hours_ago(self.session("d4", user("check the old job", cwd="/work/ops"), tool("Bash"), title="Old job"), 60)
+        start = time.localtime(time.time() - 86400)
+        since = time.strftime("%A, %-d %B %Y, 00:00", start)
+        self.assertEqual(self.superfind("report", "after:" + time.strftime("%Y-%m-%d", start)).splitlines(), [
+            f"# Sessions changed since {since}",
+            "",
+            "## ledger",
+            "",
+            "- **Ledger migration**: Claude · ended with a reply · 2h · id b2",
+            "  - Last request: deploy the ledger migration",
+            "",
+            "## billing",
+            "",
+            "- **Payment retries**: Claude · main · ended on an interruption · 3h · id c3",
+            "  - Last request: make retries safe to repeat",
+            "  - Inferred: unfinished, from how it ended",
+            "- **Export job**: Claude · feat/export · ended with a reply · 5h · id a1",
+            "  - Last request: rename the export job",
+        ])
+        empty = self.superfind("report", "after:1h")
+        self.assertTrue(empty.startswith("No sessions changed since ") and empty.endswith(".\n"), empty)
+
+    def test_a_report_line_ends_with_an_id_that_show_takes(self):
+        self.hours_ago(self.session(uid(7), user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 2)
+        line = self.superfind("report").splitlines()[4]
+        self.assertTrue(line.endswith(" · 2h · id 01990007"), line)
+        self.assertEqual(json.loads(self.superfind("show", "01990007", "--json"))["id"], uid(7))
+
+    def test_report_json_includes_sessions_another_program_started_and_markdown_hides_them(self):
+        self.hours_ago(self.session("a1", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 3)
+        self.hours_ago(self.session("b2", line(type="user", cwd="/tmp", gitBranch="main", entrypoint="sdk-ts",
+                                               message={"role": "user", "content": "summarize the nightly build"}),
+                                    tool("Bash"), claude("Summarized."), title="Nightly summary"), 2)
+        self.assertEqual([(r["title"], r["kind"]) for r in self.report()],
+                         [("Nightly summary", "agent"), ("Export job", "interactive")])
+        self.assertNotIn("Nightly summary", self.superfind("report"))
+        self.assertIn("Nightly summary", self.superfind("report", "is:agent"))
+
+    def test_report_filters_by_label_and_reads_a_window_with_only_an_end(self):
+        self.hours_ago(self.session("a1", user("make retries safe to repeat"), tool("Bash"), interrupted(), title="Payment retries"), 3)
+        self.hours_ago(self.session("b2", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 2)
+        self.hours_ago(self.session("c3", user("migrate the ledger"), tool("Bash"), claude("Migrated."), title="Ledger migration"), 50)
+        self.assertEqual([r["title"] for r in self.report("is:unfinished")], ["Payment retries"])
+        self.assertEqual([r["title"] for r in self.report("IS:unfinished", "AFTER:3d")], ["Payment retries"])
+        self.assertEqual([r["title"] for r in self.report("before:yesterday")], ["Ledger migration"])
+
+    def test_report_takes_filters_and_a_window_but_not_words(self):
+        self.hours_ago(self.session("a1", user("rename the export job"), tool("Edit"), claude("Renamed."), title="Export job"), 2)
+        for args, said in [(["billing"], "superfind report takes filters, not words; use superfind search for words.\n"),
+                           (["after"], "superfind report takes filters, not words; use superfind search for words.\n"),
+                           (["after:soon"], "superfind report: after:soon needs a date like 2026-10-09, today, yesterday, "
+                                            "or a span like 12h, 3d, or 2w.\n"),
+                           (["is:bogus"], "superfind report: is:bogus isn't a filter; is: takes waiting, unfinished, or agent.\n"),
+                           (["after:today", "before:yesterday"],
+                            "superfind report: after:today is not earlier than before:yesterday, so no session could match.\n")]:
+            result = self.run_superfind("report", *args)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (2, "", said))
+
     def test_bold_text_that_wraps_never_shows_its_markers(self):
         path = self.session("a1", user("summarize the incident for the team"), tool("Read"),
                             claude("**The outage came from a certificate that expired on the payments gateway "
@@ -1153,7 +1253,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, search, ask, preview, show, command, index, and label", result.stderr)
+            self.assertIn("init, pick, search, ask, report, preview, show, command, index, and label", result.stderr)
 
     def test_preview_refuses_options_it_does_not_understand(self):
         path = self.session("a1", user("upgrade the kubernetes cluster"), claude("Upgraded."), title="Cluster upgrade")

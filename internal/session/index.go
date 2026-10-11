@@ -31,14 +31,23 @@ const (
 	promptRunes = 400
 )
 
+func clusters(s string) int {
+	n := 0
+	for i := 0; i < len(s); n++ {
+		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
+		i += len(cluster)
+	}
+	return n
+}
+
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	cut, clusters := 0, 0
-	for i := 0; i < len(s); clusters++ {
-		if clusters == n-1 {
+	cut, seen := 0, 0
+	for i := 0; i < len(s); seen++ {
+		if seen == n-1 {
 			cut = i
 		}
-		if clusters == n {
+		if seen == n {
 			return s[:cut] + "…"
 		}
 		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)

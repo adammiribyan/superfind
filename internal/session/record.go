@@ -109,6 +109,40 @@ func KindOf(s Session) string {
 	return "interactive"
 }
 
+func ShortIDs(rows []Row) map[string]string {
+	ids := make([]string, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, strings.ToLower(r.Session.ID))
+	}
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	shared := func(a, b string) int {
+		ra, rb := []rune(a), []rune(b)
+		n := 0
+		for n < len(ra) && n < len(rb) && ra[n] == rb[n] {
+			n++
+		}
+		return n
+	}
+	need := map[string]int{}
+	for i, id := range ids {
+		n := ShortestIDPrefix
+		if i > 0 {
+			n = max(n, shared(ids[i-1], id)+1)
+		}
+		if i+1 < len(ids) {
+			n = max(n, shared(ids[i+1], id)+1)
+		}
+		need[id] = n
+	}
+	out := map[string]string{}
+	for _, r := range rows {
+		id := []rune(r.Session.ID)
+		out[r.Path] = string(id[:min(need[strings.ToLower(r.Session.ID)], len(id))])
+	}
+	return out
+}
+
 func ByID(rows []Row, id string) (matches []Row, exact bool) {
 	for _, r := range rows {
 		if strings.EqualFold(r.Session.ID, id) {
