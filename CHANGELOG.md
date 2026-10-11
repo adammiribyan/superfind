@@ -10,8 +10,8 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The README's "Use from scripts and agents" section has recipes for common jobs with `jq`, such as getting the best match's id, gathering results into one array, or reading the last turns of a session.
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
-- `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
-- `superfind last` resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
+- `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, or in a folder that contains it, as the picker's "here" does; sessions from folders inside it don't count. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
+- `superfind last` resumes the newest session started in the folder you're in, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 
 ### Changed
 
@@ -19,7 +19,14 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `superfind --help` and `superfind help search` say that `--json` prints JSON Lines, one object per line rather than one array, and how to get the first result or one array with `jq`.
 - `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+- Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
 - A filter that superfind can't read, such as `after:2026-1`, makes `search`, `ask`, and `last` exit 2 and say what the filter takes, before `ask` sends anything. In the picker, the filter is left out and the line under the search box says what it takes.
+
+### Fixed
+
+- The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
+- A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
+- `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
 
 ## [0.10.0] - 2026-10-10
 
