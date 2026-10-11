@@ -253,6 +253,36 @@ class Blame(SuperfindBehavior):
         self.assertEqual(self.found("charge.go"), [(uid(2), f"made {sha[:7]}: fix: round charges to the cent"),
                                                    (uid(1), "edited it 2 times")])
 
+    def test_blame_on_a_file_finds_commits_that_only_other_branches_and_remotes_hold(self):
+        t = self.now - 3600
+        base = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        theme = self.commit("feat: theme the editor through its variables", {"charge.go": "themed\n"}, t + 60)
+        self.git("checkout", "-q", "-b", "receipts", base)
+        receipt = self.commit("feat: keep a receipt for each charge", {"charge.go": "receipt\n"}, t + 120)
+        self.git("update-ref", "refs/remotes/origin/receipts", receipt)
+        self.git("checkout", "-q", "-b", "refunds", base)
+        refund = self.commit("feat: refund a charge in full", {"charge.go": "refund\n"}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "receipts")
+        self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: theme the editor through its variables"'),
+                       claude_result(t + 61, "b1", f"[editor {theme[:7]}] feat: theme the editor through its variables"), title="Theme the editor")
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("keep receipts"),
+                           codex_at(t + 120, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -am 'feat: keep a receipt for each charge'"})),
+                           codex_at(t + 121, "response_item", type="function_call_output", call_id="c1",
+                                    output=f"Process exited with code 0\nOutput:\n[receipts {receipt[:7]}] feat: keep a receipt for each charge"),
+                           codex_reply("Committed."))
+        self.grok_session(uid(3), str(self.work), GROK_SYSTEM, grok_user("refund in full"),
+                          grok_call("run_terminal_command", "g1", command="git commit -am 'feat: refund a charge in full'"),
+                          line(type="tool_result", tool_call_id="g1", content=f"[refunds {refund[:7]}] feat: refund a charge in full"),
+                          title="Refunds")
+        self.assertEqual(self.git("rev-parse", "HEAD"), base)
+        self.assertEqual(sorted(self.found("charge.go")), sorted([
+            (uid(1), f"made {theme[:7]}: feat: theme the editor through its variables"),
+            (uid(2), f"made {receipt[:7]}: feat: keep a receipt for each charge"),
+            (uid(3), f"made {refund[:7]}: feat: refund a charge in full")]))
+
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'), title="Cents")

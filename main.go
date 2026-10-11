@@ -273,7 +273,8 @@ git repository, or pass a file in one.
                the commits it squashed. When no session left a record of either, it says so,
                then lists the sessions that edited its files in the three days before it.
   FILE         lists the sessions that edited the file, or made or opened the pull request of
-               one of its last 30 commits, most recent first
+               one of its last 30 commits on this branch or 30 more on other branches and
+               remotes, most recent first
   FILE:LINE    blames the commit that last changed that line. A file whose name ends in
                :LINE is read as that file.
   --json       print one JSON object per session, as search --json does, with what the
@@ -877,7 +878,7 @@ func runBlame(args []string) {
 	}
 	switch {
 	case len(found) == 0 && t.File != "":
-		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its last 30 commits")
+		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its last 30 commits here or on another branch")
 	case len(found) == 0:
 		fmt.Fprintln(stderr, "superfind blame: no session on this machine made "+field(target)+" or edited its files in the three days before it")
 	case t.File == "" && found[0].Guess:

@@ -263,9 +263,16 @@ func fileTarget(path, note string) (Target, error) {
 		return t, fmt.Errorf("%s is outside its repository", path)
 	}
 	t.File, t.Note = filepath.ToSlash(rel), note
-	out, err := git(top, "log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e", "--", ":(literal)"+t.File)
+	log := func(refs ...string) (string, error) {
+		args := append([]string{"log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e"}, refs...)
+		return git(top, append(args, "--", ":(literal)"+t.File)...)
+	}
+	out, err := log()
 	if _, noHead := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && noHead == nil {
 		return t, err
+	}
+	if elsewhere, err := log("--branches", "--remotes", "--not", "HEAD"); err == nil {
+		out += elsewhere
 	}
 	for _, entry := range strings.Split(out, "\x1e") {
 		if parts := strings.SplitN(strings.TrimLeft(entry, "\n"), "\x00", 4); len(parts) == 4 {
