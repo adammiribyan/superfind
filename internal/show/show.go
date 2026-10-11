@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -43,38 +44,6 @@ func oneLine(s string) string {
 	}, agent.Printable(s))
 }
 
-func Select(turns []agent.Turn, opt Options) Conversation {
-	c := Conversation{Total: len(turns)}
-	start := 0
-	if opt.Tail > 0 && opt.Tail < len(turns) {
-		start = len(turns) - opt.Tail
-	}
-	kept := make([]Turn, 0, len(turns)-start)
-	for _, t := range turns[start:] {
-		kept = append(kept, Turn{Role: t.Role, Text: Clean(t.Text)})
-	}
-	if opt.MaxBytes > 0 {
-		used, first := 0, len(kept)
-		for first > 0 && used+len(kept[first-1].Text) <= opt.MaxBytes {
-			first--
-			used += len(kept[first].Text)
-		}
-		if first == len(kept) && first > 0 {
-			first--
-			kept[first].Text = "…" + lastBytes(kept[first].Text, opt.MaxBytes)
-			kept[first].Cut = true
-			c.Truncated = true
-		}
-		if first > 0 {
-			c.Truncated = true
-		}
-		kept = kept[first:]
-	}
-	c.Turns = kept
-	c.Omitted = c.Total - len(kept)
-	return c
-}
-
 func lastBytes(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -110,9 +79,20 @@ func WriteText(w io.Writer, r session.Record, c Conversation) error {
 	return nil
 }
 
-func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string) error {
+func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string, anyWord bool) error {
 	words, _ := session.Narrow(query, nil)
 	passages := session.Passages(db, words)
+	if passages == nil {
+		passages = map[string]string{}
+	}
+	if anyWord && slices.ContainsFunc(rows, func(r session.Row) bool { return passages[r.Path] == "" }) {
+		some, _ := session.PassagesOfAny(db, session.MeaningfulWords(words), session.PassageTokens)
+		for path, text := range some {
+			if passages[path] == "" {
+				passages[path] = text
+			}
+		}
+	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	for _, r := range rows {
