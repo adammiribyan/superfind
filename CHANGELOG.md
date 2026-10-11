@@ -3,6 +3,12 @@
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
 
+## [Unreleased]
+
+### Added
+
+- Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
+
 ## [0.11.0] - 2026-10-11
 
 ### Added

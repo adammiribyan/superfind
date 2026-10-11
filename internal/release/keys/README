@@ -1,0 +1,4 @@
+Every *.pub file here is a minisign public key that superfind trusts to sign
+releases. superfind embeds this directory when it is built, so a key added
+here is trusted by every build from then on. Each file is named after its key
+id. CONTRIBUTING.md says how to change keys.
