@@ -57,8 +57,9 @@ class LlmsFiles(SuperfindBehavior):
 
     def test_the_shell_setup_and_exit_codes_in_llms_txt_are_true(self):
         text = (ROOT / "llms.txt").read_text(encoding="utf-8")
-        shells = re.findall(r'`eval "\$\(superfind init (\w+)\)"`', text)
-        self.assertEqual(shells, ["zsh", "bash"])
+        shells = re.findall(r'`eval "\$\(superfind init (\w+)\)"`|`superfind init (\w+) \| source`', text)
+        shells = [a or b for a, b in shells]
+        self.assertEqual(shells, ["zsh", "bash", "fish"])
         for shell in shells:
             self.assertIn("superfind", self.superfind("init", shell))
         self.assertIn("Exit codes: 0 done, even when nothing matches; 1 failed; 2 a usage mistake or an ambiguous id", text)
