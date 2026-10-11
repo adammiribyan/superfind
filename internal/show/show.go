@@ -84,6 +84,8 @@ func outcomeLine(o blame.Outcome) string {
 func fateOf(o blame.Outcome) string {
 	known := o.Branch != ""
 	switch {
+	case o.Stage == blame.Dangling:
+		return "committed, on no branch"
 	case o.Stage == blame.Committed:
 		return "committed, not pushed"
 	case o.Stage == blame.Pushed && known:

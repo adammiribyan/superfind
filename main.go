@@ -222,9 +222,10 @@ anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
-squash), or merged and then reverted. A pull request is opened, merged, or reverted. It reads
-only local git, so it knows what your last fetch knows. Merged means the change was accepted,
-not that it was right.
+squash), or merged and then reverted. A commit whose branch was deleted or reset before it
+merged reads "committed, on no branch". A pull request is opened, merged, or reverted. It
+reads only local git, so it knows what your last fetch knows. Merged means the change was
+accepted, not that it was right.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.

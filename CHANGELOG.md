@@ -3,6 +3,12 @@
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
 
+## [Unreleased]
+
+### Changed
+
+- `superfind show` says "committed, on no branch" for a commit that no branch holds any more, because its branch was deleted or reset before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
+
 ## [0.11.0] - 2026-10-11
 
 ### Added

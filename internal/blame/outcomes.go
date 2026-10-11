@@ -17,14 +17,15 @@ import (
 type Stage int
 
 const (
-	Committed Stage = iota
+	Dangling Stage = iota
+	Committed
 	Pushed
 	Opened
 	Merged
 	Reverted
 )
 
-var stageNames = [...]string{"committed", "pushed", "opened", "merged", "reverted"}
+var stageNames = [...]string{"dangling", "committed", "pushed", "opened", "merged", "reverted"}
 
 func (s Stage) String() string { return stageNames[s] }
 
@@ -174,7 +175,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 
 func withoutRedone(out []Outcome) []Outcome {
 	redone := func(o Outcome) bool {
-		return o.dangling && o.Stage == Committed && slices.ContainsFunc(out, func(m Outcome) bool {
+		return o.dangling && o.Stage <= Committed && slices.ContainsFunc(out, func(m Outcome) bool {
 			return m.Repo == o.Repo && m.Commit != "" && m.Commit != o.Commit && !m.dangling && plain(m.Subject) == plain(o.Subject) &&
 				m.authored >= o.authored && m.authored-o.authored <= matchAfter
 		})
@@ -421,6 +422,20 @@ func (rp *repo) judge(e entry) Outcome {
 	}
 	if _, ok := rp.copyOf(e, rp.onRemote); ok || rp.onRemote[e.SHA] {
 		o.Stage = Pushed
+		return o
+	}
+	if !o.dangling {
+		return o
+	}
+	refs, err := git(rp.top, "for-each-ref", "--contains", e.SHA, "--format=%(refname)")
+	switch {
+	case err != nil:
+	case refs == "":
+		o.Stage = Dangling
+	case strings.Contains("\n"+refs, "\nrefs/remotes/"):
+		o.Stage, o.dangling = Pushed, false
+	default:
+		o.dangling = false
 	}
 	return o
 }

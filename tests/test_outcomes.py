@@ -318,7 +318,7 @@ class Outcomes(Blame):
         self.git("branch", "-q", "-D", "refunds")
         self.commit("feat: refund a charge in full", {"receipt.go": "other\n"}, t + 900)
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
-        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "dangling")])
 
     def test_two_commits_with_one_subject_squashed_together_stay_two(self):
         t = self.now - 7200
@@ -431,6 +431,44 @@ class Outcomes(Blame):
         self.assertEqual(result.returncode, 0)
         self.assertRegex(result.stderr, r"^superfind show: couldn't read all of this session, so its outcomes may be missing: .*agent-a1\.jsonl.*\n$")
         self.assertEqual([o["commit"] for o in json.loads(result.stdout)["outcomes"]], [made])
+
+    def test_a_commit_whose_branch_was_deleted_unmerged_reads_on_no_branch_for_each_agent(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "drafts")
+        made = [self.commit(f"feat: draft {name} for each charge", {f"{name}.go": name}, t + 60 * i)
+                for i, name in enumerate(("refunds", "receipts", "rounding"))]
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "drafts")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qam "feat: draft refunds for each charge"'),
+                       claude_result(t + 1, "b1", f"[drafts {made[0][:7]}] feat: draft refunds for each charge"), title="Refunds")
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("draft receipts"),
+                           codex_at(t + 60, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -qam 'feat: draft receipts for each charge'"})),
+                           codex_at(t + 61, "response_item", type="function_call_output", call_id="c1", output="Process exited with code 0"),
+                           codex_reply("Committed."))
+        self.grok_session(uid(3), str(self.work), GROK_SYSTEM, grok_user("draft rounding"),
+                          grok_call("run_terminal_command", "g1", command="git commit -qam 'feat: draft rounding for each charge'"),
+                          line(type="tool_result", tool_call_id="g1", content="done"), title="Rounding")
+        for n, sha in enumerate(made, 1):
+            self.assertEqual(self.outcomes(n, "commit", "stage", "landed"), [(sha, "dangling", "")])
+        self.assertEqual(self.text(1), [f"made {made[0][:7]} feat: draft refunds for each charge · committed, on no branch"])
+        self.assertEqual(self.text(3), [f"made {made[2][:7]} feat: draft rounding for each charge · committed, on no branch"])
+
+    def test_a_commit_a_branch_still_holds_is_never_on_no_branch_even_when_its_date_is_old(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 9 * 86400)
+        self.git("checkout", "-q", "-b", "kept")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t - 8 * 86400)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qam "feat: refund a charge in full"'),
+                       claude_result(t + 1, "b1", f"[kept {made[:7]}] feat: refund a charge in full"), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · committed, not pushed"])
+        self.origin()
+        self.git("push", "-q", "origin", "kept")
+        self.git("branch", "-q", "-D", "kept")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "pushed")])
 
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)
