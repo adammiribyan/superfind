@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 )
 
 func inZone(t *testing.T, name string) *time.Location {
@@ -36,9 +39,9 @@ func TestUnknownIsAndAgentValuesAreDroppedButRemembered(t *testing.T) {
 		t.Fatalf("got %+v", q)
 	}
 	cases := map[string]string{
-		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, or agent.",
+		"is:bogus agent:codx": "can't read is:bogus. is: takes waiting, unfinished, open, or agent.",
 		"agent:codx is:bogus": "can't read agent:codx. agent: takes claude, codex, or grok.",
-		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, or agent.",
+		"is:finished":         "can't read is:finished. is: takes waiting, unfinished, open, or agent.",
 	}
 	for query, want := range cases {
 		if q := Parse(query); q.Unknown == nil || q.Unknown.Error() != want || q.Problem != nil {
@@ -353,5 +356,23 @@ func TestLastPicksTheNewestRealSessionHere(t *testing.T) {
 	}
 	if r, _ := Last(Query{}, rows[1:2]); r.Path != "hi" {
 		t.Errorf("with only a throwaway here, got %q", r.Path)
+	}
+}
+
+func TestIsOpenKeepsOnlySessionsAnAgentHasOpen(t *testing.T) {
+	rows := []Row{
+		{Path: "held", Agent: agent.Named("claude"), Open: &open.State{PID: 4242, Status: "idle"}},
+		{Path: "closed", Agent: agent.Named("claude")},
+	}
+	q := Parse("is:OPEN")
+	if q.Unknown != nil || !q.Open {
+		t.Fatalf("is:open parsed as %+v", q)
+	}
+	var kept []string
+	for _, r := range q.Rows(rows, false) {
+		kept = append(kept, r.Path)
+	}
+	if !slices.Equal(kept, []string{"held"}) {
+		t.Errorf("is:open kept %v, want [held]", kept)
 	}
 }

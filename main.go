@@ -24,6 +24,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
@@ -50,7 +51,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
-                          is:agent shows sessions another program started, and in:here,
+                          is:agent shows sessions another program started, is:open shows
+                          sessions an agent has open right now, and in:here,
                           branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
                           and last activity
   superfind ask WORDS [--json] [--limit N]
@@ -118,7 +120,8 @@ With the shell setup from superfind init, when its input and output are a termin
 option starting with - is given, superfind last cds into the session's folder and resumes it,
 as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
 it prints the session's title on the first line and the command that resumes it on the second,
-as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
+as superfind pick does. Exit 1 when no session fits, or when an agent already has the newest
+session open: superfind last says where it is open instead of starting a second copy. An agent: or is: value superfind doesn't
 know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
@@ -134,6 +137,7 @@ program started, such as codex exec, claude -p, or another Claude Code session, 
 unless you ask for them with is:agent.
 
   is:waiting      only sessions waiting on you; is:unfinished works the same way
+  is:open         only sessions an agent has open right now
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
   in:here         only sessions from this folder or a folder that holds it, not from folders
@@ -441,7 +445,7 @@ func runLast(args []string) {
 	if q.Words != "" {
 		usageError("superfind last: takes filters, such as agent:codex or branch:main, not words. To search this folder, use superfind search in:here WORDS.")
 	}
-	r, ok := session.Last(q, session.Annotate(mustIndex("last")))
+	r, ok := session.Last(q, annotated("last", session.Index))
 	switch {
 	case !ok && text == "":
 		fail("superfind last: no session started in this folder or a folder that holds it.")
@@ -449,14 +453,27 @@ func runLast(args []string) {
 		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
+	case r.Open != nil:
+		fail("superfind last: " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
+			". superfind last doesn't start a second copy.")
 	default:
 		handoff(r)
 	}
 }
 
+func openWhere(o open.State) string {
+	if o.Tmux != nil {
+		return fmt.Sprintf("in tmux session %s, window %d", render.Flat(o.Tmux.Session), o.Tmux.Window)
+	}
+	return "in another window"
+}
+
 func handoffTitle(r session.Row) string {
 	title := render.Flat(r.Session.Title)
-	if r.Session.Active() {
+	switch {
+	case r.Open != nil:
+		title += render.Reset + render.Dim + " · already open in another window"
+	case r.Session.Active():
 		title += render.Reset + render.Dim + " · may still be open in another window"
 	}
 	return title
@@ -486,6 +503,13 @@ func mustOpenSearch() *sql.DB {
 }
 
 func mustIndex(command string) []session.Row { return mustRefresh(command, session.Index) }
+
+func annotated(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
+	held := make(chan map[open.Key]open.State, 1)
+	go func() { held <- open.Find(agent.Places()) }()
+	rows := mustRefresh(command, refresh)
+	return session.Annotate(rows, <-held)
+}
 
 func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error, error)) []session.Row {
 	noticed := false
@@ -535,7 +559,7 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 		fail("superfind " + command + ": " + arg + " is not inside a " + strings.Join(labels[:len(labels)-1], ", ") +
 			", or " + labels[len(labels)-1] + " home")
 	}
-	rows = session.Annotate(mustIndex(command))
+	rows = annotated(command, session.Index)
 	for _, want := range located {
 		for _, r := range rows {
 			if r.Path == want.Path {
@@ -550,7 +574,7 @@ func findSession(command, arg string) (session.Row, bool, []session.Row) {
 	if strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
 		return sessionAt(command, arg)
 	}
-	rows := session.Annotate(mustIndex(command))
+	rows := annotated(command, session.Index)
 	matches, exact := session.ByID(rows, arg)
 	if len(matches) == 0 {
 		if strings.HasSuffix(arg, ".jsonl") {
@@ -715,7 +739,7 @@ func runBlame(args []string) {
 	if t.Note != "" {
 		fmt.Fprintln(stderr, "superfind blame: "+t.Note)
 	}
-	rows := session.Annotate(mustIndex("blame"))
+	rows := annotated("blame", session.Index)
 	found, problems := blame.Blame(t, rows)
 	if unreadable := session.Unreadable(problems); unreadable != "" {
 		fmt.Fprintln(stderr, "superfind blame: "+unreadable)
@@ -882,11 +906,11 @@ func run(args []string) {
 		if asJSON {
 			find = session.SearchEvery
 		}
-		rows := session.Annotate(mustIndex("search"))
+		rows := annotated("search", session.Index)
 		db := mustOpenSearch()
 		found, err := find(db, query, rows)
 		if errors.Is(err, session.ErrDamaged) {
-			rows = session.Annotate(mustRefresh("search", session.Rebuild))
+			rows = annotated("search", session.Rebuild)
 			db = mustOpenSearch()
 			found, err = find(db, query, rows)
 		}
@@ -902,7 +926,7 @@ func run(args []string) {
 	case "ask":
 		words, asJSON, limit := searchWords("ask", args[1:])
 		q := mustParse("ask", words)
-		rows := session.Annotate(mustIndex("ask"))
+		rows := annotated("ask", session.Index)
 		shown := render.TagsFor(session.SameKind(rows, q.Agents))
 		db := mustOpenSearch()
 		query, eligible := q.Words, q.Rows(rows, asJSON)

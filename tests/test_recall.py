@@ -221,6 +221,20 @@ class Recall(SuperfindBehavior):
         app.unlink()
         self.assertEqual(self.last()[1], self.handoff(hi.resolve(), "hi"))
 
+    def test_last_never_resumes_a_second_copy_of_a_session_an_agent_has_open(self):
+        self.worked("app", self.app)
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        pid_file = sessions / f"{os.getpid()}.json"
+        pid_file.write_text(json.dumps({"pid": os.getpid(), "sessionId": "app", "cwd": str(self.app),
+                                        "startedAt": int(time.time() * 1000), "status": "idle"}))
+        self.assertEqual(self.last(), (1, "", "superfind last: fix the ledger is already open in another window. "
+                                              "superfind last doesn't start a second copy.\n"))
+        [record] = [json.loads(row) for row in self.last("--json")[1].splitlines()]
+        self.assertEqual((record["id"], record["open"]["pid"]), ("app", os.getpid()))
+        pid_file.unlink()
+        self.assertEqual(self.last(), (0, self.handoff((self.projects / "app.jsonl").resolve(), "fix the ledger"), ""))
+
     def test_last_takes_the_agent_and_every_other_filter(self):
         self.worked("app", self.app)
         codex = self.codex_session(uid(1), codex_meta(cwd=str(self.app)), codex_user("migrate the ledger index"), codex_call(),
@@ -249,8 +263,8 @@ class Recall(SuperfindBehavior):
     def test_last_refuses_an_agent_or_is_value_it_does_not_know_instead_of_dropping_it(self):
         self.worked("app", self.app)
         cases = {("agent:codx",): "can't read agent:codx. agent: takes claude, codex, or grok.",
-                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, or agent.",
-                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, or agent."}
+                 ("is:bogus", "--json"): "can't read is:bogus. is: takes waiting, unfinished, open, or agent.",
+                 ("agent:claude", "is:finished"): "can't read is:finished. is: takes waiting, unfinished, open, or agent."}
         for args, sentence in cases.items():
             self.assertEqual(self.last(*args), (2, "", f"superfind last: {sentence}\n"), args)
         self.assertEqual(self.ids("agent:bogus", "ledger"), ["app"])
