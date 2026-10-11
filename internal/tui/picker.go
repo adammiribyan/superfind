@@ -29,6 +29,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/ghostty"
+	"github.com/adammiribyan/superfind/internal/news"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
@@ -197,6 +198,7 @@ type picker struct {
 	askedFor    string
 	explained   map[string]string
 	message     string
+	notice      string
 	confirming  string
 	inTmux      bool
 	focus       func(open.State) bool
@@ -622,6 +624,9 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterMove()
 	case labelsTick:
 		next := tea.Batch(tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }), findHeld)
+		if line, changed := news.Poll(); changed {
+			m.notice = line
+		}
 		info, err := os.Stat(store.CachePath("status.json"))
 		if err != nil || !info.ModTime().After(m.statusSeen) {
 			return m, next
@@ -753,6 +758,9 @@ func (m picker) asksToConfirm() bool {
 func (m picker) shownMessage() string {
 	if m.asksToConfirm() {
 		return confirmCopy
+	}
+	if m.message == "" {
+		return m.notice
 	}
 	return m.message
 }
@@ -1089,7 +1097,7 @@ func pathsOf(rows []session.Row) []string {
 	return paths
 }
 
-func Pick() (*session.Row, error) {
+func Pick(b news.Build) (*session.Row, error) {
 	problem := ""
 	db, err := session.OpenSearch()
 	if err != nil {
@@ -1105,6 +1113,7 @@ func Pick() (*session.Row, error) {
 		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
 	}
 	start := newPicker(session.CachedRows(), db, problem)
+	start.notice = news.Open(b)
 	final, err := tea.NewProgram(start, options...).Run()
 	start.asks.stop()
 	stopped := make(chan struct{})
