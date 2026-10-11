@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -195,5 +196,55 @@ func TestAHeadlessGrokSessionIsStartedByAnAgent(t *testing.T) {
 		if tr.ByAgent != want || len(tr.Prompts) != 1 {
 			t.Errorf("session_kind %q: ByAgent=%v prompts=%q", kind, tr.ByAgent, tr.Prompts)
 		}
+	}
+}
+
+func TestALineOverTheLimitIsSkippedWhetherReadWholeOrFromTheEnd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions/2026/10/09/rollout-2026-10-09T10-00-00-0199a751-7860-aac9-7380-72c82895aaaa.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	long := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"` +
+		strings.Repeat("x", longestLine) + `"}]}}`
+	short := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"short one"}]}}`
+	if err := os.WriteFile(path, []byte(long+"\n"+short+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	whole, err := ReadTranscript(Named("codex"), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ending, err := ReadEnding(Named("codex"), path, func([]Turn) bool { return false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"short one"}; !slices.Equal(whole.Prompts, want) || len(ending) != 1 || ending[0].Text != "short one" {
+		t.Fatalf("read whole: %d prompts; read from the end: %d turns; want only %q both ways", len(whole.Prompts), len(ending), want)
+	}
+}
+
+func TestReadingFromTheEndOfALongTranscriptReturnsItsLastTurns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions/2026/10/09/rollout-2026-10-09T10-00-00-0199a751-7860-aac9-7380-72c82895aaaa.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var file strings.Builder
+	for i := range 300 {
+		fmt.Fprintf(&file, `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ask %d %s"}]}}`+"\n", i, strings.Repeat("x", 4000))
+		fmt.Fprintf(&file, `{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer %d"}]}}`+"\n", i)
+	}
+	if err := os.WriteFile(path, []byte(file.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	whole, err := ReadTranscript(Named("codex"), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ending, err := ReadEnding(Named("codex"), path, func(turns []Turn) bool { return len(turns) >= 4 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ending) < 4 || len(ending) >= len(whole.Turns) || !slices.Equal(ending, whole.Turns[len(whole.Turns)-len(ending):]) {
+		t.Fatalf("read %d turns from the end of %d; want at least 4 that end the transcript", len(ending), len(whole.Turns))
 	}
 }
