@@ -108,6 +108,7 @@ type Transcript struct {
 	ByAgent, PeerDriven              bool
 	hear                             func(peer bool, role, text string)
 	peer                             bool
+	from                             int
 }
 
 type reader interface {
@@ -183,12 +184,18 @@ func (t *Transcript) say(role, text string) {
 		t.hear(t.peer, role, text)
 		return
 	}
-	if n := len(t.Turns); n > 0 && t.Turns[n-1].Role == role {
-		t.Turns[n-1].Text += "\n\n" + text
-	} else {
-		t.Turns = append(t.Turns, Turn{role, text})
+	if n := len(t.Turns); n == 0 || t.Turns[n-1].Role != role {
+		t.join()
+		t.Turns = append(t.Turns, Turn{Role: role})
+		t.from = len(t.Messages)
 	}
 	t.Messages = append(t.Messages, text)
+}
+
+func (t *Transcript) join() {
+	if n := len(t.Turns); n > 0 {
+		t.Turns[n-1].Text = strings.Join(t.Messages[t.from:], "\n\n")
+	}
 }
 
 func (t *Transcript) ask(prompt string) {
