@@ -601,51 +601,14 @@ func banded(hits []scored, mtime map[string]float64) []string {
 	return paths
 }
 
-func Narrow(query string, rows []Row) (string, []Row) { return narrow(query, rows, false) }
+func Narrow(query string, rows []Row) (string, []Row) {
+	q := Parse(query)
+	return q.Words, q.Rows(rows, false)
+}
 
-func NarrowEvery(query string, rows []Row) (string, []Row) { return narrow(query, rows, true) }
-
-func narrow(query string, rows []Row, everyKind bool) (string, []Row) {
-	var words, statuses []string
-	var from []*agent.Agent
-	byAgent, open := false, false
-	for _, w := range strings.Fields(query) {
-		switch {
-		case AsksForAgents(w):
-			byAgent = true
-		case strings.EqualFold(w, OpenFilter):
-			open = true
-		case strings.HasPrefix(w, "is:"):
-			if label := statusLabelFor(strings.ToLower(w[3:])); label != "" {
-				statuses = append(statuses, label)
-			}
-		case strings.HasPrefix(w, "agent:"):
-			if a := agent.Named(strings.ToLower(w[6:])); a != nil {
-				from = append(from, a)
-			}
-		default:
-			words = append(words, w)
-		}
-	}
-	keptKind := func(r Row) bool {
-		switch {
-		case byAgent:
-			return r.Session.ByAgent
-		case everyKind:
-			return true
-		}
-		return !r.Session.ByAgent
-	}
-	if len(statuses) > 0 || len(from) > 0 || byAgent || open || !everyKind {
-		var kept []Row
-		for _, r := range rows {
-			if (len(statuses) == 0 || slices.Contains(statuses, r.Status)) && (len(from) == 0 || slices.Contains(from, r.Agent)) && keptKind(r) && (!open || r.Open != nil) {
-				kept = append(kept, r)
-			}
-		}
-		rows = kept
-	}
-	return strings.Join(words, " "), rows
+func NarrowEvery(query string, rows []Row) (string, []Row) {
+	q := Parse(query)
+	return q.Words, q.Rows(rows, true)
 }
 
 func Search(db *sql.DB, query string, rows []Row) ([]Row, error) {
@@ -657,7 +620,8 @@ func SearchEvery(db *sql.DB, query string, rows []Row) ([]Row, error) {
 }
 
 func search(db *sql.DB, query string, rows []Row, everyKind bool) ([]Row, error) {
-	words, rows := narrow(query, rows, everyKind)
+	q := Parse(query)
+	words, rows := q.Words, q.Rows(rows, everyKind)
 	if db == nil {
 		return RecentFirst(rows), nil
 	}

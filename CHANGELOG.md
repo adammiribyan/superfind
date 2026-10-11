@@ -10,10 +10,8 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `is:open` lists only the sessions that a running Claude Code, Codex, or Grok has open right now. Their rows say "open" instead of "active now" or the time.
 - `search --json`, `ask --json`, and `show --json` have a new field, `open`: the process id of the agent that has the session open, whether Claude Code is busy or idle, and the tmux pane it runs in. It is `null` when no agent has the session open.
 - Codex counts as open only when it was started with `codex resume <id>`, because Codex keeps no list of running sessions.
-
-### Fixed
-
-- superfind works inside a sandbox that can't write to its cache, such as Codex's `read-only` mode. Every command used to fail there with "locking the index: operation not permitted". Now it reads the index as it was last written and changes nothing in the cache. `search` and `ask` say on stderr when sessions changed since then, because they match the words those sessions held at the last index. `index` and `label` exit 1 there. With no usable index, superfind says to run `superfind index` once outside the sandbox or to set `XDG_CACHE_HOME`.
+- `in:here`, `branch:NAME`, `after:WHEN`, and `before:WHEN` filter the picker, `search`, and `ask`. `in:here` keeps sessions started in the folder you're in, in a folder inside it, or in a folder that contains it. `branch:` matches the branch a session ended on. `after:` and `before:` compare the time a session was last active with the start of a day in your time zone, such as `after:2026-10-09`, `after:yesterday`, or `before:today`, or with a time ago, such as `after:3d`, `12h`, or `2w`.
+- `superfind last` resumes the newest session started in the folder you're in, in a folder inside it, or in a folder that contains it, with no picker. It takes the same filters, such as `sfd last agent:codex`. Through the shell setup it `cd`s and resumes as Enter does; in a script or an agent's shell it prints the title and the resume command instead, and `--json` prints the session as JSON.
 
 ### Changed
 
@@ -25,9 +23,11 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - A session that ends in one long agent run no longer slows the index and the preview down with the run's length. On a 126 MB test session, the preview took 4 to 6 s instead of 18 to 23 s and peaked at 0.39 to 0.43 GB instead of 0.89 to 1.0 GB.
 - The preview reads the end of a session line by line instead of loading it, so a long run of tool output no longer has to fit in memory. On the same 126 MB session it peaked at 0.29 to 0.35 GB instead of 0.39 to 0.43 GB.
 - A line between 16 MiB and 17 MiB long is now skipped by the index as well as the preview, so search no longer finds a prompt the preview can't show.
+- A filter that superfind can't read, such as `after:2026-1`, makes `search`, `ask`, and `last` exit 2 and say what the filter takes, before `ask` sends anything. In the picker, the filter is left out and the line under the search box says what it takes.
 
 ### Fixed
 
+- superfind works inside a sandbox that can't write to its cache, such as Codex's `read-only` mode. Every command used to fail there with "locking the index: operation not permitted". Now it reads the index as it was last written and changes nothing in the cache. `search` and `ask` say on stderr when sessions changed since then, because they match the words those sessions held at the last index. `index` and `label` exit 1 there. With no usable index, superfind says to run `superfind index` once outside the sandbox or to set `XDG_CACHE_HOME`.
 - The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
 - A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
 - `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
