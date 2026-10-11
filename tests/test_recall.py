@@ -106,8 +106,6 @@ class Recall(SuperfindBehavior):
 
     def test_a_pwd_typed_in_another_letter_case_still_finds_this_folder(self):
         here = self.place("work/app")
-        if not Path(str(here).upper()).exists() or str(here).upper() == str(here):
-            self.skipTest("the temporary folder's file system tells letter case apart")
         self.worked("app", here.resolve())
         self.assertEqual(self.ids("in:here", here=here, pwd=str(here).upper()), ["app"])
         self.assertEqual(self.ids("in:here", here=here, pwd=str(here.resolve()).upper()), ["app"])
