@@ -123,20 +123,33 @@ func statuses() map[string]statusEntry {
 	return map[string]statusEntry{}
 }
 
-func statusLabel(r Row, known map[string]statusEntry) string {
-	e, ok := known[r.Path]
-	if !ok || e.P < statusShownAt {
+var endingStatus = map[agent.Event]string{
+	agent.Interrupted: "unfinished",
+	agent.CalledTool:  "unfinished",
+	agent.Prompted:    "unfinished",
+}
+
+func statusLabel(r Row, known map[string]statusEntry, keyless bool) string {
+	e, judged := known[r.Path]
+	stoppedAs, stopped := endingStatus[r.Session.Ending]
+	byEnding := keyless && stopped && !r.Session.Throwaway() && !r.Session.ByAgent
+	if !judged && !byEnding {
 		return ""
 	}
 	id, mtime, err := r.Agent.Stat(r.Path)
-	if err != nil {
-		return ""
-	}
 	age := Now() - mtime
-	if e.FileID != id || age < activeSeconds || age >= labelDays*86400 {
+	switch {
+	case err != nil || age < activeSeconds || age >= labelDays*86400:
 		return ""
+	case judged && e.FileID == id:
+		if e.P < statusShownAt {
+			return ""
+		}
+		return statusLabelFor(e.Status)
+	case byEnding && mtime == r.Session.Mtime:
+		return statusLabelFor(stoppedAs)
 	}
-	return statusLabelFor(e.Status)
+	return ""
 }
 
 func Label(key string, rows []Row) error {

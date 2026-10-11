@@ -1,6 +1,8 @@
 import json
+import random
 import shutil
 import subprocess
+import time
 import unittest
 
 from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, line, codex_item, GROK_OPENER, GROK_SYSTEM, SuperfindBehavior, claude, codex_meta, codex_reply,
@@ -8,6 +10,13 @@ from test_superfind import (SUPERFIND, CODEX_ENVIRONMENT, line, codex_item, GROK
 
 
 KEY = "sk-ant-api03-" + "Q" * 40
+COMMON = "the the the a to of and in is it that for on with this we be as are was not at by from or".split()
+TOPICS = "retry ledger invoice webhook payout cart checkout refund charge queue worker deploy migration schema cache".split()
+
+
+def prose(rng, words):
+    out = [rng.choice(COMMON) if rng.random() < 0.5 else rng.choice(TOPICS) for _ in range(words)]
+    return " ".join(w + "." if rng.random() < 0.08 else w for w in out)
 
 
 class ScriptsAndAgents(SuperfindBehavior):
@@ -279,6 +288,13 @@ class ScriptsAndAgents(SuperfindBehavior):
         [row] = self.records("ask", "--json", "where", "did", "we", "stop", "charging", "twice")
         self.assertEqual((row["title"], row["kind"], row["match"]), ("Payment retries", "interactive", ""))
 
+    def test_ask_json_shows_the_passage_with_some_of_the_words(self):
+        self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
+                     claude("Each request now carries an idempotency key."), title="Payment retries")
+        self.logging_claude(reply="[0]")
+        [row] = self.records("ask", "--json", "how", "did", "we", "stop", "retries", "charging", "twice")
+        self.assertEqual(row["match"], "make payment retries safe to repeat Each request now carries…")
+
     def test_ask_json_ranks_sessions_another_program_started_too(self):
         self.session(uid(1), user("make payment retries safe to repeat", cwd="/work/billing"), tool("Edit"),
                      claude("Each request now carries an idempotency key."), title="Payment retries")
@@ -308,6 +324,21 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.session(uid(1), user("rename the invoice files", cwd="/w"), tool("Bash"), claude("Renamed them."), title="Quarterly cleanup")
         self.assertEqual([r["match"] for r in self.records("search", "--json", "quarterly")], [""])
         self.assertEqual([r["match"] for r in self.records("search", "--json", "invoice")], ["rename the invoice files Renamed them."])
+
+    def test_search_json_takes_about_as_long_as_plain_search_on_a_common_word(self):
+        rng = random.Random(7)
+        for n in range(40):
+            self.session(uid(n), user(prose(rng, 6000), cwd="/w"), claude(prose(rng, 6000)), title=f"Ledger work {n}")
+        self.superfind("index")
+        fastest = {"plain": float("inf"), "json": float("inf")}
+        for _ in range(3):
+            for side, args in (("plain", ["the"]), ("json", ["--json", "the"])):
+                start = time.perf_counter()
+                out = self.superfind("search", *args)
+                fastest[side] = min(fastest[side], time.perf_counter() - start)
+                self.assertEqual(len(out.splitlines()), 40)
+        self.assertTrue(all(r["match"] for r in self.records("search", "--json", "the")))
+        self.assertLess(fastest["json"], 3 * fastest["plain"], fastest)
 
     def test_text_ask_leaves_out_sessions_another_program_started_unless_asked(self):
         self.checkout()

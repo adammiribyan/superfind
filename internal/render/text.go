@@ -240,9 +240,46 @@ func splitLines(text string) []string {
 	return lines
 }
 
-func render(text string, width int) []string {
+func render(text string, width int) []string { return renderFrom(text, width, false) }
+
+const lineBreaks = "\n\r\v\f\u2028\u2029"
+
+func fencedAfter(text string) bool {
+	fenced, blank, scanned := false, true, 0
+	for at := 0; ; at += 3 {
+		found := strings.Index(text[at:], "```")
+		if found < 0 {
+			return fenced
+		}
+		at += found
+		if b := strings.LastIndexAny(text[scanned:at], lineBreaks); b >= 0 {
+			scanned, blank = scanned+b, true
+		}
+		blank = blank && strings.TrimLeftFunc(text[scanned:at], unicode.IsSpace) == ""
+		scanned = at
+		if blank {
+			fenced, blank = !fenced, false
+		}
+	}
+}
+
+func renderEnd(text string, width, keep int) []string {
+	text = agent.Printable(text)
+	for size := 16 << 10; size < len(text); size *= 4 {
+		cut := strings.IndexByte(text[len(text)-size:], '\n')
+		if cut < 0 {
+			continue
+		}
+		cut += len(text) - size + 1
+		if lines := renderFrom(text[cut:], width, fencedAfter(text[:cut])); len(lines) > keep {
+			return lines
+		}
+	}
+	return render(text, width)
+}
+
+func renderFrom(text string, width int, fenced bool) []string {
 	var lines []string
-	fenced := false
 	for _, line := range splitLines(agent.Printable(text)) {
 		stripped := strings.TrimSpace(line)
 		switch {
