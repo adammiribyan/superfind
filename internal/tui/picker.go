@@ -178,7 +178,7 @@ type picker struct {
 	askSeq      int
 	asking      bool
 	askedFor    string
-	byWords     bool
+	fallback    string
 	explained   map[string]string
 	message     string
 
@@ -326,7 +326,17 @@ func (a *asks) stop() {
 func (m *picker) forgetAsk() {
 	m.asks.stop()
 	m.askSeq++
-	m.asking, m.askedFor, m.byWords, m.explained = false, "", false, nil
+	m.asking, m.askedFor, m.fallback, m.explained = false, "", "", nil
+}
+
+func (m picker) askMessage() string {
+	switch {
+	case len(m.shown) == 0 && m.fallback != "":
+		return m.fallback + " No session contains these words."
+	case len(m.shown) == 0:
+		return "Ask found nothing for “" + m.askedFor + "”"
+	}
+	return m.fallback
 }
 
 func (m *picker) search() {
@@ -539,6 +549,9 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.askedFor != "" {
 			m.shown = session.InOrder(m.all, pathsOf(m.shown))
 			m.message = m.problem
+			if m.message == "" {
+				m.message = m.askMessage()
+			}
 		} else {
 			m.filter()
 		}
@@ -595,16 +608,11 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		paths := msg.answer.Paths
 		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, paths), 0, 0, msg.query
-		m.byWords = msg.answer.Fallback != ""
-		switch {
-		case len(m.shown) == 0:
-			m.message = "Ask found nothing for “" + msg.query + "”"
-		case m.byWords:
-			m.message = msg.answer.Fallback
-		}
+		m.fallback = msg.answer.Fallback
+		m.message = m.askMessage()
 		updated, load := m.loadPreview()
 		key, top := typesafe.Key(), paths[:min(ask.ExplainTop, len(paths))]
-		if key == "" || len(top) == 0 || updated.db == nil || updated.byWords {
+		if key == "" || len(top) == 0 || updated.db == nil || updated.fallback != "" {
 			return updated, load
 		}
 		seq, db, query, ctx := msg.seq, updated.db, msg.query, m.asks.ctx
@@ -748,7 +756,7 @@ func (m picker) inputBox(width int) []string {
 		label = " " + m.colors.accent.Render(m.spin.View()) + " " + bold.Render("Asking…") + " "
 	case asked:
 		label = " " + bold.Render("Sessions by description") + " "
-		if m.byWords {
+		if m.fallback != "" {
 			label = " " + bold.Render("Sessions with your words") + " "
 		}
 	}

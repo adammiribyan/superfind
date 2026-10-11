@@ -157,3 +157,18 @@ func TestAskResultsRankedByYourWordsSayWhyAndAreTitledThatWay(t *testing.T) {
 		t.Fatalf("after a keyword fallback the box reads %q and the message %q", lines[1], lines[4])
 	}
 }
+
+func TestAKeywordFallbackKeepsItsReasonWhenNothingMatchesAndAfterTheIndexRefreshes(t *testing.T) {
+	m := testPicker(t)
+	m.width, m.height, m.screenHeight, m.started = 80, 23, 24, true
+	reason := "Ask needs a TypeSafe key or Claude Code."
+	empty, _ := m.Update(askDone{seq: m.askSeq, query: "zebra", answer: ask.Answer{Fallback: reason}})
+	if got := empty.(picker).message; got != reason+" No session contains these words." {
+		t.Fatalf("with no matches the message reads %q", got)
+	}
+	found, _ := m.Update(askDone{seq: m.askSeq, query: "ledger", answer: ask.Answer{Paths: []string{"a"}, Fallback: reason}})
+	refreshed, _ := found.(picker).Update(indexed{rows: found.(picker).rows})
+	if got := refreshed.(picker).message; got != reason {
+		t.Fatalf("after the index refreshed the message reads %q, want %q", got, reason)
+	}
+}

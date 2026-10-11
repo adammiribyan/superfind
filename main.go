@@ -105,8 +105,8 @@ first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude
 without one. Takes the same is: and agent: filters as search, and prints the same fields.
 With --json, it prints one JSON object per session, as search --json does.
 
-When no ranker answers, it prints the sessions that contain any of your words instead, title
-matches first, says why on stderr, and exits 0.
+When no ranker answers, it prints the sessions that contain any of your words instead, ranked
+by how well they match, says why on stderr, and exits 0.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 

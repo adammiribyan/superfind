@@ -3,10 +3,12 @@ package ask
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -69,5 +71,32 @@ func TestWhenClaudeCodeAnswersAskKeepsItsOrder(t *testing.T) {
 	answer, err := Ask(context.Background(), db, "the webhook signing", rows)
 	if err != nil || len(answer.Paths) != 1 || answer.Fallback != "" {
 		t.Fatalf("Ask gave %v and %q (%v), want one session ranked by Claude Code and no fallback", answer.Paths, answer.Fallback, err)
+	}
+}
+
+func TestCancellingAskStopsAKeywordSearchThatIsWaitingForTheIndex(t *testing.T) {
+	db, rows := wordsCorpus(t)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("TYPESAFE_API_KEY", "")
+	db.SetMaxOpenConns(1)
+	busy, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Rollback()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Ask(ctx, db, "webhook", rows)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("a cancelled ask returned %v, want the deadline", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a cancelled ask was still waiting for the index after 3 s")
 	}
 }

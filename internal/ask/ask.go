@@ -276,14 +276,17 @@ func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) (Ans
 	if fallback == "" {
 		return Answer{Paths: ranked}, nil
 	}
-	paths, err := byWords(db, query, kept)
+	paths, err := byWords(ctx, db, query, kept)
+	if ctx.Err() != nil {
+		return Answer{}, ctx.Err()
+	}
 	if err != nil {
 		return Answer{}, Failure{"the search index couldn't be read (" + err.Error() + ")"}
 	}
 	return Answer{Paths: paths, Fallback: fallback}, nil
 }
 
-func byWords(db *sql.DB, query string, kept []session.Row) ([]string, error) {
+func byWords(ctx context.Context, db *sql.DB, query string, kept []session.Row) ([]string, error) {
 	var anyWord []string
 	for _, w := range session.MeaningfulWords(query) {
 		anyWord = append(anyWord, `"`+w+`"*`)
@@ -291,22 +294,27 @@ func byWords(db *sql.DB, query string, kept []session.Row) ([]string, error) {
 	if len(anyWord) == 0 {
 		return nil, nil
 	}
-	hits, err := session.QueryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 0.0, 3.0, 1.0), path",
+	hits, err := db.QueryContext(ctx, "SELECT path FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 0.0, 3.0, 1.0), path",
 		strings.Join(anyWord, " OR "))
 	if err != nil {
 		return nil, err
 	}
+	defer hits.Close()
 	candidate := map[string]bool{}
 	for _, r := range kept {
 		candidate[r.Path] = true
 	}
 	var paths []string
-	for _, hit := range hits {
-		if candidate[hit[0]] && len(paths) < wordShortlist {
-			paths = append(paths, hit[0])
+	for hits.Next() && len(paths) < wordShortlist {
+		var path string
+		if err := hits.Scan(&path); err != nil {
+			return nil, err
+		}
+		if candidate[path] {
+			paths = append(paths, path)
 		}
 	}
-	return paths, nil
+	return paths, hits.Err()
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)
