@@ -24,6 +24,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- superfind is now licensed under the Apache License 2.0 instead of MIT. Releases up to 0.10.0 stay under MIT.
 - `search` and `ask` reject an option that starts with one dash, such as `-n 5`, and exit 2. They used to search for it as a word, so `-n 5` usually found nothing. To search for such a word, put `--` first.
 - `superfind --help` and `superfind help search` say that `--json` prints JSON Lines, one object per line rather than one array, and how to get the first result or one array with `jq`.
 - `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
