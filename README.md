@@ -229,7 +229,7 @@ superfind last --json                 # the newest session in this folder, as JS
 
 ### Search results as JSON
 
-`superfind search --json WORDS` and `superfind ask --json WORDS` print one JSON object per line, best match first. With `--json` they include the sessions another program started (see [Sessions it finds](#sessions-it-finds)), so a script sees everything and can filter on `kind`; add `is:agent` to list only those.
+`superfind search --json WORDS` and `superfind ask --json WORDS` print one JSON object per line, best match first. That's [JSON Lines](https://jsonlines.org), not one array: `jq -r .id` prints every id, `--limit 1` keeps the first, and `jq -s` gathers them into one array. `--limit N` prints only the first N, with or without `--json`. Prefer it to `head`: under `set -o pipefail`, `head` closing the pipe early makes the pipeline fail. With `--json` they include the sessions another program started (see [Sessions it finds](#sessions-it-finds)), so a script sees everything and can filter on `kind`; add `is:agent` to list only those.
 
 ```json
 {"schema":1,"agent":"codex","id":"019a…","path":"/Users/you/.codex/sessions/2026/10/09/rollout-….jsonl",
@@ -243,6 +243,58 @@ The fields are described under [What `show` prints](#what-show-prints), which pr
 
 - `kind` is `agent` when another program started the session, and `interactive` otherwise.
 - `match` is a passage of about ten words that holds your words, or empty when you gave no words or none of them is in the conversation. In a conversation longer than about 2,000 characters, it comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common, such as `the`. `ask` finds sessions by meaning, so its results often have an empty `match`. For `blame --json`, `match` says what the session did instead.
+
+With no words, `search` lists sessions from the folder you're in, or from a folder that holds it, first, then the rest newest first, and very short sessions last. To sort by time, sort on `updated`.
+
+### Recipes
+
+Each of these was run on a set of sample sessions, and the output is pasted as printed, except that the sample home folder shows as `/Users/you` and a long list ends at `…`.
+
+```sh
+$ superfind search --json --limit 1 proration | jq -r .id      # the id of the best match
+0f6c3a10-0000-0002-0000-000000003dde
+
+$ superfind search --json proration | jq -s 'map(.title)'      # every match, as one array
+[
+  "Add idempotency keys to the proration job",
+  "Explain the proration math",
+  "Investigate customers overbilled after plan change"
+]
+
+$ superfind search --json proration | wc -l                    # how many match
+       3
+
+$ superfind search --json agent:codex | jq -r '[.updated[:10], .branch, .title] | @tsv'
+2026-10-09		Explain the proration math
+2026-10-10	main	List the TODO comments in src/checkout.
+2026-10-10	feat/auth	Move auth tokens to cookies
+2026-10-09	main	Flaky test in the session store
+
+$ superfind search --json | jq -r --arg here "$PWD" 'select(.cwd == $here) | .title'
+Investigate customers overbilled after plan change
+Add idempotency keys to the proration job
+Explain the proration math
+Why the invoice PDF shows the wrong currency
+
+$ superfind search --json | jq -r 'select(.updated | fromdate > now - 86400) | .title'   # changed in the last day
+Investigate customers overbilled after plan change
+Add idempotency keys to the proration job
+Rate limit the login endpoint
+…
+
+$ id=$(superfind ask --json --limit 1 "make the proration job safe to retry" | jq -r .id)
+$ superfind show "$id" --json --tail 3 | jq -r '.turns[] | "\(.role): \(.text)"'
+assistant: Make the proration job idempotent: key each run by subscription id and change timestamp, and skip a run whose key already exists.
+user: Do it, and add a test that replays the webhook twice.
+assistant: Done. The test replays the webhook twice and asserts one invoice line. All 48 billing tests pass.
+
+$ superfind command "$id"                                       # the command that resumes it
+cd /Users/you/code/billing && claude --resume 0f6c3a10-0000-0001-0000-000000001eef
+```
+
+To run that command in a new pane, see [Resume in another pane](#resume-in-another-pane).
+
+`jq length` counts the fields of each object, not the sessions; use `wc -l` or `jq -s length`.
 
 ### Naming a session
 
@@ -289,10 +341,12 @@ By default `show` keeps the most recent turns that fit in 60,000 bytes of text, 
 - `updated` is when the transcript last changed, in UTC. `active` means it changed in the last two minutes, so the session may still be open somewhere. It doesn't mean the agent is running.
 - `open` is `null` unless a running agent has the session open. Then it holds the agent's process id as `pid`; `status`, which is `busy` while Claude Code works, `idle` while it waits for you, and empty when the agent doesn't say; and `tmux`, the pane the agent runs in, as `{"pane":"%3","session":"work","window":1}`, or `null` when superfind can't see the pane, such as outside tmux. `open.status` is about the agent process, unlike the top-level `status` label. superfind reads this from Claude Code's and Grok's own lists of running sessions and from the agent's command line. Codex counts as open only when it was started with `codex resume <id>`.
 - `prompts` counts the requests you typed. It can be more than the number of `user` turns, because requests in a row join into one turn.
+- `branch` is the git branch the agent recorded for the session, or empty when it recorded none. On a detached HEAD, as in a worktree checked out at a commit, Claude Code records `HEAD` and Codex records no branch.
 - `status` is `waiting` or `unfinished` when a session has that label (see [Waiting on you](#waiting-on-you)), and empty otherwise.
 - `folder_gone` means the session's folder was deleted. `resume` is the shell command that resumes it, with every value quoted for the shell.
 - `total_turns` counts every turn, and `omitted_turns` counts the earlier ones left out. `truncated` is true when `--max-bytes` cut anything; leaving turns out with `--tail` doesn't count.
 - `role` is `user` or `assistant`. `cut` appears, set to true, only on a turn whose start was cut.
+- Every session field is always present. A text field with nothing to say, such as `branch`, `status`, or `match`, is an empty string, not `null`.
 - `schema` changes only if a field is renamed, removed, or changes meaning. New fields can appear at any time.
 
 ### Masked secrets

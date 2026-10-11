@@ -6,6 +6,9 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
+- The README's "Use from scripts and agents" section has recipes for common jobs with `jq`, such as getting the best match's id, gathering results into one array, or reading the last turns of a session.
+
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - `is:open` lists only the sessions that a running Claude Code, Codex, or Grok has open right now. Their rows say "open" instead of "active now" or the time.
 - `search --json`, `ask --json`, and `show --json` have a new field, `open`: the process id of the agent that has the session open, whether Claude Code is busy or idle, and the tmux pane it runs in. It is `null` when no agent has the session open.
@@ -18,6 +21,9 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- `search` and `ask` reject an option that starts with one dash, such as `-n 5`, and exit 2. They used to search for it as a word, so `-n 5` usually found nothing. To search for such a word, put `--` first.
+- `superfind --help` and `superfind help search` say that `--json` prints JSON Lines, one object per line rather than one array, and how to get the first result or one array with `jq`.
+- `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
 - `search --json` takes about as long as plain `search`, even for a word in nearly every session. On 600 generated sessions, `search --json the` took 13 seconds and now takes under a quarter of a second. `ask` also prepares its question faster, and the preview finds the passage that matched sooner in long sessions.
