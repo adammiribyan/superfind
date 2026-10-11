@@ -9,7 +9,7 @@ import (
 
 func ResumeCommand(a *Agent, home, cwd, id string) string {
 	env := ""
-	if Resolve(home) != Resolve(a.DefaultHome()) {
+	if def := a.DefaultHome(); home != def && Resolve(home) != Resolve(def) {
 		env = a.homeVar + "=" + ShellQuote(home) + " "
 	}
 	return "cd " + ShellQuote(SurvivingDir(cwd)) + " && " + env + a.resume + " " + ShellQuote(id)

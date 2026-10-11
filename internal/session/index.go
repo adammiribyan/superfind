@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"net/url"
 	"os"
@@ -435,7 +436,12 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	discarded := len(old) == 0
 	if len(results) > 0 || len(gone) > 0 || discarded {
-		if err := updateSearch(results, gone, discarded); err != nil {
+		db, err := OpenSearch()
+		if err == nil {
+			err = updateSearch(db, results, gone, discarded)
+			db.Close()
+		}
+		if err != nil {
 			return rows, problems, fmt.Errorf("updating the search index: %w", err)
 		}
 	}
@@ -447,12 +453,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	return rows, problems, nil
 }
 
-func updateSearch(results map[string]parsed, gone []string, discarded bool) error {
-	db, err := OpenSearch()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
+func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarded bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -462,22 +463,28 @@ func updateSearch(results map[string]parsed, gone []string, discarded bool) erro
 		if _, err := tx.Exec("DELETE FROM docs"); err != nil {
 			return err
 		}
-	}
-	for p, r := range results {
-		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
+	} else {
+		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY)"); err != nil {
 			return err
 		}
+		for _, p := range slices.AppendSeq(slices.Clone(gone), maps.Keys(results)) {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?)", p); err != nil {
+				return err
+			}
+		}
+		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+	for p, r := range results {
 		if r.session != nil {
 			s := r.session
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
 				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
 			}
-		}
-	}
-	for _, p := range gone {
-		if _, err := tx.Exec("DELETE FROM docs WHERE path = ?", p); err != nil {
-			return err
 		}
 	}
 	return tx.Commit()
@@ -505,18 +512,6 @@ func MeaningfulWords(query string) []string {
 	return out
 }
 
-func ftsQuery(query string) string {
-	var parts []string
-	for _, w := range wordPattern.FindAllString(strings.ToLower(query), -1) {
-		if len(w) == 1 {
-			parts = append(parts, `"`+w+`"`)
-		} else {
-			parts = append(parts, `"`+w+`"*`)
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
 func QueryPairs(db *sql.DB, query string, args ...any) ([][2]string, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -541,7 +536,7 @@ type scored struct {
 }
 
 func matches(db *sql.DB, query string) ([]scored, bool, error) {
-	match := ftsQuery(query)
+	match := joined(phrasesOf(query), " ")
 	if match == "" {
 		return nil, false, nil
 	}
@@ -604,20 +599,6 @@ func banded(hits []scored, mtime map[string]float64) []string {
 		paths[i] = r.path
 	}
 	return paths
-}
-
-func Snippet(db *sql.DB, path, query, before, after string) string {
-	match := ftsQuery(query)
-	if match == "" || db == nil {
-		return ""
-	}
-	var text string
-	err := db.QueryRow("SELECT snippet(docs, 2, ?, ?, '…', 10) FROM docs WHERE docs MATCH ? AND path = ?",
-		before, after, match, path).Scan(&text)
-	if err != nil {
-		return ""
-	}
-	return strings.Join(strings.Fields(text), " ")
 }
 
 func Narrow(query string, rows []Row) (string, []Row) { return narrow(query, rows, false) }

@@ -15,6 +15,15 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Changed
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
+- Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
+- `search --json` takes about as long as plain `search`, even for a word in nearly every session. On 600 generated sessions, `search --json the` took 13 seconds and now takes under a quarter of a second. `ask` also prepares its question faster, and the preview finds the passage that matched sooner in long sessions.
+- In a conversation longer than about 2,000 characters, `match` can show a different passage than before. It comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common. Shorter conversations show the same passage as before.
+
+### Fixed
+
+- The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
+- A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
+- `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
 
 ## [0.10.0] - 2026-10-10
 
