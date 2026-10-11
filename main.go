@@ -26,15 +26,17 @@ import (
 	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/open"
+	"github.com/adammiribyan/superfind/internal/release"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
 	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/upgrade"
 )
 
-const version = "0.11.0"
+var version = "0.11.0"
 
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
@@ -73,6 +75,9 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print the sessions that made a commit, or that edited a file
   superfind index         build or refresh the index
   superfind label         mark sessions waiting on you (needs a TypeSafe key)
+  superfind upgrade [--check] [--version X] [--rollback]
+                          install the newest release in place of this one; a copy from
+                          Homebrew, go install, or a clone is left alone, with its command
   superfind help COMMAND  explain one command
   superfind --version
 
@@ -296,13 +301,31 @@ Mark sessions waiting on you or unfinished, using Jev. Needs a TypeSafe key in T
 or ~/.config/superfind/env. It sends the ending of each recent session that changed to TypeSafe.
 The picker runs this in the background when it opens.
 `,
+	"upgrade": `superfind upgrade [--check] [--version X] [--rollback]
+
+Install the newest superfind release in place of this one, when the install script put it here
+(curl -fsSL https://superfind.dev/install | sh). It downloads the release from GitHub, checks
+that its checksums.txt is signed with the superfind release key and that the archive matches
+it, runs the new superfind once, then replaces the installed file and keeps the old one. A copy
+that Homebrew, go install, or a clone's install.sh put here is left alone: upgrade prints the
+command that updates it instead, and changes nothing.
+
+  --check         say whether a newer release is out, and how to get it; changes nothing
+  --version X     install release X instead of the newest one, also to go back to an older
+                  one; releases before 0.11.1 aren't signed, so upgrade won't install them
+  --rollback      swap the installed superfind with the copy the last upgrade replaced; a
+                  second --rollback swaps them back
+
+The three options are separate: use one at a time. Exit 0 when there was nothing to do; exit 1
+when a check failed, and then nothing was installed.
+`,
 	"version": `superfind --version
 
 Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -887,6 +910,69 @@ func runBlame(args []string) {
 	}
 }
 
+func runUpgrade(args []string) {
+	check, rollback := false, false
+	var pinned *release.Version
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--check":
+			check = true
+		case arg == "--rollback":
+			rollback = true
+		case arg == "--version" || strings.HasPrefix(arg, "--version="):
+			value, inline := strings.CutPrefix(arg, "--version=")
+			if !inline {
+				if i+1 == len(args) {
+					usageError("superfind upgrade: --version needs a release, like --version 0.12.0. See superfind help upgrade.")
+				}
+				i++
+				value = args[i]
+			}
+			v, err := release.ParseVersion(value)
+			if err != nil {
+				usageError("superfind upgrade: " + err.Error() + ". See superfind help upgrade.")
+			}
+			pinned = &v
+		default:
+			usageError("superfind upgrade: there is no " + arg + " option. See superfind help upgrade.")
+		}
+	}
+	if (check && rollback) || (pinned != nil && (check || rollback)) {
+		usageError("superfind upgrade: --check, --rollback, and --version are separate; use one at a time. See superfind help upgrade.")
+	}
+	current, err := release.ParseVersion(version)
+	if err != nil {
+		fail("superfind upgrade: this build calls itself " + version + ", which is not a release version, so it can't be upgraded in place")
+	}
+	facts, err := upgrade.Gather()
+	if err != nil {
+		fail("superfind upgrade: can't tell where this superfind is: " + err.Error())
+	}
+	u := upgrade.Upgrader{Current: current, Install: upgrade.Detect(facts), Source: release.DefaultSource()}
+	if term.IsTerminal(os.Stderr.Fd()) {
+		u.Progress = func(line string) { fmt.Fprintln(stderr, line) }
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	var message string
+	switch {
+	case check:
+		message, err = u.Check(ctx)
+	case rollback:
+		message, err = u.Rollback(ctx)
+	default:
+		message, err = u.To(ctx, pinned)
+	}
+	interrupted := ctx.Err() != nil
+	stop()
+	if interrupted {
+		exit(130)
+	}
+	if err != nil {
+		fail("superfind upgrade: " + err.Error())
+	}
+	fmt.Fprintln(stdout, message)
+}
+
 var output *bufio.Writer
 
 func exit(code int) {
@@ -969,6 +1055,7 @@ func atMost(rows []session.Row, limit int) []session.Row {
 
 func main() {
 	typesafe.UserAgent = "superfind/" + version
+	release.UserAgent = typesafe.UserAgent
 	if render.NoColor {
 		stdout = &colorprofile.Writer{Forward: os.Stdout, Profile: colorprofile.Ascii}
 		stderr = &colorprofile.Writer{Forward: os.Stderr, Profile: colorprofile.Ascii}
@@ -1139,6 +1226,8 @@ func run(args []string) {
 		runHandoff(args[1:])
 	case "blame":
 		runBlame(args[1:])
+	case "upgrade":
+		runUpgrade(args[1:])
 	case "pick":
 		resume := false
 		for _, arg := range args[1:] {
@@ -1171,7 +1260,7 @@ func asksForHelp(args []string) bool {
 		switch args[i] {
 		case "--":
 			return false
-		case "--query", "--width", "--limit":
+		case "--query", "--width", "--limit", "--version":
 			i++
 		case "--help", "-h":
 			return true

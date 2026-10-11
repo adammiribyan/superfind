@@ -7,6 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `superfind upgrade` installs the newest release in place of a copy that the install script put in `~/.local/bin`, after checking that the release's `checksums.txt` is signed with the superfind release key and that the archive matches it. It keeps the copy it replaced, and `superfind upgrade --rollback` swaps back to it; a second `--rollback` swaps forward again. `--check` says whether a newer release is out and changes nothing, and `--version X` installs that release, also to go back to an older one. A copy from Homebrew, `go install`, or a clone is left alone: upgrade prints the command that updates it. The install script now writes a receipt, `~/.local/state/superfind/install.json`, so upgrade knows which copy it may replace.
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
 - `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
 
