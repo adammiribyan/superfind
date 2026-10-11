@@ -12,6 +12,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - `superfind show` holds only the turns it prints, instead of the whole session, and masks secrets only in the text it measures. The output is the same as before. On test sessions, `show --tail 10 --json` peaked at 0.30 GB instead of 1.1 GB on a 561 MB session, most of it the search index, and took 2 s instead of 19 to 27 s on a 126 MB session that ends in one long agent run.
+- A session that ends in one long agent run no longer slows the index and the preview down with the run's length. On a 126 MB test session, the preview took 4 to 6 s instead of 18 to 23 s and peaked at 0.39 to 0.43 GB instead of 0.89 to 1.0 GB.
 
 ## [0.10.0] - 2026-10-10
 
