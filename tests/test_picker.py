@@ -147,10 +147,14 @@ class PickerBehavior(unittest.TestCase):
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.open_picker(pick="pick --run")
         self.keys("Down", "Enter")
+        stderr = Path(f"{self.out}.stderr")
+        self.assertTrue(self.until(lambda: stderr.exists() and "Press Enter" in stderr.read_text()), "never asked for Enter")
+        self.assertFalse(Path(f"{self.out}.code").exists(), "closed before the refusal could be read")
+        self.keys("Enter")
         self.assertEqual(self.result(), (1, ""))
-        self.assertEqual(Path(f"{self.out}.stderr").read_text(),
+        self.assertEqual(stderr.read_text(),
                          "superfind pick --run: Invoice layout is already open in another window. "
-                         "superfind pick --run doesn't start a second copy.\n")
+                         "superfind pick --run doesn't start a second copy.\nPress Enter to close.")
         self.assertFalse(Path(f"{self.out}.resumed").exists())
 
     def test_run_checks_again_for_a_session_opened_while_the_picker_was_up(self):
@@ -162,8 +166,11 @@ class PickerBehavior(unittest.TestCase):
         (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.keys("Down", "Enter")
+        stderr = Path(f"{self.out}.stderr")
+        self.assertTrue(self.until(lambda: stderr.exists() and "doesn't start a second copy" in stderr.read_text()),
+                        "the session opened while the picker was up was not refused")
+        self.keys("Enter")
         self.assertEqual(self.result()[0], 1)
-        self.assertIn("doesn't start a second copy", Path(f"{self.out}.stderr").read_text())
         self.assertFalse(Path(f"{self.out}.resumed").exists())
 
     def three_sessions(self):

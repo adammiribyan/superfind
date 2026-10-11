@@ -97,7 +97,11 @@ keybind = super+shift+o=text:\x18c
 <details>
 <summary>Open with Super-Shift-Ctrl-F on Omarchy</summary>
 
-The install script adds the key to your Hyprland bindings, or says what to add when the key is already taken. Run `hyprctl reload` to use it right away.
+The install script adds this to your Hyprland bindings, or says what to add when the key is already taken. Run `hyprctl reload` to use it right away.
+
+```text
+o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui superfind pick --run")
+```
 
 </details>
 

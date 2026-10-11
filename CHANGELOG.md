@@ -7,7 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
-- On Omarchy, the install script binds Super-Shift-Ctrl-F to open superfind in a new terminal, and leaves out the Ghostty key, which Hyprland would take first. It works for the curl install too. `superfind pick --run` resumes the chosen session itself, for a terminal with no shell to hand the command to, and refuses a session an agent already has open, as `superfind last` does.
+- On Omarchy, the install script binds Super-Shift-Ctrl-F to open superfind in a new terminal, and leaves out the Ghostty key there. It works for the curl install too. `superfind pick --run` resumes the chosen session itself, for a terminal with no shell to hand the command to, and refuses a session an agent already has open, as `superfind last` does.
 - In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
 - `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.

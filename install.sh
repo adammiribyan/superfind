@@ -85,20 +85,25 @@ main() {
     echo "note: another superfind is installed at $other"
   fi
 
-  omarchy="${OMARCHY_PATH:-$HOME/.local/share/omarchy}"
-  if [ -d "$omarchy" ]; then
+  omarchy=""
+  for dir in "${OMARCHY_PATH:-}" "$HOME/.local/share/omarchy" /usr/share/omarchy; do
+    if [ -n "$dir" ] && [ -d "$dir" ]; then
+      omarchy="$dir"
+      break
+    fi
+  done
+  if [ -n "$omarchy" ]; then
     hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
-    launch="omarchy-launch-tui $bin/superfind pick --run"
+    launch="omarchy-launch-tui $bin/superfind pick --run" unsafe=""
     case "$bin" in
       *[\"\'\\\$\`]*) launch="" ;;
-      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' pick --run" ;;
+      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' pick --run" unsafe=1 ;;
     esac
     if [ -f "$hypr/bindings.conf" ] && [ ! -f "$hypr/bindings.lua" ]; then
       bindings="$hypr/bindings.conf" chord='SUPER SHIFT CTRL, F,' binding="bindd = SUPER SHIFT CTRL, F, Superfind, exec, $launch"
     else
       bindings="$hypr/bindings.lua" chord='"SUPER + SHIFT + CTRL + F"' binding="o.bind(\"SUPER + SHIFT + CTRL + F\", \"Superfind\", \"$launch\")"
     fi
-    case "$bin" in *[!A-Za-z0-9/._-]*) unsafe=1 ;; *) unsafe="" ;; esac
     if [ -z "$launch" ]; then
       echo "to open superfind with Super-Shift-Ctrl-F, bind that key in $bindings to run $bin/superfind pick --run through omarchy-launch-tui"
     elif grep -qF "$binding" "$bindings" 2>/dev/null; then
@@ -143,8 +148,8 @@ main() {
   if [ -f "$ghostty_xdg" ] || [ -f "$ghostty_mac" ] || [ -d /Applications/Ghostty.app ] || command -v ghostty >/dev/null; then
     if [ -f "$ghostty_xdg" ] || [ ! -f "$ghostty_mac" ]; then ghostty="$ghostty_xdg"; else ghostty="$ghostty_mac"; fi
     keybind='keybind = super+shift+o=text:\x18c'
-    if [ -d "$omarchy" ]; then
-      echo "skipped the Ghostty keybind: on Omarchy, Hyprland takes Super keys before Ghostty sees them"
+    if [ -n "$omarchy" ]; then
+      echo "skipped the Ghostty keybind: on Omarchy, superfind gets a Hyprland key instead"
     elif ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
       mkdir -p "$(dirname "$ghostty")"
       printf '\n%s\n' "$keybind" >> "$ghostty"

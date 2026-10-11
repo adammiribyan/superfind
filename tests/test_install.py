@@ -32,7 +32,7 @@ class Installer(unittest.TestCase):
         path.write_text(text)
         return path
 
-    def test_on_omarchy_4_a_second_run_leaves_one_superfind_binding(self):
+    def test_on_omarchy_a_second_run_leaves_one_superfind_binding_in_bindings_lua(self):
         path = self.omarchy("bindings.lua")
         self.install("bash")
         result = self.install("bash")
@@ -41,7 +41,7 @@ class Installer(unittest.TestCase):
                          f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n')
         self.assertNotIn("Super-Shift-Ctrl-F", result.stdout)
 
-    def test_on_omarchy_3_the_binding_goes_in_bindings_conf(self):
+    def test_on_omarchy_with_only_bindings_conf_the_binding_goes_there(self):
         path = self.omarchy("bindings.conf", "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n")
         result = self.install("bash")
         self.assertEqual(path.read_text(), "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n\n"
@@ -74,6 +74,16 @@ class Installer(unittest.TestCase):
         self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, bind that key in {path} to run "
                       f"{self.home}/.local/bin/superfind pick --run through omarchy-launch-tui\n", result.stdout)
 
+    def test_omarchy_is_found_through_omarchy_path_alone(self):
+        packaged = self.home / "usr-share-omarchy"
+        packaged.mkdir()
+        bindings = self.home / ".config" / "hypr" / "bindings.lua"
+        bindings.parent.mkdir(parents=True)
+        bindings.write_text("")
+        result = self.install("bash", OMARCHY_PATH=str(packaged))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('o.bind("SUPER + SHIFT + CTRL + F", "Superfind",', bindings.read_text())
+
     def test_on_omarchy_ghostty_gets_no_super_keybind(self):
         self.omarchy("bindings.lua")
         ghostty = self.home / ".config" / "ghostty" / "config"
@@ -81,7 +91,7 @@ class Installer(unittest.TestCase):
         ghostty.write_text("theme = dark\n")
         result = self.install("bash")
         self.assertEqual(ghostty.read_text(), "theme = dark\n")
-        self.assertIn("skipped the Ghostty keybind: on Omarchy, Hyprland takes Super keys before Ghostty sees them\n", result.stdout)
+        self.assertIn("skipped the Ghostty keybind: on Omarchy, superfind gets a Hyprland key instead\n", result.stdout)
 
     def test_on_omarchy_an_unknown_shell_still_gets_the_binding(self):
         path = self.omarchy("bindings.lua", "")

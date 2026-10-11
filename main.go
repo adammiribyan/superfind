@@ -108,7 +108,8 @@ The shell setup from superfind init runs that command for you.
   --run           run the command in place of superfind instead of printing it, for a terminal
                   with no shell to hand it to, such as one a desktop keybinding opens. The exit
                   status is then the agent's. A session an agent already has open is refused,
-                  as superfind last does.
+                  as superfind last does, and in a terminal superfind waits for Enter so you can
+                  read why.
 
 Type filters in the search box to narrow the list, such as in:here, branch:main,
 after:yesterday, or agent:codex; superfind help search lists them all.
@@ -466,9 +467,13 @@ func runLast(args []string) {
 
 func refuseOpen(command string, r session.Row) {
 	if r.Open != nil {
-		fail("superfind " + command + ": " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
-			". superfind " + command + " doesn't start a second copy.")
+		fail(alreadyOpen(command, r))
 	}
+}
+
+func alreadyOpen(command string, r session.Row) string {
+	return "superfind " + command + ": " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
+		". superfind " + command + " doesn't start a second copy."
 }
 
 func resumeHere(r session.Row) {
@@ -476,14 +481,21 @@ func resumeHere(r session.Row) {
 	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
 		r.Open = &state
 	}
-	refuseOpen("pick --run", r)
+	if r.Open != nil {
+		fmt.Fprintln(stderr, alreadyOpen("pick --run", r))
+		if term.IsTerminal(os.Stdin.Fd()) {
+			fmt.Fprint(stderr, "Press Enter to close.")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
+		exit(1)
+	}
 	command := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID)
 	fmt.Fprintln(stdout, "Resuming "+render.Bold+handoffTitle(r)+render.Reset)
 	if err := output.Flush(); err != nil {
-		fail("superfind pick: couldn't write the output: " + err.Error())
+		fail("superfind pick --run: couldn't write the output: " + err.Error())
 	}
 	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
-	fail("superfind pick: couldn't run " + command + ": " + err.Error())
+	fail("superfind pick --run: couldn't run " + command + ": " + err.Error())
 }
 
 func openWhere(o open.State) string {
