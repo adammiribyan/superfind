@@ -7,36 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/adammiribyan/superfind/internal/config"
 )
 
 const jevURL = "https://api.typesafe.ai/v1/systemone"
 
-var envKey = regexp.MustCompile(`(?m)^\s*(?:export\s+)?TYPESAFE_API_KEY\s*=\s*["']?([^"'\s]+)`)
-
 func Key() string {
-	if value, set := os.LookupEnv("TYPESAFE_API_KEY"); set {
-		return value
-	}
-	var places []string
-	if exe, err := os.Executable(); err == nil {
-		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			places = append(places, filepath.Join(filepath.Dir(real), ".env"), filepath.Join(filepath.Dir(filepath.Dir(real)), ".env"))
-		}
-	}
-	home, _ := os.UserHomeDir()
-	places = append(places, filepath.Join(home, ".config", "superfind", "env"))
-	for _, p := range places {
-		if raw, err := os.ReadFile(p); err == nil {
-			if m := envKey.FindSubmatch(raw); m != nil {
-				return string(m[1])
-			}
-		}
-	}
-	return ""
+	key, _ := config.Lookup("TYPESAFE_API_KEY")
+	return key
 }
 
 var UserAgent string
