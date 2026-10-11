@@ -72,6 +72,8 @@ class TelemetryBehavior(unittest.TestCase):
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PATH": "/usr/bin:/bin",
                     "TERM": "xterm-256color", "NO_COLOR": "1", "TYPESAFE_API_KEY": "", "PWD": "/tmp",
                     "SUPERFIND_CHECKIN_URL": self.worker.url + "/v1/checkin"}
+        self.state.mkdir(parents=True)
+        (self.state / "install.json").write_text(json.dumps({"method": "script", "path": str(Path(SUPERFIND).resolve())}))
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         self.version = subprocess.run([str(SUPERFIND), "--version"], capture_output=True, text=True).stdout.split()[1]
 
@@ -159,7 +161,7 @@ class TelemetryBehavior(unittest.TestCase):
                          ("/v1/checkin", f"superfind/{self.version}", "application/json"))
         body = json.loads(sent[0]["body"])
         self.assertEqual(sorted(body), ["arch", "events", "id", "method", "os", "schema", "version"])
-        self.assertEqual((body["schema"], body["version"], body["events"], body["method"]), (1, self.version, [], "unknown"))
+        self.assertEqual((body["schema"], body["version"], body["events"], body["method"]), (1, self.version, [], "script"))
         self.assertEqual(body["id"], (self.state / "id").read_text().strip())
         self.assertRegex(body["id"], r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
         check = self.check()
@@ -181,7 +183,7 @@ class TelemetryBehavior(unittest.TestCase):
         self.told()
         self.superfind("search", "ledger")
         before = self.state_tree()
-        self.assertEqual([t[0] for t in before], ["shown", "shown/telemetry", "shown/version"])
+        self.assertEqual([t[0] for t in before], ["install.json", "shown", "shown/telemetry", "shown/version"])
         for args in (("search", "ledger"), ("search", "--json", "ledger"), ("show", uid(1)), ("handoff", uid(1), "ledger"),
                      ("last",), ("index",)):
             result = self.superfind(*args)
@@ -196,7 +198,7 @@ class TelemetryBehavior(unittest.TestCase):
         self.superfind("checkin")
         self.queue("1760190000000000000-100.json")
         self.assertEqual(len(self.worker.requests), 1)
-        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["check.json", "check.lock", "events", "id", "shown"])
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["check.json", "check.lock", "events", "id", "install.json", "shown"])
         (self.home / ".config" / "superfind").mkdir(parents=True)
         (self.home / ".config" / "superfind" / "env").write_text("TYPESAFE_API_KEY=abc\n")
 
@@ -206,7 +208,7 @@ class TelemetryBehavior(unittest.TestCase):
                          "install id, queued events, and last check were deleted. superfind sends nothing and doesn't check "
                          "for updates; superfind upgrade --check still works when you run it.\n")
         self.assertEqual((self.home / ".config" / "superfind" / "env").read_text(), "TYPESAFE_API_KEY=abc\nSUPERFIND_TELEMETRY=off\n")
-        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["check.lock", "shown"])
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["check.lock", "install.json", "shown"])
         status = self.superfind("telemetry")
         self.assertEqual(status.stdout, 'Telemetry is off because SUPERFIND_TELEMETRY="off" is in ~/.config/superfind/env. '
                          "superfind sends nothing and doesn't check for updates; superfind upgrade --check still works when "
@@ -327,7 +329,7 @@ class TelemetryBehavior(unittest.TestCase):
                          "gets back the newest release's version:")
         self.assertEqual(json.loads(lines[1]), {"schema": 1, "id": "", "version": self.version, "os": os.uname().sysname.lower(),
                                                 "arch": {"x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[os.uname().machine],
-                                                "method": "unknown", "events": []})
+                                                "method": "script", "events": []})
         self.assertEqual(lines[2:], ["Install id: none yet; a random one is made at the first check-in.",
                                      "Next check-in: the next time you open the picker.", PROMISE, HOW_TO_STOP])
         self.assertTrue((self.state / "shown" / "telemetry").exists())
