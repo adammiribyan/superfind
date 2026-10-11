@@ -28,6 +28,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/ghostty"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
@@ -195,6 +196,9 @@ type picker struct {
 	askedFor    string
 	explained   map[string]string
 	message     string
+	confirming  string
+	inTmux      bool
+	focus       func(open.State) bool
 
 	asks     *asks
 	reported *atomic.Bool
@@ -245,7 +249,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{}, reported: &atomic.Bool{},
+		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", focus: ghostty.Focus,
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
@@ -292,7 +296,7 @@ func (m picker) layout() layout {
 	l := layout{listWidth: m.width, compact: m.compact(), search: 3, message: 1}
 	if l.compact {
 		l.search = 1
-		if m.message == "" {
+		if m.shownMessage() == "" {
 			l.message = 0
 		}
 	}
@@ -526,6 +530,9 @@ func (m picker) reannotate() (tea.Model, tea.Cmd) {
 	if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
 		m.cursor = i
 	}
+	if !m.asksToConfirm() {
+		m.confirming = ""
+	}
 	return m.afterMove()
 }
 
@@ -668,9 +675,16 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.explained = msg.passages
 			return m.loadPreview()
 		}
+	case tea.PasteMsg:
+		m.confirming = ""
 	case tea.KeyPressMsg:
+		confirming := m.asksToConfirm()
+		m.confirming = ""
 		switch msg.String() {
 		case "esc":
+			if confirming {
+				return m, nil
+			}
 			if m.phase() != searching {
 				m.search()
 				return m.afterMove()
@@ -681,9 +695,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
-			m.chosen = m.focused()
-			m.quitting = true
-			return m, tea.Quit
+			return m.enter(confirming)
 		case "up", "ctrl+p":
 			m.cursor--
 			return m.afterMove()
@@ -719,6 +731,59 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m.editInput(msg)
+}
+
+const confirmCopy = "Open in another window; Enter again resumes a copy. Esc goes back."
+
+func freshest(cached, fresh *open.State) *open.State {
+	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
+		kept := *fresh
+		kept.Tmux = cached.Tmux
+		return &kept
+	}
+	return fresh
+}
+
+func (m picker) asksToConfirm() bool {
+	r := m.focused()
+	return r != nil && r.Open != nil && r.Path == m.confirming
+}
+
+func (m picker) shownMessage() string {
+	if m.asksToConfirm() {
+		return confirmCopy
+	}
+	return m.message
+}
+
+func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
+	r := m.focused()
+	if r == nil {
+		m.quitting = true
+		return m, tea.Quit
+	}
+	var fresh *open.State
+	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
+		fresh = &state
+	}
+	chosen := *r
+	chosen.Open = freshest(r.Open, fresh)
+	reach := open.NotOpen
+	if !confirmed {
+		reach = open.Reaching(chosen.Open, m.inTmux, m.focus)
+	}
+	switch reach {
+	case open.Focused:
+		m.quitting = true
+		return m, tea.Quit
+	case open.Elsewhere:
+		m.shown = slices.Clone(m.shown)
+		m.shown[m.cursor].Open = chosen.Open
+		m.confirming = r.Path
+		return m, nil
+	}
+	m.chosen, m.quitting = &chosen, true
+	return m, tea.Quit
 }
 
 func (m picker) editInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -846,19 +911,26 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) hints() [][2]string {
+	enter, r := "resume", m.focused()
+	switch {
+	case m.asksToConfirm():
+		enter = "resume a copy"
+	case r != nil && r.Open != nil && r.Open.Tmux != nil && m.inTmux:
+		enter = "go to it"
+	}
 	switch {
 	case m.phase() == asking:
 		return [][2]string{{"esc", "stop asking"}}
 	case m.phase() == asked && len(m.shown) == 0:
 		return [][2]string{{"esc", "back to search"}}
 	case m.phase() == asked:
-		return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"esc", "back to search"}}
+		return [][2]string{{"enter", enter}, {"tab", "view"}, {"esc", "back to search"}}
 	case len(m.all) == 0:
 		return [][2]string{{"esc", "quit"}}
 	case len(m.shown) == 0:
 		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
-	return [][2]string{{"enter", "resume"}, {"tab", "view"}, {"ctrl-r", "ask"}}
+	return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}}
 }
 
 var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "tab": 4}
@@ -944,7 +1016,7 @@ func (m picker) View() tea.View {
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
 	if l.message > 0 {
-		column = append(column, ansi.Truncate(muted.Render(" "+fitMessage(m.message, l.listWidth-1)), l.listWidth, "…"))
+		column = append(column, ansi.Truncate(muted.Render(" "+fitMessage(m.shownMessage(), l.listWidth-1)), l.listWidth, "…"))
 	}
 	cols, words := m.widths.Fit(l.listWidth), m.matchWords()
 	for i := m.offset; i < m.offset+l.listHeight; i++ {

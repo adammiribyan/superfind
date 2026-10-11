@@ -70,6 +70,8 @@ Try a description like `where we fixed duplicate charges`, then press **Ctrl-R**
 
 Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`. Use `is:unfinished` for sessions that stopped partway. Use `is:open` for sessions an agent has open right now; their rows say **open**.
 
+Press Enter on a session that's already open to go to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
+
 <details>
 <summary>Faster search and session labels with TypeSafe</summary>
 

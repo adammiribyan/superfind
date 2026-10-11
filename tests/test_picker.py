@@ -17,10 +17,12 @@ import time
 import unittest
 from pathlib import Path
 
-from test_superfind import (SUPERFIND, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, colors_in,
+from test_superfind import (ANSI, SUPERFIND, claude, codex_call, codex_meta, codex_output, codex_reply, codex_user, colors_in,
                             grok_reply, grok_user, line, serve, tool, uid, user)
 
 
+ASK_FIRST = "Open in another window; Enter again resumes a copy. Esc goes back."
+GHOSTTY = 'if application "Ghostty" is running then tell application "Ghostty" to '
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
 CELL_GAP = r" {2,}"
 
@@ -39,8 +41,12 @@ class PickerBehavior(unittest.TestCase):
         self.session_name = f"superfind-test-{os.getpid()}-{id(self)}"
         self.clock = time.time() - 3 * 86400
         self.here = Path("/")
+        no_ghostty = self.home / "no-ghostty"
+        no_ghostty.mkdir()
+        (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
+        (no_ghostty / "osascript").chmod(0o755)
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
-                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
+                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color"}
 
     def tearDown(self):
         tmux("kill-session", "-t", self.session_name)
@@ -119,7 +125,7 @@ class PickerBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
 
     def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
         self.fake_claude()
@@ -138,7 +144,7 @@ class PickerBehavior(unittest.TestCase):
         self.assertEqual(self.result(), (1, ""))
         self.assertFalse(Path(f"{self.out}.resumed").exists())
 
-    def test_run_never_starts_a_second_copy_of_a_session_an_agent_has_open(self):
+    def test_run_asks_before_a_second_copy_of_a_session_an_agent_has_open(self):
         self.fake_claude()
         self.three_sessions()
         sessions = self.home / ".claude" / "sessions"
@@ -147,15 +153,17 @@ class PickerBehavior(unittest.TestCase):
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.open_picker(pick="pick --run")
         self.keys("Down", "Enter")
-        stderr = Path(f"{self.out}.stderr")
-        self.assertTrue(self.until(lambda: stderr.exists() and "Press Enter" in stderr.read_text()), "never asked for Enter")
-        self.assertFalse(Path(f"{self.out}.code").exists(), "closed before the refusal could be read")
-        self.keys("Enter")
-        self.assertEqual(self.result(), (1, ""))
-        self.assertEqual(stderr.read_text(),
-                         "superfind pick --run: Invoice layout is already open in another window. "
-                         "superfind pick --run doesn't start a second copy.\nPress Enter to close.")
+        self.wait_for(ASK_FIRST)
+        self.assertFalse(Path(f"{self.out}.code").exists(), "closed instead of asking first")
         self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.keys("Escape")
+        self.assertFalse(Path(f"{self.out}.code").exists(), "Esc left the picker instead of going back")
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\x1b[2m · already open in another window\x1b[m\n"))
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "Enter again did not resume a copy")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
 
     def test_run_checks_again_for_a_session_opened_while_the_picker_was_up(self):
         self.fake_claude()
@@ -166,12 +174,8 @@ class PickerBehavior(unittest.TestCase):
         (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.keys("Down", "Enter")
-        stderr = Path(f"{self.out}.stderr")
-        self.assertTrue(self.until(lambda: stderr.exists() and "doesn't start a second copy" in stderr.read_text()),
-                        "the session opened while the picker was up was not refused")
-        self.keys("Enter")
-        self.assertEqual(self.result()[0], 1)
-        self.assertFalse(Path(f"{self.out}.resumed").exists())
+        self.wait_for(ASK_FIRST)
+        self.assertFalse(Path(f"{self.out}.resumed").exists(), "the session opened while the picker was up was resumed")
 
     def three_sessions(self):
         self.session("old", "Ledger migration", user("migrate the ledger tables to the new schema"), tool("Bash"),
@@ -368,7 +372,7 @@ class PickerBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text("#!/bin/sh\ncat > /dev/null\necho '{\"result\": \"[0]\"}'\n")
         (stub / "claude").chmod(0o755)
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
 
     def two_ledger_sessions(self):
         self.session("other", "Invoice layout", user("wrap names"), tool("Edit"), claude("Wrapped."))
@@ -481,7 +485,7 @@ class PickerBehavior(unittest.TestCase):
         status = self.home / ".cache" / "superfind" / "status.json"
         status.parent.mkdir(parents=True, exist_ok=True)
         status.write_text(json.dumps({str(path): {"mtime_ns": st.st_mtime_ns, "size": st.st_size, "status": "waiting", "p": 0.97}}))
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.open_picker()
         self.keys("is:waiting invoice names", "C-r")
         self.wait_for("1/3")
@@ -893,7 +897,7 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").write_text(f"#!/bin/sh\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
         (stub / "claude").chmod(0o755)
         self.three_sessions()
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
@@ -934,7 +938,7 @@ class PickerBehavior(unittest.TestCase):
         (stub / "claude").write_text(f"#!/bin/sh\necho $PPID > {pids}.parent\necho $$ >> {pids}\nsleep 30 &\necho $! >> {pids}\nwait\n")
         (stub / "claude").chmod(0o755)
         self.three_sessions()
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.addCleanup(lambda: [subprocess.run(["kill", "-9", pid], capture_output=True)
                                  for pid in (pids.read_text().split() if pids.exists() else [])])
         self.open_picker(linger=True)
@@ -1072,7 +1076,7 @@ class PickerBehavior(unittest.TestCase):
         stub.mkdir()
         (stub / "claude").write_text(f"#!/bin/sh\ncat > /dev/null\ntouch {self.out}.asked\necho '{{\"result\": \"[0]\"}}'\n")
         (stub / "claude").chmod(0o755)
-        self.env["PATH"] = f"{stub}:/usr/bin:/bin"
+        self.env["PATH"] = f"{stub}:{self.env['PATH']}"
         self.three_sessions()
         self.open_picker()
         self.keys("ledger after:4")
@@ -1328,6 +1332,388 @@ class QuietPicker(PtyPicker):
 
 class QuietPickerWithoutColor(QuietPicker):
     EXTRA_ENV = {"NO_COLOR": "1"}
+
+
+class EnterOnAnOpenSession(unittest.TestCase):
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.home, True)
+        self.sockets = tempfile.mkdtemp(dir="/tmp", prefix="sfd")
+        self.addCleanup(shutil.rmtree, self.sockets, True)
+        self.tmux_env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+        self.tmux_env["TMUX_TMPDIR"] = self.sockets
+        self.out = self.home / "out"
+        self.stub = self.home / "stub"
+        self.stub.mkdir()
+        (self.stub / "osascript").write_text(f"""#!/bin/sh
+printf '%s\\n' "$2" >> {self.stub}/told
+[ "$(/bin/cat {self.stub}/mode)" = sluggish ] && /bin/sleep 0.6
+case "$2" in
+'{GHOSTTY}get tty of every terminal')
+    case "$(/bin/cat {self.stub}/mode)" in
+    error) echo "execution error: Ghostty got an error: Can't get tty of every terminal. (-1728)" >&2; exit 1 ;;
+    slow) /bin/sleep 30 & echo $! > {self.stub}/straggler; /bin/sleep 3 ;;
+    esac
+    /bin/cat {self.stub}/ttys ;;
+'{GHOSTTY}focus (first terminal whose tty is "'*) printf '%s\\n' "$2" >> {self.stub}/focused ;;
+*) echo "osascript: a script that could start Ghostty" >&2; exit 1 ;;
+esac
+""")
+        (self.stub / "osascript").chmod(0o755)
+        self.osascript("error", "")
+        projects = self.home / ".claude" / "projects" / "-tmp"
+        projects.mkdir(parents=True)
+        transcript = projects / f"{uid(1)}.jsonl"
+        transcript.write_text("\n".join([user("migrate the ledger tables"), tool("Bash"), claude("Migrated."),
+                                           line(type="ai-title", aiTitle="Ledger migration")]) + "\n")
+        os.utime(transcript, (time.time() - 86400, time.time() - 86400))
+
+    def tmux(self, *args):
+        return subprocess.run(["tmux", *args], capture_output=True, text=True, env=self.tmux_env, check=True).stdout
+
+    def osascript(self, mode, ttys):
+        (self.stub / "mode").write_text(mode)
+        (self.stub / "ttys").write_text(ttys + "\n")
+
+    def focused(self):
+        log = self.stub / "focused"
+        return log.read_text() if log.exists() else ""
+
+    def told(self):
+        log = self.stub / "told"
+        return log.read_text() if log.exists() else ""
+
+    def env(self, inside=None):
+        env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "TYPESAFE_API_KEY": "", "NO_COLOR": "1",
+               "PATH": f"{self.stub}:" + os.path.dirname(shutil.which("tmux")) + ":/usr/bin:/bin", "TERM": "xterm-256color",
+               "TMUX_TMPDIR": self.sockets, "PWD": "/tmp"}
+        if inside:
+            env["TMUX"] = inside
+        return env
+
+    def register(self, pid):
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir(exist_ok=True)
+        (sessions / f"{pid}.json").write_text(json.dumps(
+            {"pid": int(pid), "sessionId": uid(1), "cwd": "/tmp", "startedAt": int(time.time() * 1000), "status": "idle"}))
+
+    def in_a_ghostty_tab(self):
+        ghostty = self.home / "Ghostty" / "ghostty"
+        ghostty.parent.mkdir()
+        ghostty.symlink_to(shutil.which("dash") or "/bin/sh")
+        pid_file, tty_file = self.home / "agent.pid", self.home / "agent.tty"
+        child, terminal = pty.fork()
+        if child == 0:
+            os.execve(str(ghostty), [str(ghostty), "-c", f"tty > {tty_file}; sleep 300 & echo $! > {pid_file}; wait"],
+                      {"PATH": "/usr/bin:/bin"})
+        threading.Thread(target=self.drain, args=(terminal,), daemon=True).start()
+        self.addCleanup(os.waitpid, child, 0)
+        self.addCleanup(os.kill, child, signal.SIGKILL)
+        deadline = time.time() + 5
+        while time.time() < deadline and not (pid_file.exists() and pid_file.read_text().strip() and tty_file.exists()):
+            time.sleep(0.05)
+        agent = int(pid_file.read_text())
+        self.addCleanup(os.kill, agent, signal.SIGKILL)
+        self.register(agent)
+        other, other_tty = os.openpty()
+        self.addCleanup(os.close, other)
+        self.addCleanup(os.close, other_tty)
+        return tty_file.read_text().strip(), os.ttyname(other_tty)
+
+    def host(self):
+        self.tmux("new-session", "-d", "-s", "work", "-x", "140", "-y", "32", "exec sleep 300")
+        self.addCleanup(subprocess.run, ["tmux", "kill-server"], capture_output=True, env=self.tmux_env)
+
+    def open_elsewhere(self):
+        self.tmux("new-session", "-d", "-s", "work", "-x", "140", "-y", "32", "exec sleep 300")
+        self.addCleanup(subprocess.run, ["tmux", "kill-server"], capture_output=True, env=self.tmux_env)
+        self.tmux("new-window", "-d", "-t", "work:1", "exec sleep 300")
+        pid, pane = self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}\t#{pane_id}").strip().split("\t")
+        socket, server = self.tmux("display-message", "-p", "-t", "work:0", "#{socket_path}\t#{pid}").strip().split("\t")
+        self.register(pid)
+        return pane, f"{socket},{server},0"
+
+    def pick(self, inside):
+        env = self.env(inside)
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        assignments = " ".join(f"{k}='{v}'" for k, v in env.items())
+        command = f"env -i {assignments} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code; sleep 60"
+        self.tmux("respawn-pane", "-k", "-t", "work:0", command)
+        self.wait_for("Claude sessions")
+        self.keys("Ledger migration")
+        self.wait_for("Migrated.")
+
+    def screen(self):
+        return self.tmux("capture-pane", "-p", "-t", "work:0")
+
+    def wait_for(self, text, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if text in self.screen():
+                return
+            time.sleep(0.1)
+        self.fail(f"never saw {text!r} on screen:\n{self.screen()}")
+
+    def keys(self, *keys):
+        self.tmux("send-keys", "-t", "work:0", *keys)
+        time.sleep(0.4)
+
+    def result(self, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline and not Path(f"{self.out}.code").exists():
+            time.sleep(0.1)
+        return int(Path(f"{self.out}.code").read_text()), Path(f"{self.out}.stdout").read_text()
+
+    @staticmethod
+    def read_until_closed(terminal):
+        try:
+            while os.read(terminal, 4096):
+                pass
+        except OSError:
+            pass
+
+    @staticmethod
+    def drain(terminal):
+        try:
+            while os.read(terminal, 4096):
+                pass
+        except OSError:
+            pass
+        os.close(terminal)
+
+    def test_pick_inside_tmux_hands_the_shell_a_switch_to_the_agents_pane(self):
+        pane, inside = self.open_elsewhere()
+        self.pick(inside)
+        self.keys("Enter")
+        code, out = self.result()
+        title, command = out.splitlines()
+        self.assertEqual((code, command), (0, f"tmux switch-client -t '{pane}'"))
+        self.assertTrue(title.startswith("Ledger migration"), title)
+        self.assertIn(" · in tmux session work, window 1", title)
+
+    @unittest.skipUnless(shutil.which("bash"), "the shell setup runs the switch")
+    def test_enter_through_the_shell_setup_moves_an_attached_client_to_the_agents_pane(self):
+        pane, inside = self.open_elsewhere()
+        env = self.env(inside)
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        assignments = " ".join(f"{k}='{v}'" for k, v in env.items())
+        shell = f"eval \"$({SUPERFIND} init bash)\"; superfind; sleep 60"
+        self.tmux("respawn-pane", "-k", "-t", "work:0", f"env -i {assignments} {shutil.which('bash')} --norc --noprofile -c '{shell}'")
+        client, terminal = pty.fork()
+        if client == 0:
+            os.execvpe("tmux", ["tmux", "attach-session", "-t", "work:0"], {**self.tmux_env, "TERM": "xterm-256color"})
+        threading.Thread(target=self.drain, args=(terminal,), daemon=True).start()
+        self.addCleanup(os.waitpid, client, 0)
+        self.addCleanup(subprocess.run, ["tmux", "kill-server"], capture_output=True, env=self.tmux_env)
+        deadline = time.time() + 5
+        while time.time() < deadline and not self.tmux("list-clients", "-F", "#{pane_id}").strip():
+            time.sleep(0.1)
+        self.wait_for("Claude sessions")
+        self.keys("Ledger migration")
+        self.wait_for("Migrated.")
+        self.keys("Enter")
+        deadline = time.time() + 5
+        while time.time() < deadline and self.tmux("list-clients", "-F", "#{pane_id}").strip() != pane:
+            time.sleep(0.1)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{session_name} #{window_index} #{pane_id}").strip(),
+                         f"work 1 {pane}")
+
+    def test_enter_outside_tmux_asks_before_resuming_a_copy_and_esc_goes_back(self):
+        self.open_elsewhere()
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Escape")
+        self.assertNotIn(ASK_FIRST, self.screen())
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), "")
+
+    def test_enter_on_a_session_outside_ghostty_asks_first_even_when_a_ghostty_tab_shares_its_terminal(self):
+        self.open_elsewhere()
+        self.osascript("match", self.tmux("display-message", "-p", "-t", "work:1", "#{pane_tty}").strip())
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Escape")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), "")
+
+    def test_enter_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_hands_the_shell_nothing(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", f"{other}, {tty}")
+        self.host()
+        self.pick(None)
+        self.keys("Enter")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
+
+    def test_enter_switches_tabs_when_ghostty_answers_each_question_within_a_second(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("sluggish", f"{other}, {tty}")
+        self.host()
+        self.pick(None)
+        self.keys("Enter")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
+
+    def test_enter_when_no_ghostty_tab_has_the_sessions_terminal_asks_first_and_enter_again_resumes_a_copy(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", other)
+        self.host()
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Enter")
+        code, out = self.result()
+        title, command = ANSI.sub("", out).splitlines()
+        self.assertEqual((code, title), (0, "Ledger migration · already open in another window"))
+        self.assertTrue(command.endswith(f"claude --resume {uid(1)}"), command)
+        self.assertEqual(self.focused(), "")
+
+    def asks_first_within_a_second(self, mode):
+        tty, _ = self.in_a_ghostty_tab()
+        self.osascript(mode, tty)
+        self.host()
+        self.pick(None)
+        self.tmux("send-keys", "-t", "work:0", "Enter")
+        entered = time.time()
+        self.wait_for(ASK_FIRST, timeout=2.5)
+        self.assertLess(time.time() - entered, 1.5)
+        self.keys("Escape")
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), "")
+
+    def test_enter_asks_first_when_ghostty_cannot_list_its_terminals(self):
+        self.asks_first_within_a_second("error")
+
+    def test_enter_asks_first_within_a_second_when_ghostty_does_not_answer(self):
+        self.asks_first_within_a_second("slow")
+        straggler = int((self.stub / "straggler").read_text())
+        deadline = time.time() + 1
+        while time.time() < deadline and self.alive(straggler):
+            time.sleep(0.05)
+        if self.alive(straggler):
+            os.kill(straggler, signal.SIGKILL)
+            self.fail("a process osascript started outlived the second superfind gave it")
+
+    @staticmethod
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def last(self):
+        env = self.env()
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        result = subprocess.run([str(SUPERFIND), "last"], env=env, cwd="/tmp", stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        return result.returncode, result.stdout, result.stderr
+
+    def at_a_terminal(self, command, key):
+        env = self.env()
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        child, terminal = pty.fork()
+        if child == 0:
+            os.chdir("/tmp")
+            os.execve("/bin/sh", ["/bin/sh", "-c", command], env)
+        screen, sent = b"", key is None
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            ready, _, _ = select.select([terminal], [], [], 0.1)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(terminal, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            screen += chunk
+            if not sent and b"Esc cancels." in screen:
+                os.write(terminal, key)
+                sent = True
+        os.close(terminal)
+        _, status = os.waitpid(child, 0)
+        return os.waitstatus_to_exitcode(status), screen.decode(errors="replace")
+
+    def test_last_in_a_script_says_where_the_session_is_open_and_starts_no_copy(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", other)
+        self.assertEqual(self.last(), (1, "", "superfind last: Ledger migration is already open in another window. "
+                                              "superfind last doesn't start a second copy.\n"))
+        self.assertEqual(self.focused(), "")
+
+    def test_last_at_a_terminal_asks_first_and_only_enter_resumes_a_copy(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", other)
+        for key, want in ((b"\r", 0), (b"\x1b", 1)):
+            with self.subTest(key=key):
+                code, screen = self.at_a_terminal(f"{SUPERFIND} last > {self.out}.stdout", key)
+                self.assertIn("Ledger migration is open in another window. Enter resumes a copy; Esc cancels.", screen)
+                out = Path(f"{self.out}.stdout").read_text()
+                self.assertEqual(code, want, screen)
+                if want == 0:
+                    title, command = ANSI.sub("", out).splitlines()
+                    self.assertEqual(title, "Ledger migration · already open in another window")
+                    self.assertTrue(command.endswith(f"claude --resume {uid(1)}"), command)
+                else:
+                    self.assertEqual(out, "")
+
+    def test_a_signal_while_last_asks_first_gives_the_terminal_back_as_it_was(self):
+        self.in_a_ghostty_tab()
+        env = self.env()
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        for sig, want in ((signal.SIGTERM, 1), (signal.SIGINT, 130), (signal.SIGHUP, 1)):
+            with self.subTest(signal=sig.name):
+                terminal, follower = os.openpty()
+                self.addCleanup(os.close, terminal)
+                self.addCleanup(os.close, follower)
+                last = subprocess.Popen([str(SUPERFIND), "last"], env=env, cwd="/tmp", stdin=follower, stdout=subprocess.DEVNULL,
+                                        stderr=follower, start_new_session=True,
+                                        preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+                self.addCleanup(last.wait)
+                screen, deadline = b"", time.time() + 5
+                while time.time() < deadline and b"Esc cancels." not in screen:
+                    if select.select([terminal], [], [], 0.1)[0]:
+                        screen += os.read(terminal, 4096)
+                self.assertIn(b"Esc cancels.", screen)
+                time.sleep(0.2)
+                threading.Thread(target=self.read_until_closed, args=(terminal,), daemon=True).start()
+                last.send_signal(sig)
+                self.assertEqual(last.wait(timeout=5), want)
+                lflag = termios.tcgetattr(terminal)[3]
+                self.assertEqual(lflag & (termios.ECHO | termios.ICANON), termios.ECHO | termios.ICANON)
+
+    def test_last_without_a_terminal_leaves_ghostty_alone_even_when_a_tab_has_the_session(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", f"{tty}, {other}")
+        self.assertEqual(self.last(), (1, "", "superfind last: Ledger migration is already open in another window. "
+                                              "superfind last doesn't start a second copy.\n"))
+        self.assertEqual(self.told(), "")
+
+    def test_last_at_a_terminal_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_prints_nothing(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", f"{tty}, {other}")
+        code, screen = self.at_a_terminal(f"{SUPERFIND} last > {self.out}.stdout", None)
+        self.assertEqual((code, Path(f"{self.out}.stdout").read_text()), (0, ""), screen)
+        self.assertIn("Ledger migration is open in another Ghostty tab; switched to it.", screen)
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
+
+    @unittest.skipUnless(shutil.which("bash"), "runs the bash shell setup")
+    def test_the_shell_setup_does_nothing_after_last_switches_to_a_ghostty_tab(self):
+        tty, _ = self.in_a_ghostty_tab()
+        self.osascript("match", tty)
+        setup = f'eval "$({SUPERFIND} init bash)"; superfind last; echo "status $?"'
+        code, screen = self.at_a_terminal(f"{shutil.which('bash')} --norc --noprofile -c '{setup}'", None)
+        self.assertIn("switched to it.", screen)
+        self.assertIn("status 0", screen)
+        self.assertNotIn("Resuming", screen)
 
 
 if __name__ == "__main__":

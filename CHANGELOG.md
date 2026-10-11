@@ -7,7 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
-- On Omarchy, the install script binds Super-Shift-Ctrl-F to open superfind in a new terminal, and leaves out the Ghostty key there. It works for the curl install too. `superfind pick --run` resumes the chosen session itself, for a terminal with no shell to hand the command to, and refuses a session an agent already has open, as `superfind last` does.
+- On Omarchy, the install script binds Super-Shift-Ctrl-F to open superfind in a new terminal, and leaves out the Ghostty key there. It works for the curl install too. `superfind pick --run` resumes the chosen session itself, for a terminal with no shell to hand the command to. On a session an agent already has open, it does what Enter chose in the picker.
 - A `superfind` skill for coding agents, so that asking Claude Code, Codex, or Grok "where did we fix X last week?" or "continue my Codex session here" makes it search your sessions and read a handoff instead of guessing. Install it in most agents with `npx skills add adammiribyan/superfind`, or as a plugin from this repository in Claude Code, Codex, Grok, or Cursor; [skills/README.md](skills/README.md) has the commands.
 - `superfind show` lists the commits a session made and the pull requests it opened, and how far each got: committed, pushed, merged into the default branch (directly or in a squash), or merged and then reverted. It reads only local git, as of your last fetch. `show --json` has them as `outcomes`. Merged means the change was accepted, not that it was right.
 - In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
@@ -23,6 +23,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `is:open` lists only the sessions that a running Claude Code, Codex, or Grok has open right now. Their rows say "open" instead of "active now" or the time.
 - `search --json`, `ask --json`, and `show --json` have a new field, `open`: the process id of the agent that has the session open, whether Claude Code is busy or idle, and the tmux pane it runs in. It is `null` when no agent has the session open.
 - Codex counts as open only when it was started with `codex resume <id>`, because Codex keeps no list of running sessions.
+- Enter in the picker, and `superfind last`, no longer start a second copy of a session that an agent already has open. If the agent runs in a pane of the tmux server you're in, they switch to that pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab uses (newer builds than 1.3.1), they switch to that tab. Otherwise the picker asks first: Enter again resumes a copy, and Esc goes back. `superfind last` asks the same at a terminal, and in a script it says where the session is open and exits 1.
 
 ### Changed
 
