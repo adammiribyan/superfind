@@ -109,6 +109,19 @@ func lock(path string, how int) (func(), bool, error) {
 	return func() { f.Close() }, true, nil
 }
 
+func Writable(dir string) bool {
+	if MakeDir(dir) != nil {
+		return false
+	}
+	probe, err := os.CreateTemp(dir, ".probe.*")
+	if err != nil {
+		return false
+	}
+	probe.Close()
+	os.Remove(probe.Name())
+	return true
+}
+
 func Unwritable(err error) bool {
 	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
