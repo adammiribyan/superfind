@@ -29,6 +29,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
+	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 )
@@ -596,7 +597,7 @@ func selfPath() string {
 func mustOpenSearch() *sql.DB {
 	db, err := session.OpenSearch()
 	if err != nil {
-		fail("superfind: can't open the search index in " + session.CacheDir() + ": " + err.Error())
+		fail("superfind: can't open the search index in " + store.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
@@ -625,7 +626,7 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 	if errors.As(err, &readOnly) {
 		switch {
 		case command == "index" || command == "label":
-			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
+			fail("superfind " + command + ": " + store.CacheDir() + " can't be written from here, so nothing was saved")
 		case (command == "search" || command == "ask") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}
