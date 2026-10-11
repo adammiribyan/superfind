@@ -8,8 +8,9 @@ import time
 import unittest
 from pathlib import Path
 
-from test_superfind import (ANSI, SUPERFIND, SuperfindBehavior, claude, codex_call, codex_meta, codex_output, codex_reply,
-                            codex_user, line, tool, uid, user)
+from test_blame import claude_result, claude_tool, codex_at, edited, grok_call
+from test_superfind import (ANSI, GROK_SYSTEM, SUPERFIND, SuperfindBehavior, claude, codex_call, codex_meta, codex_output, codex_reply,
+                            codex_user, grok_user, line, tool, uid, user)
 
 WHEN = "takes a date like 2026-10-09, yesterday, or 3d."
 MALFORMED = {
@@ -19,6 +20,8 @@ MALFORMED = {
     "after:": "after: " + WHEN,
     "in:there": "in: takes here, as in in:here.",
     "branch:": "branch: takes a branch name, like branch:main.",
+    "file:": "file: takes a file or folder, like file:main.go or file:internal/.",
+    "has:commits": "has: takes commit, as in has:commit.",
 }
 
 
@@ -168,6 +171,70 @@ class Recall(SuperfindBehavior):
         self.assertEqual(self.ids("in:here", here=self.app), ["typed"])
         self.assertEqual(self.json_ids("in:here", here=self.app), ["sdk", "typed"])
         self.assertEqual(self.ids("in:here", "is:agent", here=self.app), ["sdk"])
+
+    def edited_in(self, n, folder, path, failed=False):
+        return self.session(uid(n), user("fix the ledger", cwd=str(folder)), *edited(time.time() - 600, "e1", str(path), failed=failed),
+                            claude("Done."))
+
+    def test_file_keeps_sessions_that_edited_a_file_or_a_folder_with_any_agent(self):
+        subprocess.run(["git", "init", "-q", str(self.app)], check=True)
+        ledger = self.app / "src" / "ledger.go"
+        self.edited_in(1, self.app, ledger)
+        self.edited_in(2, self.app, ledger, failed=True)
+        self.session(uid(3), user("read the ledger", cwd=str(self.app)), claude_tool(time.time() - 600, "r1", "Read", file_path=str(ledger)),
+                     claude_result(time.time() - 599, "r1", "package ledger"), claude("Read it."))
+        self.codex_session(uid(4), codex_meta(cwd=str(self.app)), codex_user("fix the ledger"),
+                           codex_at(time.time() - 600, "response_item", type="custom_tool_call", name="apply_patch", call_id="p1",
+                                    input="*** Begin Patch\n*** Update File: src/ledger.go\n@@\n-a\n+b\n*** End Patch"),
+                           codex_at(time.time() - 599, "response_item", type="custom_tool_call_output", call_id="p1", output="Success."),
+                           codex_reply("Done."))
+        self.grok_session(uid(5), str(self.app), GROK_SYSTEM, grok_user("fix the ledger"),
+                          grok_call("search_replace", "t1", file_path=str(ledger), old_string="a", new_string="b"), title="Ledger")
+        self.edited_in(6, self.app, self.app / "srcx" / "other.go")
+        self.edited_in(7, self.app, self.app / ".claude" / "worktrees" / "gone" / "src" / "ledger.go")
+        self.edited_in(8, self.place("elsewhere/repo"), self.root / "elsewhere" / "repo" / "src" / "ledger.go")
+        self.edited_in(9, self.app, self.app / ".claude" / "worktrees" / "gone" / "vendor" / "src" / "ledger.go")
+        self.edited_in(10, self.app, self.app / "SRC" / "LEDGER.go")
+        self.codex_session(uid(11), codex_meta(cwd=str(self.app)), codex_user("start a helper"), codex_reply("Started one."))
+        self.codex_session(uid(12), codex_meta(cwd=str(self.app), parent=uid(11)), codex_user("fix the ledger"),
+                           codex_at(time.time() - 600, "response_item", type="custom_tool_call", name="apply_patch", call_id="p1",
+                                    input="*** Begin Patch\n*** Update File: src/ledger.go\n@@\n-a\n+b\n*** End Patch"),
+                           codex_at(time.time() - 599, "response_item", type="custom_tool_call_output", call_id="p1", output="Success."))
+        edited_ledger = sorted(uid(n) for n in (1, 4, 5, 7, 11))
+        self.assertEqual(self.json_ids("file:src/ledger.go", here=self.app), edited_ledger)
+        self.assertEqual(self.json_ids(f"file:{ledger}"), edited_ledger)
+        self.assertEqual(self.json_ids("file:src", here=self.app), edited_ledger)
+        self.assertEqual(self.json_ids("file:src/", here=self.app), edited_ledger)
+        self.assertEqual(self.json_ids("file:srcx", here=self.app), [uid(6)])
+        self.assertEqual(self.json_ids("file:src/ledger.go", here=self.place("elsewhere")), [])
+        self.assertEqual(self.json_ids("file:src/ledger.go", here=self.root / "elsewhere" / "repo"), [uid(8)])
+        self.assertEqual(self.json_ids("file:/", here=self.app), sorted(uid(n) for n in (1, 4, 5, 6, 7, 8, 9, 10, 11)))
+        self.assertEqual(self.json_ids("file:src/ledger.go", "file:srcx/other.go", here=self.app), sorted(edited_ledger + [uid(6)]))
+        self.assertEqual(self.json_ids("file:src/ledger.go", "agent:codex", here=self.app), [uid(4), uid(11)])
+
+    def test_has_commit_keeps_sessions_that_ran_git_commit(self):
+        now = time.time()
+        self.session(uid(1), user("commit the ledger", cwd=str(self.app)),
+                     claude_tool(now - 600, "b1", "Bash", command='git commit -qam "fix: the ledger"'),
+                     claude_result(now - 599, "b1", "[main 1a2b3c4] fix: the ledger"), claude("Committed."))
+        self.session(uid(2), user("commit the ledger", cwd=str(self.app)),
+                     claude_tool(now - 600, "b1", "Bash", command='git commit -qam "fix: the ledger"'),
+                     claude_result(now - 599, "b1", "nothing to commit", failed=True), claude("Nothing to commit."))
+        self.worked(uid(3), self.app)
+        self.assertEqual(self.json_ids("has:commit"), [uid(1)])
+        self.assertEqual(self.json_ids("HAS:Commit", "ledger"), [uid(1)])
+        path = self.session(uid(4), user("commit through a helper", cwd=str(self.app)), claude("Asked a helper."))
+        folder = path.parent / path.stem / "subagents"
+        folder.mkdir(parents=True)
+        (folder / "agent-a1.jsonl").write_text("\n".join([
+            claude_tool(now - 500, "b1", "Bash", command='git commit -qam "fix: the helper"'),
+            claude_result(now - 499, "b1", "[main 5e6f7a8] fix: the helper")]) + "\n")
+        os.utime(path)
+        self.assertEqual(self.json_ids("has:commit"), sorted([uid(1), uid(4)]))
+        folder.chmod(0)
+        self.addCleanup(folder.chmod, 0o755)
+        os.utime(path)
+        self.assertEqual(self.json_ids("has:commit"), sorted([uid(1), uid(4)]))
 
     def test_a_filter_that_cannot_be_read_is_a_usage_mistake_before_any_work(self):
         log = self.logging_claude()

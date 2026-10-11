@@ -10,6 +10,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
+- `file:PATH` filters the picker, `search`, `ask`, and `last` to sessions that edited a file, or a file in a folder, with an edit tool, in any worktree of its repository, including a Claude Code worktree since removed. `has:commit` keeps sessions that ran `git commit`, leaving out a commit that failed on its own.
 
 ### Changed
 

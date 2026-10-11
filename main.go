@@ -59,9 +59,10 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
                           is:agent shows sessions another program started, is:open shows
-                          sessions an agent has open right now, and in:here,
-                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
-                          and last activity
+                          sessions an agent has open right now, in:here, branch:NAME,
+                          after:DAY, and before:DAY narrow by folder, branch, and last
+                          activity, and file:PATH and has:commit by what a session edited
+                          and whether it committed
   superfind ask WORDS [--json] [--limit N]
                           print the sessions that best fit what you describe, even in other words;
                           takes the same filters
@@ -179,13 +180,20 @@ unless you ask for them with is:agent.
                   date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
   before:DAY      only sessions last active before that day; after:2026-10-09
                   before:2026-10-10 is October 9
+  file:PATH       only sessions that edited that file, or a file in that folder, with an
+                  edit tool, in any worktree of its repository, including a Claude Code
+                  worktree since removed; a relative PATH starts from this folder. superfind
+                  blame FILE also lists the sessions that made the file's commits
+  has:commit      only sessions that ran git commit; a commit that failed on its own
+                  doesn't count
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
   --limit N       print only the first N sessions (default: all)
 
-Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
-different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
+Two branch:, agent:, or file: filters, or is:waiting with is:unfinished, keep sessions that
+fit either; different filters must all fit. An is: or agent: value superfind doesn't know is
+ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with -, put --
