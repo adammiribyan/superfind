@@ -370,7 +370,7 @@ func runLast(args []string) {
 	case !ok:
 		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
-		writeRecords([]session.Row{r}, nil, "")
+		writeRecords([]session.Row{r}, nil, "", false)
 	default:
 		handoff(r)
 	}
@@ -635,8 +635,8 @@ func usageError(message string) {
 	exit(2)
 }
 
-func writeRecords(rows []session.Row, db *sql.DB, query string) {
-	if err := show.WriteRecords(stdout, rows, db, query); err != nil {
+func writeRecords(rows []session.Row, db *sql.DB, query string, byMeaning bool) {
+	if err := show.WriteRecords(stdout, rows, db, query, byMeaning); err != nil {
 		fail("superfind: couldn't write the output: " + err.Error())
 	}
 }
@@ -763,7 +763,7 @@ func run(args []string) {
 		}
 		found = atMost(found, limit)
 		if asJSON {
-			writeRecords(found, db, query)
+			writeRecords(found, db, query, false)
 			return
 		}
 		printRows(found, render.TagsFor(session.SameKind(rows, q.Agents)))
@@ -775,7 +775,7 @@ func run(args []string) {
 		db := mustOpenSearch()
 		query, eligible := q.Words, q.Rows(rows, asJSON)
 		if query == "" && asJSON {
-			writeRecords(atMost(session.RecentFirst(eligible), limit), db, "")
+			writeRecords(atMost(session.RecentFirst(eligible), limit), db, "", false)
 			return
 		}
 		if query == "" {
@@ -795,7 +795,7 @@ func run(args []string) {
 		}
 		ranked := atMost(session.InOrder(rows, paths), limit)
 		if asJSON {
-			writeRecords(ranked, db, query)
+			writeRecords(ranked, db, query, true)
 			return
 		}
 		printRows(ranked, shown)
