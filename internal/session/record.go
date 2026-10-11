@@ -1,7 +1,6 @@
 package session
 
 import (
-	"database/sql"
 	"strings"
 	"time"
 
@@ -69,26 +68,6 @@ func RecordOf(r Row, clean func(string) string) Record {
 }
 
 func AsksForAgents(query string) bool { return Parse(query).Agents }
-
-func Passages(db *sql.DB, query string) map[string]string {
-	match := ftsQuery(query)
-	if match == "" || db == nil {
-		return nil
-	}
-	rows, err := db.Query("SELECT path, snippet(docs, 2, char(1), char(2), '…', 10) FROM docs WHERE docs MATCH ?", match)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	found := map[string]string{}
-	for rows.Next() {
-		var path, text string
-		if rows.Scan(&path, &text) == nil && strings.Contains(text, "\x01") {
-			found[path] = strings.Join(strings.Fields(strings.NewReplacer("\x01", "", "\x02", "").Replace(text)), " ")
-		}
-	}
-	return found
-}
 
 func SameKind(rows []Row, byAgent bool) []Row {
 	kind := ""

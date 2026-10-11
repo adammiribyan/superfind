@@ -365,6 +365,16 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 	if noticed {
 		fmt.Fprint(stderr, "\r\033[K")
 	}
+	var readOnly session.ReadOnly
+	if errors.As(err, &readOnly) {
+		switch {
+		case command == "index" || command == "label":
+			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
+		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
+		}
+		err = nil
+	}
 	if err != nil {
 		fail("superfind " + command + ": " + err.Error())
 	}
