@@ -142,6 +142,15 @@ class Blame(SuperfindBehavior):
         self.assertIn("made", fields[5])
         self.assertIn("round?the charge rules", fields[5])
 
+    def test_bullets_count_only_in_a_squash_merge_and_a_new_repository_still_lists_editors(self):
+        t = self.now - 3600
+        (self.work / "first.go").write_text("first\n")
+        self.claude_at(1, *edited(t - 60, "e1", self.work / "first.go"), title="Before any commit")
+        self.assertEqual(self.found("first.go"), [(uid(1), "edited it once")])
+        self.claude_at(2, claude_tool(t - 30, "b1", "Bash", command='git commit -qm "fix: retry a charge only once"'), title="Earlier")
+        self.commit("chore: notes", {"notes.md": "n\n"}, t, body="* fix: retry a charge only once")
+        self.assertEqual(self.found("HEAD"), [(uid(1), "edited 1 of the commit's 2 files")])
+
     def test_a_long_lived_pull_request_and_a_merge_commit_still_find_their_sessions(self):
         t = self.now - 3600
         self.git("remote", "add", "upstream", "https://github.com/Acme/Billing.git")

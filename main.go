@@ -153,8 +153,8 @@ Run it inside the git repository, or pass a file in one.
                "Merge pull request #N" subject. A squash merge lists the sessions that made
                the commits it squashed. When no session left a record of either, it says so,
                then lists the sessions that edited its files in the three days before it.
-  FILE         lists the sessions that edited the file, or made one of its last 30 commits,
-               most recent first
+  FILE         lists the sessions that edited the file, or made or opened the pull request of
+               one of its last 30 commits, most recent first
   FILE:LINE    blames the commit that last changed that line. A file whose name ends in
                :LINE is read as that file.
   --json       print one JSON object per session, as search --json does, with what the
@@ -162,8 +162,8 @@ Run it inside the git repository, or pass a file in one.
 
 It reads the commands and edits each agent recorded, so it misses a commit made by hand in a
 terminal or on another machine, and one whose message and hash the session never recorded. A
-message counts when it matches, ignoring case and punctuation, and the session ran it from a
-folder in the repository or one that no longer exists.
+message counts when it matches, ignoring case and punctuation, has at least 12 letters and
+digits, and the session ran it from a folder in the repository or one that no longer exists.
 `,
 	"index": `superfind index
 

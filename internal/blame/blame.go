@@ -165,13 +165,17 @@ func commitAt(dir, sha string) (commit, error) {
 func parsed(sha, subjectLine, body, at string) commit {
 	c := commit{SHA: sha, Subject: subjectLine}
 	c.At, _ = strconv.ParseFloat(strings.TrimSpace(at), 64)
-	for _, s := range append([]string{subjectLine}, bullets(body)...) {
+	if m := pullNumber.FindStringSubmatch(subjectLine); m != nil {
+		c.PR, _ = strconv.Atoi(m[1] + m[2])
+	}
+	lines := []string{subjectLine}
+	if c.PR > 0 {
+		lines = append(lines, bullets(body)...)
+	}
+	for _, s := range lines {
 		if p := plain(s); len(p) >= shortestSubject {
 			c.Subjects = append(c.Subjects, subject{s, p})
 		}
-	}
-	if m := pullNumber.FindStringSubmatch(subjectLine); m != nil {
-		c.PR, _ = strconv.Atoi(m[1] + m[2])
 	}
 	return c
 }
@@ -259,7 +263,7 @@ func fileTarget(path, note string) (Target, error) {
 	}
 	t.File, t.Note = filepath.ToSlash(rel), note
 	out, err := git(top, "log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e", "--", ":(literal)"+t.File)
-	if err != nil {
+	if _, unborn := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && unborn == nil {
 		return t, err
 	}
 	for _, entry := range strings.Split(out, "\x1e") {
