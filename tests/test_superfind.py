@@ -518,7 +518,7 @@ class SuperfindBehavior(unittest.TestCase):
     def break_search_index(self):
         import sqlite3
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
 
     def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
@@ -678,6 +678,22 @@ class SuperfindBehavior(unittest.TestCase):
         literal = self.run_superfind("search", "--", "-h")
         self.assertEqual((literal.returncode, literal.stdout, literal.stderr), (0, "", ""))
 
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_fish_resumes_into_a_folder_whose_name_breaks_a_line(self):
+        folder = self.home / "two\nlines"
+        folder.mkdir()
+        path = self.session("a1", user("fix it", cwd=str(folder)), tool("Bash"), claude("Done."), title="Fix")
+        self.superfind("index")
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text('#!/bin/sh\nprintf "%s|%s" "$(pwd)" "$*"\n')
+        (stub / "claude").chmod(0o755)
+        script = (f"{SUPERFIND} init fish | source; function _superfind_run; printf '%s\\n' Fix $resume; end; superfind")
+        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], capture_output=True, text=True,
+                                env={**self.env, "PATH": f"{stub}:/usr/bin:/bin",
+                                     "resume": self.superfind("command", str(path)).rstrip("\n")})
+        self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
+
     def test_a_short_option_is_rejected_instead_of_searched_for(self):
         self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.superfind("index")
@@ -717,6 +733,7 @@ class SuperfindBehavior(unittest.TestCase):
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
+        self.assertIn(f"        {Path(SUPERFIND).resolve()} $argv", self.superfind("init", "fish"))
 
     def test_malformed_typesafe_answers_never_crash_ask_or_get_cached_as_labels(self):
         class Malformed(http.server.BaseHTTPRequestHandler):
@@ -1465,7 +1482,7 @@ class SuperfindBehavior(unittest.TestCase):
         path = self.projects / "a1.jsonl"
         with open(path, "w") as f:
             f.write(user("rotate the signing keys") + "\n")
-            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "x" * 40_000_000}) + "\n")
+            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "needle " + "x" * 40_000_000}) + "\n")
             f.write(claude("Rotated.") + "\n")
         measure = ("import resource, subprocess, sys; subprocess.run(sys.argv[1:], capture_output=True); "
                    "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)")
@@ -1474,6 +1491,7 @@ class SuperfindBehavior(unittest.TestCase):
         megabytes = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
         self.assertLess(megabytes, 250)
         self.assertEqual(self.titles(), ["rotate the signing keys"])
+        self.assertEqual(self.titles("needle"), [])
 
     def test_a_null_label_cache_is_treated_as_empty(self):
         path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),
@@ -1557,7 +1575,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertIn("Fixed.", self.superfind("preview", printed))
 
     def test_usage_mistakes_exit_2_and_say_what_was_wrong(self):
-        for args, reason in ((("init",), "which shell?"), (("init", "fish"), "which shell?"), (("command",), "which session?"),
+        for args, reason in ((("init",), "which shell?"), (("init", "tcsh"), "which shell?"), (("command",), "which session?"),
                              (("preview",), "which session?")):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
@@ -1734,44 +1752,47 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(self.titles("rotate"), ["ro\u200ftate the signing keys"])
         self.assertEqual(self.titles("migrate"), ["Tables"])
 
-    @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash"), "needs zsh and bash")
+    @unittest.skipUnless(shutil.which("zsh") and shutil.which("bash") and shutil.which("fish"), "needs zsh, bash, and fish")
     def test_the_shell_functions_work_when_copied_without_their_variables(self):
-        dump = {"zsh": "typeset -f superfind sfd _superfind_run _superfind_resume",
-                "bash": "declare -f superfind sfd _superfind_run _superfind_resume"}
+        dump = {"zsh": 'eval "$1" 2>/dev/null; typeset -f superfind sfd _superfind_run _superfind_resume',
+                "bash": 'eval "$1" 2>/dev/null; declare -f superfind sfd _superfind_run _superfind_resume',
+                "fish": "printf %s $argv[2] | source; functions _superfind_run _superfind_resume superfind sfd"}
         session = self.session("a1", user("fix the ledger", cwd=str(self.home)), tool("Bash"), claude("Fixed."), title="Ledger fix")
         stub = self.home / "stub"
         stub.mkdir()
         (stub / "claude").write_text(f"#!/bin/sh\ntouch {self.home}/resumed\n")
         (stub / "claude").chmod(0o755)
-        for shell in ("zsh", "bash"):
-            setup = self.superfind("init", shell)
-            snapshot = self.home / f"snapshot.{shell}"
-            functions = subprocess.run([shell, "-c", f'eval "$1" 2>/dev/null; {dump[shell]}', shell, setup],
+        for name in ("zsh", "bash", "fish"):
+            shell = [shutil.which(name)] + (["--no-config"] if name == "fish" else [])
+            setup = self.superfind("init", name)
+            snapshot = self.home / f"snapshot.{name}"
+            functions = subprocess.run([*shell, "-c", dump[name], name, setup],
                                        env=self.env, capture_output=True, text=True).stdout
             self.assertNotIn(str(SUPERFIND) + "=", functions)
             snapshot.write_text(functions)
             for command in ("superfind --version", "sfd --version"):
-                result = subprocess.run([shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
+                result = subprocess.run([*shell, "-c", f"source {snapshot}; {command}"], env={"PATH": "/usr/bin:/bin",
                                         "HOME": str(self.home)}, capture_output=True, text=True)
-                self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (shell, command, result.stderr))
+                self.assertEqual((result.returncode, result.stdout.split(" ")[0]), (0, "superfind"), (name, command, result.stderr))
             for command in ("superfind last", "sfd last"):
-                result = subprocess.run([shell, "-c", f"source {snapshot}; cd {self.home}; {command}"], env={
+                result = subprocess.run([*shell, "-c", f"source {snapshot}; cd {self.home}; {command}"], env={
                     "PATH": f"{stub}:/usr/bin:/bin", "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache")},
                     stdin=subprocess.DEVNULL, capture_output=True, text=True)
                 self.assertEqual((result.returncode, ANSI.sub("", result.stdout)),
-                                 (0, f"Ledger fix\n{self.superfind('command', str(session))}"), (shell, command, result.stderr))
-                self.assertFalse((self.home / "resumed").exists(), (shell, command))
-            strict = subprocess.run([shell, "-c", f"set -u; source {snapshot}; superfind"], env={"PATH": "/usr/bin:/bin",
-                                    "HOME": str(self.home)}, stdin=subprocess.DEVNULL, capture_output=True, text=True)
-            self.assertEqual((strict.returncode, strict.stdout), (1, ""), (shell, strict.stderr))
-            self.assertIn("superfind pick needs a terminal", strict.stderr, shell)
-            moved = self.home / "bin" / shell
+                                 (0, f"Ledger fix\n{self.superfind('command', str(session))}"), (name, command, result.stderr))
+                self.assertFalse((self.home / "resumed").exists(), (name, command))
+            if name != "fish":
+                strict = subprocess.run([*shell, "-c", f"set -u; source {snapshot}; superfind"], env={"PATH": "/usr/bin:/bin",
+                                        "HOME": str(self.home)}, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+                self.assertEqual((strict.returncode, strict.stdout), (1, ""), (name, strict.stderr))
+                self.assertIn("superfind pick needs a terminal", strict.stderr, name)
+            moved = self.home / "bin" / name
             moved.mkdir(parents=True)
             shutil.copy(SUPERFIND, moved / "superfind")
             snapshot.write_text(functions.replace(str(Path(SUPERFIND).resolve()), "/gone/superfind"))
-            result = subprocess.run([shell, "-c", f"source {snapshot}; superfind --version"],
+            result = subprocess.run([*shell, "-c", f"source {snapshot}; superfind --version"],
                                     env={"PATH": f"{moved}:/usr/bin:/bin", "HOME": str(self.home)}, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, (shell, result.stderr))
+            self.assertEqual(result.returncode, 0, (name, result.stderr))
 
 
 if __name__ == "__main__":

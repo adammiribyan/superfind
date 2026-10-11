@@ -572,7 +572,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
         self.open_picker()
         self.keys("charged")
@@ -604,10 +604,11 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
-        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i", "fish": f"{shutil.which('fish')} --no-config -i"}[shell]
         tmux("new-session", "-d", "-s", self.session_name, "-x", "140", "-y", "32", f"env -i {env} {start}")
         time.sleep(0.5)
-        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        setup = f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"'
+        self.keys(setup, "Enter")
         self.keys(*open_keys)
         self.wait_for("Claude sessions")
         self.keys("Down", "Enter")
@@ -627,12 +628,13 @@ class PickerBehavior(unittest.TestCase):
                      claude("Done."))
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
-        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i"}[shell]
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i", "fish": f"{shutil.which('fish')} --no-config -i"}[shell]
         tmux("new-session", "-d", "-s", self.session_name, "-x", "160", "-y", "32", f"env -i {env} {start}")
         time.sleep(0.5)
-        self.keys(f'eval "$({SUPERFIND} init {shell})"', "Enter")
+        self.keys(f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"', "Enter")
         self.keys(f"cd {self.home / 'app'}", "Enter")
-        self.keys("IFS=:", "Enter")
+        if shell != "fish":
+            self.keys("IFS=:", "Enter")
         self.keys("superfind last --json", "Enter")
         self.wait_for('"schema":1')
         time.sleep(0.5)
@@ -654,6 +656,10 @@ class PickerBehavior(unittest.TestCase):
     def test_typing_superfind_last_in_bash_resumes_the_newest_session_here_in_that_shell(self):
         self.last_through_shell("bash")
 
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_superfind_last_in_fish_resumes_the_newest_session_here_in_that_shell(self):
+        self.last_through_shell("fish")
+
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])
 
@@ -671,6 +677,18 @@ class PickerBehavior(unittest.TestCase):
 
     def test_ctrl_x_c_in_bash_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("bash", ["C-x", "c"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_superfind_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["superfind", "Enter"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd", "Enter"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_ctrl_x_c_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["C-x", "c"])
 
     def test_the_list_appears_while_indexing_and_the_selection_survives_the_refresh(self):
         self.three_sessions()

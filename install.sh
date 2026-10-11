@@ -91,19 +91,24 @@ main() {
       shell=bash rc="$HOME/.bashrc"
       [ "$(uname)" = Darwin ] && rc="$HOME/.bash_profile"
       ;;
+    fish) shell=fish rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
     *) shell="" rc="" ;;
   esac
   if [ -z "$shell" ]; then
-    echo "superfind sets up zsh and bash. To use it from one of them, add a line to that shell's startup file:"
+    echo "superfind sets up zsh, bash, and fish. To use it from one of them, add a line to that shell's startup file:"
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init zsh)\"     # in ~/.zshrc"
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init bash)\"    # in ~/.bashrc, or ~/.bash_profile on macOS"
+    echo "  \"\$HOME/.local/bin/superfind\" init fish | source      # in ~/.config/fish/config.fish"
     echo "done: run $bin/superfind to see what it does"
     return
   fi
   if grep -Eq '^[^#]*superfind"? init' "$rc" 2>/dev/null; then
     echo "$rc already sets up superfind; left it as it is"
   else
-    printf '\n%s\n' "eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\"" >> "$rc"
+    setup="eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\""
+    [ "$shell" = fish ] && setup="\"\$HOME/.local/bin/superfind\" init fish | source"
+    mkdir -p "$(dirname "$rc")"
+    printf '\n%s\n' "$setup" >> "$rc"
     echo "added superfind to $rc"
   fi
 
