@@ -53,6 +53,9 @@ FIELDS = {
     "kind": "`agent` when another program started the session, such as `codex exec` or `claude -p`, and "
             "`interactive` otherwise.",
     "match": "On search and ask results, the passage that holds your words, or empty. Always empty in `show --json`.",
+    "outcomes": "In `show --json`: the commits the session made and the pull requests it opened, in the order it made "
+                "them, judged from local git as of your last fetch. Commits the repository no longer has are left out. "
+                "A merge means the change was accepted, not that it was right.",
     "total_turns": "In `show --json`: how many turns the session has.",
     "omitted_turns": "In `show --json`: how many earlier turns were left out.",
     "truncated": "In `show --json`: true when `--max-bytes` cut anything. Leaving turns out with `--tail` doesn't count.",
@@ -64,6 +67,32 @@ TURN_FIELDS = {
     "text": "What was said, with tool calls and system text left out. Common keys and passwords are masked.",
     "cut": "Present and true only on a turn whose start was cut to fit `--max-bytes`.",
 }
+
+
+OUTCOME_FIELDS = {
+    "kind": "`commit` for a commit the session made, `pull_request` for a pull request it opened that none of its "
+            "commits already stand for.",
+    "commit": "The full hash of the commit the session made. Empty for a pull request, and for a commit that a squash "
+              "merge carried after its branch was deleted.",
+    "pr": "The pull request that carried the commit, or that the session opened, or `0` when none is known.",
+    "subject": "The commit's subject from git. For a pull request, the subject it landed with, or empty.",
+    "repo": "The repository's top folder.",
+    "stage": "How far it got. A commit is `committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
+             "directly or in a squash), or `reverted` (merged, then a later commit on the default branch reverts it). "
+             "A pull request is `opened`, `merged`, or `reverted`.",
+    "branch": "The default branch it is measured against, such as `main`, or empty when none was found.",
+    "landed": "The hash of the default branch's commit that carries it: the commit itself or its squash. Empty when not merged.",
+    "landed_at": "When that commit was committed, in UTC. Empty when not merged.",
+    "reverted_by": "The hash of the default branch's commit that reverts it, or empty.",
+}
+
+
+def git(folder, *args):
+    when = f"@{EXAMPLE_TIME - 600} +0000"
+    env = {"HOME": str(folder), "PATH": os.environ.get("PATH", ""), "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "You",
+           "GIT_AUTHOR_EMAIL": "you@example.com", "GIT_COMMITTER_NAME": "You", "GIT_COMMITTER_EMAIL": "you@example.com",
+           "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(["git", *args], cwd=folder, env=env, capture_output=True, check=True)
 
 
 def run(home, *args):
@@ -80,6 +109,10 @@ def example_home(home):
     folder.mkdir(parents=True)
     project = home / ".claude" / "projects" / ("-" + str(folder).strip("/").replace("/", "-"))
     project.mkdir(parents=True)
+    git(folder, "init", "-q", "-b", "main")
+    (folder / "pay.go").write_text("package pay\n")
+    git(folder, "add", "-A")
+    git(folder, "commit", "-q", "-m", "fix: send one idempotency key per cart")
     transcript = project / f"{uid(1)}.jsonl"
     transcript.write_text(encoding="utf-8", data="\n".join([
         user("the checkout button double-charges customers on slow networks", cwd=str(folder)),
@@ -89,6 +122,9 @@ def example_home(home):
         user("add a test for the slow network", cwd=str(folder)),
         tool("Edit"),
         claude("Added TestRetryUsesSameKey with a transport that times out once."),
+        line(type="assistant", timestamp="2026-09-01T09:50:00.000Z", message={"role": "assistant", "content": [
+            {"type": "tool_use", "id": "t2", "name": "Bash",
+             "input": {"command": 'git commit -qam "fix: send one idempotency key per cart"'}}]}),
         line(type="ai-title", aiTitle="Checkout double-charges on slow networks"),
     ]) + "\n")
     os.utime(transcript, (EXAMPLE_TIME, EXAMPLE_TIME))
@@ -137,6 +173,9 @@ def build():
         turn_keys = list(dict.fromkeys(k for t in shown["turns"] + cut["turns"] for k in t))
         if sorted(turn_keys) != sorted(TURN_FIELDS):
             sys.exit("scripts/llms.py: TURN_FIELDS must match the turn fields superfind prints: " + ", ".join(turn_keys))
+        outcome_keys = list(dict.fromkeys(k for o in shown["outcomes"] for k in o))
+        if sorted(outcome_keys) != sorted(OUTCOME_FIELDS):
+            sys.exit("scripts/llms.py: OUTCOME_FIELDS must match the outcome fields superfind prints: " + ", ".join(outcome_keys))
         unused = [k for k in FIELDS if k not in record_keys]
         if unused:
             sys.exit("scripts/llms.py: these described fields no longer appear in the JSON: " + ", ".join(unused))
@@ -156,6 +195,7 @@ def build():
             "## JSON output\n\n`search --json` and `ask --json` print JSON Lines: one object per session, one per "
             "line, best match first, or newest first when there are no words. Use `jq -s` to get an array. `show --json` prints one object. Every "
             "session object has these fields:\n\n" + fields(record_keys, FIELDS),
+            "Each item in `outcomes` has:\n\n" + fields(outcome_keys, OUTCOME_FIELDS),
             "Each item in `turns` has:\n\n" + fields(turn_keys, TURN_FIELDS),
             "### Example: `superfind search --json idempotency`\n\n```json\n" + search_line + "\n```",
             f"### Example: `superfind show {uid(1)} --json`, indented here\n\n```json\n" + show_json + "\n```",
