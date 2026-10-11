@@ -34,7 +34,7 @@ func TestPickingASessionOpenInATmuxPaneSwitchesToThePane(t *testing.T) {
 	row := session.Row{Agent: agent.Named("claude"), Home: "/home/me/.claude",
 		Session: session.Session{ID: "0f6cab12-3a4b-4c5d-8e9f-001122334455", Title: "fix ledger", Cwd: "/tmp", Mtime: session.Now()},
 		Open:    &open.State{PID: 4242, Status: "idle", Tmux: &open.Pane{ID: "%3", Session: "work\x1b[2J", Window: 1}}}
-	want := "fix ledger" + render.Reset + render.Dim + " · in tmux session work, window 1\ntmux switch-client -t %3\n"
+	want := "fix ledger" + render.Reset + render.Dim + " · in tmux session work, window 1\ntmux switch-client -t '%3'\n"
 	if got := handoff(row); got != want {
 		t.Errorf("handoff = %q, want %q", got, want)
 	}
@@ -54,5 +54,31 @@ func TestPickingASessionOpenInATmuxPaneOutsideTmuxResumesIt(t *testing.T) {
 	want := "fix ledger" + render.Reset + render.Dim + " · already open in another window\ncd /tmp && CLAUDE_CONFIG_DIR=/home/me/.claude claude --resume 0f6cab12-3a4b-4c5d-8e9f-001122334455\n"
 	if got := handoff(row); got != want {
 		t.Errorf("handoff outside tmux = %q, want %q", got, want)
+	}
+}
+
+func TestLastHandsOffSwitchesTabsAsksOrSaysWhereBySessionAndTerminal(t *testing.T) {
+	pane := &open.Pane{ID: "%3", Session: "work", Window: 1}
+	cases := []struct {
+		name     string
+		state    *open.State
+		inTmux   bool
+		ghostty  bool
+		terminal bool
+		want     lastAction
+	}{
+		{"closed", nil, false, true, false, handItOff},
+		{"in a pane of this tmux", &open.State{PID: 4242, Tmux: pane}, true, true, false, handItOff},
+		{"in a Ghostty tab", &open.State{PID: 4242}, false, true, false, switchedTab},
+		{"in a pane, superfind outside tmux, in Ghostty", &open.State{PID: 4242, Tmux: pane}, false, true, true, switchedTab},
+		{"elsewhere, at a terminal", &open.State{PID: 4242}, true, false, true, askFirst},
+		{"elsewhere, in a script", &open.State{PID: 4242}, false, false, false, sayWhereItIs},
+		{"in a pane, superfind outside tmux, in a script", &open.State{PID: 4242, Tmux: pane}, false, false, false, sayWhereItIs},
+	}
+	for _, c := range cases {
+		got := lastStep(c.state, c.inTmux, func(open.State) bool { return c.ghostty }, c.terminal)
+		if got != c.want {
+			t.Errorf("%s: last does %d, want %d", c.name, got, c.want)
+		}
 	}
 }

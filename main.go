@@ -23,6 +23,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
@@ -103,9 +104,13 @@ into its folder and runs its agent's resume command, which lands in your shell h
 
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
-When an agent already has the session open in a tmux pane and you're in tmux, the second line
-is tmux switch-client to that pane instead.
 The shell setup from superfind init runs that command for you.
+
+When an agent already has the session open, Enter doesn't start a second copy. If the agent
+runs in a pane of the tmux server you're in, the second line is tmux switch-client to that
+pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab uses,
+superfind switches to that tab and exits 1, so the shell does nothing. Otherwise the picker
+asks first: Enter again resumes a copy, Esc goes back.
 
 Type filters in the search box to narrow the list, such as in:here, branch:main,
 after:yesterday, or agent:codex; superfind help search lists them all.
@@ -122,9 +127,15 @@ With the shell setup from superfind init, when its input and output are a termin
 option starting with - is given, superfind last cds into the session's folder and resumes it,
 as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
 it prints the session's title on the first line and the command that resumes it on the second,
-as superfind pick does. Exit 1 when no session fits, or when an agent already has the newest
-session open: superfind last says where it is open instead of starting a second copy. An agent: or is: value superfind doesn't
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
 know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
+
+When an agent already has the newest session open, superfind last doesn't start a second copy.
+If the agent runs in a pane of the tmux server you're in, the second line is tmux switch-client
+to that pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab
+uses, superfind last switches to that tab, prints nothing, and exits 0. Otherwise, at a
+terminal, it asks first: Enter resumes a copy, any other key cancels (exit 1). Without a
+terminal it says where the session is open and exits 1.
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
                   after:yesterday
@@ -302,7 +313,7 @@ superfind() {
     return
   fi
   out=$(_superfind_run "${@:-pick}") || return
-  _superfind_resume "$out"
+  [[ -z $out ]] || _superfind_resume "$out"
 }
 
 sfd() { superfind "$@"; }
@@ -347,7 +358,7 @@ superfind() {
     return
   fi
   out=$(_superfind_run "${@:-pick}") || return
-  _superfind_resume "$out"
+  [[ -z $out ]] || _superfind_resume "$out"
 }
 
 sfd() { superfind "$@"; }
@@ -381,7 +392,9 @@ function superfind
     set -e rest[1]
     if test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $rest
         set -l out (_superfind_run $argv); or return
-        _superfind_resume $out
+        if set -q out[1]
+            _superfind_resume $out
+        end
         return
     end
     if set -q argv[1]
@@ -459,12 +472,75 @@ func runLast(args []string) {
 		fail("superfind last: no session that fits these filters started in this folder or a folder that holds it.")
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
-	case r.Open != nil:
-		fail("superfind last: " + render.Flat(r.Session.Title) + " is already open " + openWhere(*r.Open) +
-			". superfind last doesn't start a second copy.")
 	default:
-		fmt.Fprint(stdout, handoff(r))
+		resumeLast(r)
 	}
+}
+
+type lastAction int
+
+const (
+	handItOff lastAction = iota
+	switchedTab
+	askFirst
+	sayWhereItIs
+)
+
+func lastStep(s *open.State, inTmux bool, focus func(open.State) bool, terminal bool) lastAction {
+	switch open.Reaching(s, inTmux, focus) {
+	case open.NotOpen, open.InPane:
+		return handItOff
+	case open.Focused:
+		return switchedTab
+	}
+	if terminal {
+		return askFirst
+	}
+	return sayWhereItIs
+}
+
+func resumeLast(r session.Row) {
+	title := render.Flat(r.Session.Title)
+	var tty *os.File
+	if r.Open != nil {
+		tty = terminal()
+	}
+	switch lastStep(r.Open, os.Getenv("TMUX") != "", ghostty.Focus, tty != nil) {
+	case switchedTab:
+		fmt.Fprintln(stderr, "superfind last: "+title+" is open in another Ghostty tab; switched to it.")
+		return
+	case askFirst:
+		if !confirmed(tty, title+" is open in another window. Enter resumes a copy; Esc cancels.") {
+			exit(1)
+		}
+	case sayWhereItIs:
+		fail("superfind last: " + title + " is already open " + openWhere(*r.Open) + ". superfind last doesn't start a second copy.")
+	}
+	fmt.Fprint(stdout, handoff(r))
+}
+
+func terminal() *os.File {
+	if !term.IsTerminal(os.Stdin.Fd()) {
+		return nil
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil
+	}
+	return tty
+}
+
+func confirmed(tty *os.File, question string) bool {
+	fmt.Fprint(tty, question+" ")
+	defer fmt.Fprintln(tty)
+	state, err := term.MakeRaw(tty.Fd())
+	if err != nil {
+		return false
+	}
+	defer term.Restore(tty.Fd(), state)
+	key := make([]byte, 64)
+	n, _ := tty.Read(key)
+	return string(key[:n]) == "\r" || string(key[:n]) == "\n"
 }
 
 func openWhere(o open.State) string {
