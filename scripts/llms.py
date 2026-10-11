@@ -81,7 +81,8 @@ OUTCOME_FIELDS = {
              "directly or in a squash), or `reverted` (merged, then a later commit on the default branch reverts it). "
              "A pull request is `opened`, `merged`, or `reverted`.",
     "branch": "The default branch it is measured against, such as `main`, or empty when none was found.",
-    "landed": "The hash of the default branch's commit that carries it: the commit itself or its squash. Empty when not merged.",
+    "landed": "The hash of the default branch's commit that carries it: the commit itself, its amended or rebased copy, "
+              "or its squash. Empty when not merged.",
     "landed_at": "When that commit was committed, in UTC. Empty when not merged.",
     "reverted_by": "The hash of the default branch's commit that reverts it, or empty.",
 }
