@@ -290,6 +290,11 @@ class Blame(SuperfindBehavior):
         with part.open("a") as f:
             f.write("\n".join(edited(t + 9, "s2", str(self.work / "charge.go"))) + "\n")
         self.assertEqual(self.found("charge.go"), [(uid(1), "edited it 3 times")])
+        part.parent.chmod(0)
+        self.addCleanup(part.parent.chmod, 0o755)
+        os.utime(path)
+        result = self.blame("charge.go", "--json")
+        self.assertEqual([(r["id"], r["match"]) for r in map(json.loads, result.stdout.splitlines())], [(uid(1), "edited it 3 times")])
 
     def test_blame_says_when_a_cache_it_cannot_write_may_miss_new_edits(self):
         t = self.now - 3600

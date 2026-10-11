@@ -80,7 +80,8 @@ func clipMasked(s string, n int) string {
 
 func parse(f found) (parsed, bool, error) {
 	t, trail, err := agent.ReadSession(f.Agent, f.path)
-	if err != nil {
+	var unread *agent.PartUnread
+	if err != nil && !errors.As(err, &unread) {
 		return parsed{}, false, err
 	}
 	seen := map[agent.PR]bool{}
@@ -89,13 +90,13 @@ func parse(f found) (parsed, bool, error) {
 		seen[pr] = true
 		return repeated
 	})
-	p := parsed{entry: cacheEntry{FileID: f.id, Name: f.name, Parent: t.Parent, Commits: len(trail.Commits)}, trail: trail}
+	p := parsed{kept: unread != nil, entry: cacheEntry{FileID: f.id, Name: f.name, Parent: t.Parent, Commits: len(trail.Commits)}, trail: trail}
 	firstPrompt, latestPrompt := "", ""
 	if len(t.Prompts) > 0 {
 		firstPrompt, latestPrompt = t.Prompts[0], t.Prompts[len(t.Prompts)-1]
 	}
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
-		return p, t.Incomplete, nil
+		return p, t.Incomplete || unread != nil, err
 	}
 	p.body = agent.Searchable(strings.Join(t.Messages, "\n"))
 	p.entry.Session = &Session{
@@ -104,7 +105,7 @@ func parse(f found) (parsed, bool, error) {
 		LastPrompt: clipMasked(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
 		Words: len(strings.Fields(p.body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
 	}
-	return p, t.Incomplete, nil
+	return p, t.Incomplete || unread != nil, err
 }
 
 type cacheEntry struct {
@@ -429,6 +430,7 @@ type parsed struct {
 	entry cacheEntry
 	body  string
 	trail agent.Trail
+	kept  bool
 }
 
 func Unreadable(problems []error) string {
@@ -519,7 +521,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 			for f := range work {
 				p, incomplete, err := parse(f)
 				mu.Lock()
-				if err != nil {
+				if err != nil && !p.kept {
 					problems = append(problems, err)
 					mu.Unlock()
 					continue
@@ -626,7 +628,10 @@ func updateSearch(db *sql.DB, results, partial map[string]parsed, gone []string,
 				return err
 			}
 		}
-		for p := range partial {
+		for p, r := range partial {
+			if r.kept {
+				continue
+			}
 			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?, 0)", p); err != nil {
 				return err
 			}
@@ -654,6 +659,9 @@ func updateSearch(db *sql.DB, results, partial map[string]parsed, gone []string,
 	}
 	for _, batch := range []map[string]parsed{results, partial} {
 		for p, r := range batch {
+			if r.kept {
+				continue
+			}
 			for how, files := range map[string][]agent.Edit{Edited: r.trail.Edits, Read: r.trail.Reads} {
 				for _, f := range files {
 					if _, err := file.Exec(p, f.Path, filepath.Base(f.Path), how, ByATool, f.Failed, f.At); err != nil {

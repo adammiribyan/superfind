@@ -23,7 +23,7 @@ type Agent struct {
 	Names    func(home string) map[string]string
 	reader   func(path string, start Transcript) (reader, error)
 	trail    func(t *Trail) func(raw []byte) bool
-	parts    func(path string) []string
+	parts    func(path string) ([]string, error)
 }
 
 var Agents = []*Agent{
@@ -136,7 +136,8 @@ func (a *Agent) Stat(path string) (FileID, float64, error) {
 		}
 	}
 	if a.parts != nil {
-		for _, part := range a.parts(path) {
+		parts, _ := a.parts(path)
+		for _, part := range parts {
 			if side, err := os.Stat(part); err == nil {
 				id.ModNanos += side.ModTime().UnixNano()
 				id.Size += side.Size()

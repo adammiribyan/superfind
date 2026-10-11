@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -150,16 +151,23 @@ func stamp(s string) float64 {
 func ReadTrail(a *Agent, path string, threads ...string) (Trail, error) {
 	var t Trail
 	paths := []string{path}
+	var problems []error
 	if a.parts != nil {
-		paths = append(paths, a.parts(path)...)
+		parts, err := a.parts(path)
+		paths, problems = append(paths, parts...), append(problems, err)
 	}
 	paths = append(paths, threads...)
-	var problems []error
 	for _, p := range paths {
 		problems = append(problems, eachLine(p, a.trail(&t)))
 	}
 	return t, errors.Join(problems...)
 }
+
+type PartUnread struct{ err error }
+
+func (p *PartUnread) Error() string { return p.err.Error() }
+
+func (p *PartUnread) Unwrap() error { return p.err }
 
 func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
 	r, err := a.reader(path, Transcript{Last: Replied})
@@ -174,24 +182,31 @@ func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
 		return true
 	})
 	t := r.done()
-	if a.parts != nil {
-		for _, p := range a.parts(path) {
-			t.Incomplete = eachLine(p, a.trail(&trail)) != nil || t.Incomplete
+	if a.parts != nil && err == nil {
+		parts, problem := a.parts(path)
+		for _, p := range parts {
+			problem = errors.Join(problem, eachLine(p, a.trail(&trail)))
+		}
+		if problem != nil {
+			err = &PartUnread{problem}
 		}
 	}
 	return t, trail, err
 }
 
-func claudeParts(path string) []string {
+func claudeParts(path string) ([]string, error) {
 	dir := filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents")
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		err = nil
+	}
 	var found []string
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".jsonl") {
 			found = append(found, filepath.Join(dir, e.Name()))
 		}
 	}
-	return found
+	return found, err
 }
 
 type claudeTrailLine struct {
