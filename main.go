@@ -159,8 +159,10 @@ Print the sessions that best fit what you describe, even when they used other wo
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same filters as search, such as agent:codex or in:here, and prints
 the same fields.
-With --json, it prints one JSON object per line, as search --json does. --limit N prints
-only the first N sessions.
+With --json, it prints one JSON object per line, as search --json does. Its match is a
+passage with some of your words, not counting common ones like the, when the conversation
+doesn't hold them all. It shows where a session touches your words, not how well it fits.
+--limit N prints only the first N sessions.
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
