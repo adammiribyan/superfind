@@ -68,7 +68,7 @@ Open the picker with `sfd`, `superfind`, or **Ctrl-X**, then **c**. Type to sear
 
 Try a description like `where we fixed duplicate charges`, then press **Ctrl-R**. Search by description requires Claude Code installed and logged in, or a TypeSafe API key.
 
-Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`.
+Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`. Use `is:unfinished` for sessions that stopped partway.
 
 <details>
 <summary>Faster search and session labels with TypeSafe</summary>
@@ -79,7 +79,7 @@ Get a key from [TypeSafe](https://docs.typesafe.ai) and set:
 export TYPESAFE_API_KEY=your-key
 ```
 
-This also labels sessions **waiting on you** or **unfinished**. Use `is:waiting` or `is:unfinished` to filter them.
+This also labels sessions **waiting on you**. Use `is:waiting` to filter them.
 
 </details>
 
