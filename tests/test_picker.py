@@ -21,7 +21,7 @@ from test_superfind import (ANSI, SUPERFIND, claude, codex_call, codex_meta, cod
                             grok_reply, grok_user, line, serve, tool, uid, user)
 
 
-ASK_FIRST = "Open in another window. Enter again resumes a copy; Esc goes back."
+ASK_FIRST = "Open in another window; Enter again resumes a copy. Esc goes back."
 GHOSTTY = 'if application "Ghostty" is running then tell application "Ghostty" to '
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
 CELL_GAP = r" {2,}"
@@ -153,13 +153,13 @@ class PickerBehavior(unittest.TestCase):
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.open_picker(pick="pick --run")
         self.keys("Down", "Enter")
-        self.wait_for("Open in another window.")
+        self.wait_for(ASK_FIRST)
         self.assertFalse(Path(f"{self.out}.code").exists(), "closed instead of asking first")
         self.assertFalse(Path(f"{self.out}.resumed").exists())
         self.keys("Escape")
         self.assertFalse(Path(f"{self.out}.code").exists(), "Esc left the picker instead of going back")
         self.keys("Enter")
-        self.wait_for("Open in another window.")
+        self.wait_for(ASK_FIRST)
         self.keys("Enter")
         self.assertEqual(self.result(), (0, "Resuming \x1b[1mInvoice layout\x1b[m\x1b[2m · already open in another window\x1b[m\n"))
         self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "Enter again did not resume a copy")
@@ -174,7 +174,7 @@ class PickerBehavior(unittest.TestCase):
         (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
                                                                  "startedAt": int(time.time() * 1000), "status": "idle"}))
         self.keys("Down", "Enter")
-        self.wait_for("Open in another window.")
+        self.wait_for(ASK_FIRST)
         self.assertFalse(Path(f"{self.out}.resumed").exists(), "the session opened while the picker was up was resumed")
 
     def three_sessions(self):

@@ -463,7 +463,7 @@ func openPicker(t *testing.T) picker {
 	return m
 }
 
-const confirmLine = "Open in another window. Enter again resumes a copy; Esc goes back."
+const confirmLine = "Open in another window; Enter again resumes a copy. Esc goes back."
 
 func screenOf(m picker) string { return ansi.Strip(m.View().Content) }
 
@@ -629,5 +629,30 @@ func TestEnterKeepsTheKnownPaneWhenTmuxDoesNotAnswerTheFreshLook(t *testing.T) {
 	m, msg := press(m, tea.KeyEnter)
 	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Open == nil || m.chosen.Open.Tmux == nil || m.chosen.Open.Tmux.ID != "%3" {
 		t.Fatalf("enter sent %v and chose %+v, want it to quit choosing the session in pane %%3", msg, m.chosen)
+	}
+}
+
+func TestTheQuestionKeepsItsFirstSentenceWhereTheWholeLineDoesNotFit(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	m, _ := press(openPicker(t), tea.KeyEnter)
+	first := "Open in another window; Enter again resumes a copy."
+	cases := []struct {
+		width      int
+		want, gone string
+	}{
+		{160, confirmLine, ""},
+		{130, confirmLine, ""},
+		{125, first, "Esc goes back"},
+		{110, first, "Esc goes back"},
+		{96, confirmLine, ""},
+		{50, "Open in another window; Enter again resumes a …", "copy."},
+	}
+	for _, c := range cases {
+		next, _ := m.Update(tea.WindowSizeMsg{Width: c.width, Height: 36})
+		screen := screenOf(next.(picker))
+		if !strings.Contains(screen, c.want) || (c.gone != "" && strings.Contains(screen, c.gone)) {
+			t.Errorf("at %d columns the screen reads\n%s\nwant %q without %q", c.width, screen, c.want, c.gone)
+		}
 	}
 }

@@ -733,7 +733,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.editInput(msg)
 }
 
-const confirmCopy = "Open in another window. Enter again resumes a copy; Esc goes back."
+const confirmCopy = "Open in another window; Enter again resumes a copy. Esc goes back."
 
 func freshest(cached, fresh *open.State) *open.State {
 	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
