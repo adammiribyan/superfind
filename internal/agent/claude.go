@@ -88,6 +88,7 @@ type parser struct {
 	entrypoint string
 	typed      bool
 	peers      *Transcript
+	before     Event
 }
 
 var (
@@ -127,6 +128,8 @@ func (p *parser) feed(raw []byte) bool {
 	}
 	switch l.Type {
 	case "user":
+		before := p.before
+		p.before = ""
 		c := decodeContent(l.Message.Content)
 		text := strings.TrimSpace(c.text)
 		wasInterrupted := strings.HasPrefix(text, interruptMark)
@@ -151,7 +154,12 @@ func (p *parser) feed(raw []byte) bool {
 			t.Last = Interrupted
 		case c.hasResult:
 			t.Last = CalledTool
+		case strings.HasPrefix(text, "<local-command-std"):
+			t.Last = cmp.Or(before, t.Last)
 		case prompt != "" && !l.IsMeta:
+			if slashCommand.MatchString(text) {
+				p.before = t.Last
+			}
 			t.Last = Prompted
 			t.ask(prompt)
 			p.typed, p.peers = true, nil
@@ -159,7 +167,7 @@ func (p *parser) feed(raw []byte) bool {
 	case "assistant":
 		c := decodeContent(l.Message.Content)
 		t.ToolCalls += c.toolUses
-		t.Last = Replied
+		t.Last, p.before = Replied, ""
 		if c.toolUses > 0 {
 			t.Last = CalledTool
 		}

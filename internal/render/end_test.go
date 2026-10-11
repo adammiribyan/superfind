@@ -33,9 +33,17 @@ func TestTheEndOfAReplyRendersAsTheWholeReplyDoes(t *testing.T) {
 			text += strings.Repeat("\n", r.IntN(40))
 		}
 		width := []int{20, 60, 118}[i%3]
-		got := excerpt(renderEnd(text, width, 18), 18, true, "earlier", "")
-		if want := excerpt(render(text, width), 18, true, "earlier", ""); !reflect.DeepEqual(got, want) {
-			t.Fatalf("reply %d at width %d:\n got %q\nwant %q", i, width, got, want)
+		end, whole := renderEnd(text, width, 18), render(text, width)
+		for keep := range 19 {
+			got := excerpt(end, keep, true, "earlier", "")
+			if want := excerpt(whole, keep, true, "earlier", ""); !reflect.DeepEqual(got, want) {
+				t.Fatalf("reply %d at width %d keeping %d:\n got %q\nwant %q", i, width, keep, got, want)
+			}
+		}
+		for rows := range 40 {
+			if got, want := min(18, within(end, rows)), min(18, within(whole, rows)); got != want {
+				t.Fatalf("reply %d at width %d in %d rows: keeps %d, want %d", i, width, rows, got, want)
+			}
 		}
 	}
 }

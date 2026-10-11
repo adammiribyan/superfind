@@ -54,6 +54,7 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 - If users will notice the change, update the README and add a line under the top version in [CHANGELOG.md](CHANGELOG.md).
 - Write commit messages that say what changed for the user, such as `fix: keep the selection when the list refreshes`.
 - If you change the picker's look, re-record the demo (below) so the README stays true.
+- If you change `llms.txt`, a command's help, or the JSON output, run `python3 scripts/llms.py` and commit `llms-full.txt`. A behavior test fails while it is out of date. A new JSON field needs a line in the script's `FIELDS`.
 
 ## Demo
 
