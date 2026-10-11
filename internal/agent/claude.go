@@ -88,9 +88,8 @@ type parser struct {
 	entrypoint string
 	typed      bool
 	peers      *Transcript
+	before     Event
 }
-
-func newParser() *parser { return &parser{t: Transcript{Last: Replied}} }
 
 var (
 	agentMessageLine = regexp.MustCompile(`^(?:Another Claude session|The coordinator) sent a message[^\n]*:\n`)
@@ -129,6 +128,8 @@ func (p *parser) feed(raw []byte) bool {
 	}
 	switch l.Type {
 	case "user":
+		before := p.before
+		p.before = ""
 		c := decodeContent(l.Message.Content)
 		text := strings.TrimSpace(c.text)
 		wasInterrupted := strings.HasPrefix(text, interruptMark)
@@ -141,10 +142,9 @@ func (p *parser) feed(raw []byte) bool {
 				t.Last = Prompted
 				if !p.typed {
 					if p.peers == nil {
-						p.peers = &Transcript{}
+						p.peers = &Transcript{hear: t.hear, peer: true}
 					}
-					p.peers.Prompts = append(p.peers.Prompts, asked)
-					p.peers.say("user", asked)
+					p.peers.ask(asked)
 				}
 			}
 			return true
@@ -154,16 +154,20 @@ func (p *parser) feed(raw []byte) bool {
 			t.Last = Interrupted
 		case c.hasResult:
 			t.Last = CalledTool
+		case strings.HasPrefix(text, "<local-command-std"):
+			t.Last = cmp.Or(before, t.Last)
 		case prompt != "" && !l.IsMeta:
+			if slashCommand.MatchString(text) {
+				p.before = t.Last
+			}
 			t.Last = Prompted
-			t.Prompts = append(t.Prompts, prompt)
-			t.say("user", prompt)
+			t.ask(prompt)
 			p.typed, p.peers = true, nil
 		}
 	case "assistant":
 		c := decodeContent(l.Message.Content)
 		t.ToolCalls += c.toolUses
-		t.Last = Replied
+		t.Last, p.before = Replied, ""
 		if c.toolUses > 0 {
 			t.Last = CalledTool
 		}
@@ -189,7 +193,9 @@ func (p *parser) done() Transcript {
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
 	}
+	p.t.join()
 	if !p.typed && p.peers != nil {
+		p.peers.join()
 		p.t.Prompts, p.t.Turns, p.t.Messages = p.peers.Prompts, p.peers.Turns, p.peers.Messages
 		p.t.ByAgent, p.t.PeerDriven = true, true
 	}
