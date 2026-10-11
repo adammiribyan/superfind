@@ -19,7 +19,7 @@ class Installer(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp()).resolve()
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.clone = self.home / "src" / "superfind"
-        shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env"))
+        shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env", "demo"))
 
     def install(self, shell):
         env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES}

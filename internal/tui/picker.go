@@ -21,6 +21,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
@@ -33,7 +34,7 @@ import (
 const (
 	wideColumns    = 100
 	headerLines    = 4
-	colorTimeout   = 300 * time.Millisecond
+	colorTimeout   = time.Second
 	labelsInterval = 1500 * time.Millisecond
 	marginTop      = 1
 	marginSide     = 1
@@ -263,7 +264,8 @@ func (m picker) Init() tea.Cmd {
 		tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }),
 	}
 	if !m.colors.noColor {
-		cmds = append(cmds, tea.RequestBackgroundColor, tea.RequestForegroundColor)
+		cmds = append(cmds, tea.Sequence(tea.RequestBackgroundColor, tea.RequestForegroundColor,
+			tea.Raw(ansi.RequestPrimaryDeviceAttributes)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -336,33 +338,36 @@ func (m *picker) search() {
 
 func (m *picker) filter() {
 	query := m.input.Value()
-	if agents := session.AsksForAgents(query); agents != m.agents {
-		m.agents = agents
+	q := session.Parse(query)
+	if q.Agents != m.agents {
+		m.agents = q.Agents
 		m.populate()
 	}
 	m.message = m.problem
+	var err error
 	switch {
 	case strings.TrimSpace(query) == "", m.db == nil:
-		_, m.shown = session.Narrow(query, m.all)
+		m.shown = q.Rows(m.all, false)
 		if len(m.all) == 0 && len(m.rows) > 0 && m.problem == "" && strings.TrimSpace(query) == "" {
 			m.message = "Only sessions other programs started. Type is:agent to see them."
 		}
 	default:
-		shown, err := session.Search(m.db, query, m.all)
-		m.shown = shown
-		words, _ := session.Narrow(query, nil)
+		m.shown, err = session.Search(m.db, query, m.all)
 		if errors.Is(err, session.ErrDamaged) {
 			m.db, m.reindex = nil, true
-			_, m.shown = session.Narrow(query, m.all)
+			m.shown = q.Rows(m.all, false)
 		}
 		switch {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
-		case len(m.shown) == 0 && len(m.all) > 0 && words != "":
+		case len(m.shown) == 0 && len(m.all) > 0 && q.Words != "":
 			m.message = "No session contains these words. ctrl-r asks by description."
 		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
+	}
+	if q.Problem != nil && err == nil {
+		m.message = q.Problem.Hint
 	}
 }
 
@@ -439,8 +444,9 @@ func (m *picker) showBody(key bodyKey, body []string) {
 }
 
 func (m picker) startAsk() (picker, tea.Cmd) {
-	query, rows := session.Narrow(m.input.Value(), m.all)
-	if query == "" || len(m.all) == 0 {
+	q := session.Parse(m.input.Value())
+	query, rows := q.Words, q.Rows(m.all, false)
+	if query == "" || len(m.all) == 0 || q.Problem != nil {
 		return m, nil
 	}
 	if m.db == nil {
@@ -507,7 +513,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.settleColors()
 			return m.loadPreview()
 		}
-	case colorsSettled:
+	case colorsSettled, uv.PrimaryDeviceAttributesEvent:
 		if !m.colors.settled {
 			m.settleColors()
 			return m.loadPreview()
