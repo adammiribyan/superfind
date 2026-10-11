@@ -288,3 +288,16 @@ func firstRune(s string) rune {
 	r, _ := utf8.DecodeRuneInString(s)
 	return r
 }
+
+func TestABodyIsCutOnARuneAndNeverInsideAMask(t *testing.T) {
+	if got := body("a"+strings.Repeat("é", 1000), 2000); got != "a"+strings.Repeat("é", 999)+"…" {
+		t.Fatalf("got %d bytes ending %q", len(got), got[len(got)-8:])
+	}
+	key := "sk-ant-" + strings.Repeat("a1B2c3D4e5", 3)
+	if got := body(strings.Repeat("x", 1990)+" "+key+" tail", 2000); got != strings.Repeat("x", 1990)+"…" {
+		t.Fatalf("got %q", got[1985:])
+	}
+	if got := body("ok\xff\xfe", 2000); got != "ok�" {
+		t.Fatalf("got %q", got)
+	}
+}
