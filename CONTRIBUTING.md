@@ -55,6 +55,7 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 - Each version in CHANGELOG.md, and `[Unreleased]`, starts with a one-line `> headline`. The picker shows it once after an update as what's new, so keep it plain text of 64 characters or fewer, with no period at the end. `go test` checks it.
 - Write commit messages that say what changed for the user, such as `fix: keep the selection when the list refreshes`.
 - If you change the picker's look, re-record the demo (below) so the README stays true.
+- Behavior tests set `SUPERFIND_TELEMETRY=off` and point `SUPERFIND_CHECKIN_URL` at a closed loopback port, so no test reaches superfind.dev. Copy both into any new test environment; only `tests/test_telemetry.py` turns telemetry on, against a loopback server.
 - `llms-full.txt` isn't committed. `python3 scripts/llms.py` writes it from `llms.txt`, every command's help, and real JSON output, and a behavior test fails if it can't. A new JSON field needs a line in the script's `FIELDS`.
 
 ## Demo
