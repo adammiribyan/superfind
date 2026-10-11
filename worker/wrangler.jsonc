@@ -1,0 +1,14 @@
+{
+  "name": "superfind-checkin",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "superfind.dev/v1/*", "zone_name": "superfind.dev" }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    // PostHog project 658515. A project key only writes events; it is public by design.
+    "POSTHOG_KEY": "phc_vii9VWXUfiaopGV336Vdj63bn7ARqCmWkLPjvjf4cwxT"
+  },
+  // No request logs: the check-in promises nothing about the caller is kept.
+  "observability": { "enabled": false, "logs": { "enabled": false } }
+}
