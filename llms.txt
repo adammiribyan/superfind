@@ -24,7 +24,7 @@ Keyword search, `show`, and `command` run locally and send nothing. superfind ne
 
 - [Full reference](https://superfind.dev/llms-full.txt): every command's help and every JSON field, with examples, in one file
 - [README](https://raw.githubusercontent.com/adammiribyan/superfind/main/README.md): install, keys, scripts, and privacy
-- [Agent skill](https://raw.githubusercontent.com/adammiribyan/superfind/main/skills/superfind/SKILL.md): when and how a coding agent should use superfind, with recipes; [skills/README.md](https://raw.githubusercontent.com/adammiribyan/superfind/main/skills/README.md) says how to install it in Claude Code, Codex, and Grok
+- [Agent skill](https://raw.githubusercontent.com/adammiribyan/superfind/main/plugins/superfind/skills/superfind/SKILL.md): when and how a coding agent should use superfind, with recipes; [its README](https://raw.githubusercontent.com/adammiribyan/superfind/main/plugins/superfind/README.md) says how to install it in Claude Code, Codex, and Grok
 - [Changelog](https://raw.githubusercontent.com/adammiribyan/superfind/main/CHANGELOG.md): what changed in each release
 
 ## Optional

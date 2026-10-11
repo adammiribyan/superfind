@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "superfind",
-      "source": "./",
+      "source": "./plugins/superfind",
       "description": "Find, read, and resume past Claude Code, Codex, and Grok sessions with the superfind CLI"
     }
   ]

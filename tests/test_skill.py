@@ -13,7 +13,8 @@ from test_superfind import (CODEX_ENVIRONMENT, SUPERFIND, SuperfindBehavior, cla
                             interrupted, tool, uid, user)
 
 ROOT = Path(__file__).resolve().parent.parent
-SKILL = ROOT / "skills" / "superfind" / "SKILL.md"
+PLUGIN = ROOT / "plugins" / "superfind"
+SKILL = PLUGIN / "skills" / "superfind" / "SKILL.md"
 JQ = shutil.which("jq")
 
 
@@ -40,10 +41,11 @@ class Skill(SuperfindBehavior):
 
     def test_the_marketplace_installs_the_plugin_that_holds_the_skill(self):
         market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
-        plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
-        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [(plugin["name"], "./")])
+        plugin = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [(plugin["name"], "./plugins/superfind")])
         self.assertEqual((market["name"], plugin["name"]), ("superfind", "superfind"))
-        self.assertTrue((ROOT / "skills" / plugin["name"] / "SKILL.md").is_file())
+        self.assertTrue((ROOT / market["plugins"][0]["source"] / "skills" / plugin["name"] / "SKILL.md").is_file())
+        self.assertEqual(sorted(p.name for p in PLUGIN.iterdir()), [".claude-plugin", "README.md", "skills"])
         self.assertNotIn("version", plugin)
 
     def test_every_superfind_command_in_the_skill_exists(self):

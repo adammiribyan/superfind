@@ -7,7 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
-- A `superfind` skill for coding agents, so that asking Claude Code, Codex, or Grok "where did we fix X last week?" or "continue my Codex session here" makes it search your sessions and read a handoff instead of guessing. Install it with `/plugin install superfind@superfind` in Claude Code after `/plugin marketplace add adammiribyan/superfind`, `codex plugin add superfind@superfind` in Codex after `codex plugin marketplace add adammiribyan/superfind`, or `grok plugin install adammiribyan/superfind --trust` in Grok. [skills/README.md](skills/README.md) has the details.
+- A `superfind` skill for coding agents, so that asking Claude Code, Codex, or Grok "where did we fix X last week?" or "continue my Codex session here" makes it search your sessions and read a handoff instead of guessing. Install it with `/plugin install superfind@superfind` in Claude Code after `/plugin marketplace add adammiribyan/superfind`, `codex plugin add superfind@superfind` in Codex after `codex plugin marketplace add adammiribyan/superfind`, or `grok plugin install adammiribyan/superfind --trust` in Grok. [plugins/superfind/README.md](plugins/superfind/README.md) has the details.
 - In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
 - `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
