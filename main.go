@@ -161,11 +161,11 @@ Run it inside the git repository, or pass a file in one.
                session did in match
 
 A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it.
-It reads the commands and edits each agent recorded, so it misses a commit made by hand in a
-terminal or on another machine, and one whose message and hash the session never recorded. A
-message counts when it matches, ignoring case and punctuation, has at least 12 letters and
-digits, and the session ran it from a folder in the repository or one that no longer exists.
+started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+hand in a terminal or on another machine, and one whose message and hash the session never
+recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
+letters and digits, and the session ran it from a folder in the repository or one that no
+longer exists.
 `,
 	"index": `superfind index
 

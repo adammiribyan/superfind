@@ -227,7 +227,7 @@ func lineTarget(path, line string) (Target, error) {
 	if dir == "" {
 		dir = "."
 	}
-	out, err := git(dir, "blame", "--porcelain", "-L", line+","+line, "--", base)
+	out, err := git(dir, "blame", "--no-textconv", "--porcelain", "-L", line+","+line, "--", base)
 	if err != nil {
 		return Target{}, err
 	}
