@@ -27,7 +27,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/store"
 )
 
-const cacheVersion = 15
+const cacheVersion = 16
 
 const (
 	titleRunes  = 200
