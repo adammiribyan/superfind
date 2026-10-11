@@ -1,4 +1,4 @@
-package show
+package mask
 
 import (
 	"regexp"
@@ -100,7 +100,7 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 
 func maskedAs(kind string) string { return "[masked " + kind + "]" }
 
-func Mask(text string) string {
+func Secrets(text string) string {
 	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key"))))
 }
 
@@ -138,4 +138,23 @@ func maskKeys(text string) string {
 	}
 	out.WriteString(text)
 	return out.String()
+}
+
+func EndsKey(text string) bool { return privateKeyEnd.MatchString(text) }
+
+func OpenKeyAt(text string) int {
+	if !strings.Contains(text, "PRIVATE KEY-----") {
+		return -1
+	}
+	found := privateKey.FindAllStringSubmatchIndex(text, -1)
+	if last := len(found) - 1; last >= 0 && found[last][2] == found[last][3] {
+		return found[last][0]
+	}
+	return -1
+}
+
+func CloseKeys(text string, open int) (string, string) {
+	closed := privateKey.ReplaceAllString(text[:open], maskedAs("private key"))
+	split := strings.LastIndexByte(closed, '\n') + 1
+	return closed[:split], closed[split:] + text[open:]
 }
