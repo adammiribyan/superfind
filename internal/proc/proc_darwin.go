@@ -69,5 +69,5 @@ func processOf(k *unix.KinfoProc) Process {
 		}
 	}
 	started := time.Unix(k.Proc.P_starttime.Sec, int64(k.Proc.P_starttime.Usec)*int64(time.Microsecond))
-	return Process{PID: pid, Name: name, Start: started, TTY: tty}
+	return Process{PID: pid, PPID: int(k.Eproc.Ppid), Name: name, Start: started, TTY: tty}
 }

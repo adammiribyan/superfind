@@ -53,7 +53,7 @@ class Recall(SuperfindBehavior):
         env = {**self.env, "TZ": tz or "UTC", "PWD": str(here) if pwd is KEEP else pwd}
         if env["PWD"] is None:
             del env["PWD"]
-        return subprocess.run([str(SUPERFIND), *args], env=env, capture_output=True, text=True, cwd=here)
+        return subprocess.run([str(SUPERFIND), *args], env=env, capture_output=True, text=True, cwd=here, stdin=subprocess.DEVNULL)
 
     def ids(self, *search, here=None, pwd=KEEP, tz=None):
         result = self.run_in("search", *search, here=here, pwd=pwd, tz=tz)

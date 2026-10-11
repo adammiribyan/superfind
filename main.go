@@ -23,6 +23,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
@@ -105,11 +106,17 @@ Open the picker full screen. When you choose a session, print its title on the f
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
 
+When an agent already has the session open, Enter doesn't start a second copy. If the agent
+runs in a pane of the tmux server you're in, the second line is tmux switch-client to that
+pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab uses,
+superfind switches to that tab and exits 1, so the shell does nothing. Otherwise the picker
+asks first: Enter again resumes a copy, Esc goes back.
+
   --run           run the command in place of superfind instead of printing it, for a terminal
                   with no shell to hand it to, such as one a desktop keybinding opens. The exit
-                  status is then the agent's. A session an agent already has open is refused,
-                  as superfind last does, and in a terminal superfind waits for Enter so you can
-                  read why.
+                  status is then the agent's. On a session an agent already has open, it runs
+                  what Enter chose: the switch to its tmux pane, or a copy after you pressed
+                  Enter again.
 
 Type filters in the search box to narrow the list, such as in:here, branch:main,
 after:yesterday, or agent:codex; superfind help search lists them all.
@@ -126,9 +133,15 @@ With the shell setup from superfind init, when its input and output are a termin
 option starting with - is given, superfind last cds into the session's folder and resumes it,
 as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
 it prints the session's title on the first line and the command that resumes it on the second,
-as superfind pick does. Exit 1 when no session fits, or when an agent already has the newest
-session open: superfind last says where it is open instead of starting a second copy. An agent: or is: value superfind doesn't
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
 know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
+
+When an agent already has the newest session open, superfind last doesn't start a second copy.
+If the agent runs in a pane of the tmux server you're in, the second line is tmux switch-client
+to that pane. Otherwise, without a terminal, it says where the session is open and exits 1.
+At a terminal, if the agent runs in a Ghostty tab and your Ghostty can say which terminal each
+tab uses, superfind last switches to that tab, prints nothing, and exits 0; if not, it asks
+first: Enter resumes a copy, any other key cancels (exit 1).
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
                   after:yesterday
@@ -295,6 +308,7 @@ const zshSetup = `superfind() {
     return
   fi
   _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  [[ -n $_sf_out ]] || return 0
   print -r -- $'Resuming \e[1m'"${_sf_out%%%%$'\n'*}"$'\e[0m'
   print -s -- "${_sf_out#*$'\n'}"
   eval "${_sf_out#*$'\n'}"
@@ -331,6 +345,7 @@ const bashSetup = `superfind() {
     return
   fi
   _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  [[ -n $_sf_out ]] || return 0
   printf 'Resuming \e[1m%%s\e[0m\n' "${_sf_out%%%%$'\n'*}"
   history -s "${_sf_out#*$'\n'}"
   eval "${_sf_out#*$'\n'}"
@@ -361,6 +376,7 @@ const fishSetup = `function superfind
         return
     end
     set -l _sf_out ($_sf_run $argv); or return
+    set -q _sf_out[1]; or return 0
     set -l _sf_resume (string join \n -- $_sf_out[2..-1] | string collect)
     printf 'Resuming \e[1m%%s\e[0m\n' $_sf_out[1]
     if test (string split . -- $version)[1] -ge 4
@@ -409,9 +425,13 @@ func field(s string) string {
 	}, s)
 }
 
-func handoff(r session.Row) {
-	fmt.Fprintln(stdout, handoffTitle(r))
-	fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
+func handoff(r session.Row) string {
+	if r.Open != nil && r.Open.Tmux != nil && os.Getenv("TMUX") != "" {
+		pane := r.Open.Tmux
+		return render.Flat(r.Session.Title) + render.Reset + render.Dim + fmt.Sprintf(" · in tmux session %s, window %d", render.Flat(pane.Session), pane.Window) +
+			"\ntmux switch-client -t " + agent.ShellQuote(pane.ID) + "\n"
+	}
+	return handoffTitle(r) + "\n" + agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID) + "\n"
 }
 
 func runLast(args []string) {
@@ -432,15 +452,91 @@ func runLast(args []string) {
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
 	default:
-		refuseOpen("last", r)
-		handoff(r)
+		resumeLast(r)
 	}
 }
 
-func refuseOpen(command string, r session.Row) {
-	if r.Open != nil {
-		fail(alreadyOpen(command, r))
+type lastAction int
+
+const (
+	handItOff lastAction = iota
+	switchedTab
+	askFirst
+	sayWhereItIs
+)
+
+func lastStep(s *open.State, inTmux bool, focus func(open.State) bool, terminal bool) lastAction {
+	switch open.Reaching(s, inTmux, func(s open.State) bool { return terminal && focus(s) }) {
+	case open.NotOpen, open.InPane:
+		return handItOff
+	case open.Focused:
+		return switchedTab
 	}
+	if terminal {
+		return askFirst
+	}
+	return sayWhereItIs
+}
+
+func resumeLast(r session.Row) {
+	title := render.Flat(r.Session.Title)
+	var tty *os.File
+	if r.Open != nil {
+		tty = terminal()
+	}
+	switch lastStep(r.Open, os.Getenv("TMUX") != "", ghostty.Focus, tty != nil) {
+	case switchedTab:
+		fmt.Fprintln(stderr, "superfind last: "+title+" is open in another Ghostty tab; switched to it.")
+		return
+	case askFirst:
+		if code := answer(tty, title+" is open in another window. Enter resumes a copy; Esc cancels."); code != 0 {
+			exit(code)
+		}
+	case sayWhereItIs:
+		fail(alreadyOpen("last", r))
+	}
+	fmt.Fprint(stdout, handoff(r))
+}
+
+func terminal() *os.File {
+	if !term.IsTerminal(os.Stdin.Fd()) {
+		return nil
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return nil
+	}
+	return tty
+}
+
+func answer(tty *os.File, question string) int {
+	fmt.Fprint(tty, question+" ")
+	defer fmt.Fprintln(tty)
+	state, err := term.MakeRaw(tty.Fd())
+	if err != nil {
+		return 1
+	}
+	defer term.Restore(tty.Fd(), state)
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	keys := make(chan string, 1)
+	go func() {
+		key := make([]byte, 64)
+		n, _ := tty.Read(key)
+		keys <- string(key[:n])
+	}()
+	select {
+	case key := <-keys:
+		if key == "\r" || key == "\n" {
+			return 0
+		}
+	case sig := <-signals:
+		if sig == os.Interrupt {
+			return 130
+		}
+	}
+	return 1
 }
 
 func alreadyOpen(command string, r session.Row) string {
@@ -449,20 +545,8 @@ func alreadyOpen(command string, r session.Row) string {
 }
 
 func resumeHere(r session.Row) {
-	r.Open = nil
-	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
-		r.Open = &state
-	}
-	if r.Open != nil {
-		fmt.Fprintln(stderr, alreadyOpen("pick --run", r))
-		if term.IsTerminal(os.Stdin.Fd()) {
-			fmt.Fprint(stderr, "Press Enter to close.")
-			bufio.NewReader(os.Stdin).ReadString('\n')
-		}
-		exit(1)
-	}
-	command := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID)
-	fmt.Fprintln(stdout, "Resuming "+render.Bold+handoffTitle(r)+render.Reset)
+	title, command, _ := strings.Cut(strings.TrimSuffix(handoff(r), "\n"), "\n")
+	fmt.Fprintln(stdout, "Resuming "+render.Bold+title+render.Reset)
 	if err := output.Flush(); err != nil {
 		fail("superfind pick --run: couldn't write the output: " + err.Error())
 	}
@@ -1051,7 +1135,7 @@ func run(args []string) {
 		if resume {
 			resumeHere(*chosen)
 		}
-		handoff(*chosen)
+		fmt.Fprint(stdout, handoff(*chosen))
 	case "last":
 		runLast(args[1:])
 	default:

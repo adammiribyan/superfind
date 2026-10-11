@@ -34,9 +34,9 @@ func TestProcArgsRejectsATruncatedBuffer(t *testing.T) {
 }
 
 func TestParseStatReadsANameWithParenthesesAndSpaces(t *testing.T) {
-	line := "4242 (a) (b c) S 1 4242 4242 34819 4242 4194304 120 0 0 0 7 3 0 0 20 0 1 0 987654 1000 12 18446744073709551615\n"
+	line := "4242 (a) (b c) S 77 4242 4242 34819 4242 4194304 120 0 0 0 7 3 0 0 20 0 1 0 987654 1000 12 18446744073709551615\n"
 	got, ok := parseStat(line)
-	if want := (stat{name: "a) (b c", tty: TTY{136, 3}, ticks: 987654}); !ok || got != want {
+	if want := (stat{name: "a) (b c", ppid: 77, tty: TTY{136, 3}, ticks: 987654}); !ok || got != want {
 		t.Fatalf("got %+v ok=%v, want %+v", got, ok, want)
 	}
 }
@@ -96,7 +96,7 @@ func TestLookupFindsThisProcessAndNotAReapedOne(t *testing.T) {
 		t.Skip("process facts are read on macOS and Linux only")
 	}
 	me, ok := Lookup(os.Getpid())
-	if !ok || me.PID != os.Getpid() || me.Name == "" {
+	if !ok || me.PID != os.Getpid() || me.PPID != os.Getppid() || me.Name == "" {
 		t.Fatalf("got %+v ok=%v", me, ok)
 	}
 	if age := time.Since(me.Start); age < -time.Second || age > time.Minute {

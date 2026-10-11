@@ -147,6 +147,11 @@ class SuperfindBehavior(unittest.TestCase):
         for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
                      "NO_COLOR", "SUPERFIND_SECONDARY"):
             self.env.pop(name, None)
+        no_ghostty = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, no_ghostty, True)
+        (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
+        (no_ghostty / "osascript").chmod(0o755)
+        self.env["PATH"] = f"{no_ghostty}:{self.env.get('PATH', '/usr/bin:/bin')}"
         self.clock = time.time() - 2 * 86400
 
     def tick(self, *paths):
@@ -756,6 +761,16 @@ class SuperfindBehavior(unittest.TestCase):
                                 env={**self.env, "PATH": f"{stub}:/usr/bin:/bin", "setup": setup,
                                      "resume": self.superfind("command", str(path)).rstrip("\n")})
         self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_fish_does_nothing_when_the_picker_hands_it_nothing(self):
+        quiet = self.home / "quiet-superfind"
+        quiet.write_text("#!/bin/sh\nexit 0\n")
+        quiet.chmod(0o755)
+        script = f"{SUPERFIND} init fish | string replace -- {SUPERFIND} {quiet} | source; superfind; echo status $status"
+        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, env=self.env)
+        self.assertEqual((result.stdout, result.stderr), ("status 0\n", ""))
 
     def test_a_short_option_is_rejected_instead_of_searched_for(self):
         self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
