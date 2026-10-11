@@ -40,7 +40,7 @@ func Focus(s open.State) bool {
 func tell(osascript, command string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, osascript, "-e", `tell application "Ghostty" to `+command)
+	cmd := exec.CommandContext(ctx, osascript, "-e", `if application "Ghostty" is running then tell application "Ghostty" to `+command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = deadline / 10

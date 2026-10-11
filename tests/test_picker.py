@@ -22,6 +22,7 @@ from test_superfind import (ANSI, SUPERFIND, claude, codex_call, codex_meta, cod
 
 
 ASK_FIRST = "Open in another window. Enter again resumes a copy; Esc goes back."
+GHOSTTY = 'if application "Ghostty" is running then tell application "Ghostty" to '
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
 CELL_GAP = r" {2,}"
 
@@ -1286,13 +1287,14 @@ class EnterOnAnOpenSession(unittest.TestCase):
 printf '%s\\n' "$2" >> {self.stub}/told
 [ "$(/bin/cat {self.stub}/mode)" = sluggish ] && /bin/sleep 0.6
 case "$2" in
-*"get tty of every terminal"*)
+'{GHOSTTY}get tty of every terminal')
     case "$(/bin/cat {self.stub}/mode)" in
     error) echo "execution error: Ghostty got an error: Can't get tty of every terminal. (-1728)" >&2; exit 1 ;;
     slow) /bin/sleep 30 & echo $! > {self.stub}/straggler; /bin/sleep 3 ;;
     esac
     /bin/cat {self.stub}/ttys ;;
-*) printf '%s\\n' "$2" >> {self.stub}/focused ;;
+'{GHOSTTY}focus (first terminal whose tty is "'*) printf '%s\\n' "$2" >> {self.stub}/focused ;;
+*) echo "osascript: a script that could start Ghostty" >&2; exit 1 ;;
 esac
 """)
         (self.stub / "osascript").chmod(0o755)
@@ -1465,7 +1467,7 @@ esac
         self.pick(None)
         self.keys("Enter")
         self.assertEqual(self.result(), (1, ""))
-        self.assertEqual(self.focused(), f'tell application "Ghostty" to focus (first terminal whose tty is "{tty}")\n')
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
 
     def test_enter_switches_tabs_when_ghostty_answers_each_question_within_a_second(self):
         tty, other = self.in_a_ghostty_tab()
@@ -1474,7 +1476,7 @@ esac
         self.pick(None)
         self.keys("Enter")
         self.assertEqual(self.result(), (1, ""))
-        self.assertEqual(self.focused(), f'tell application "Ghostty" to focus (first terminal whose tty is "{tty}")\n')
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
 
     def test_enter_when_no_ghostty_tab_has_the_sessions_terminal_asks_first_and_enter_again_resumes_a_copy(self):
         tty, other = self.in_a_ghostty_tab()
@@ -1595,7 +1597,7 @@ esac
         code, screen = self.at_a_terminal(f"{SUPERFIND} last > {self.out}.stdout", None)
         self.assertEqual((code, Path(f"{self.out}.stdout").read_text()), (0, ""), screen)
         self.assertIn("Ledger migration is open in another Ghostty tab; switched to it.", screen)
-        self.assertEqual(self.focused(), f'tell application "Ghostty" to focus (first terminal whose tty is "{tty}")\n')
+        self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
 
     @unittest.skipUnless(shutil.which("bash"), "runs the bash shell setup")
     def test_the_shell_setup_does_nothing_after_last_switches_to_a_ghostty_tab(self):
