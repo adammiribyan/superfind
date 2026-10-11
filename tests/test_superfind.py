@@ -518,7 +518,7 @@ class SuperfindBehavior(unittest.TestCase):
     def break_search_index(self):
         import sqlite3
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
 
     def test_a_broken_search_index_says_so_instead_of_finding_nothing(self):
