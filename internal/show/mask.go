@@ -13,7 +13,10 @@ type secretPattern struct {
 	keep int
 }
 
-var privateKey = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`)
+var (
+	privateKey    = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?s:.*?)(-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`)
+	privateKeyEnd = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+)
 
 var secretPatterns = []secretPattern{
 	{"Anthropic key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}`), 0},
@@ -84,8 +87,10 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 	return regexp.MustCompile(strings.Join(alternatives, "|")), groups
 }()
 
+func maskedAs(kind string) string { return "[masked " + kind + "]" }
+
 func Mask(text string) string {
-	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, "[masked private key]")))
+	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key"))))
 }
 
 func maskKeys(text string) string {
@@ -98,7 +103,7 @@ func maskKeys(text string) string {
 		p := secretPatterns[slices.IndexFunc(secretGroups, func(group int) bool { return m[2*group] >= 0 })]
 		found := text[m[0]:m[1]]
 		out.WriteString(text[:m[0]])
-		masked := "[masked " + p.kind + "]"
+		masked := maskedAs(p.kind)
 		switch {
 		case p.keep > 0 && !strings.ContainsAny(found[p.keep:], "0123456789"):
 			out.WriteString(found[:p.keep])
