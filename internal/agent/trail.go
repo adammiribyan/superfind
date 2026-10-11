@@ -5,10 +5,10 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -173,17 +173,24 @@ func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
 		follow(raw)
 		return true
 	})
+	t := r.done()
 	if a.parts != nil {
 		for _, p := range a.parts(path) {
-			eachLine(p, a.trail(&trail))
+			t.Incomplete = eachLine(p, a.trail(&trail)) != nil || t.Incomplete
 		}
 	}
-	return r.done(), trail, err
+	return t, trail, err
 }
 
 func claudeParts(path string) []string {
-	found, _ := filepath.Glob(filepath.Join(globMeta.Replace(strings.TrimSuffix(path, ".jsonl")), "subagents", "*.jsonl"))
-	sort.Strings(found)
+	dir := filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents")
+	entries, _ := os.ReadDir(dir)
+	var found []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			found = append(found, filepath.Join(dir, e.Name()))
+		}
+	}
 	return found
 }
 

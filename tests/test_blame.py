@@ -277,6 +277,38 @@ class Blame(SuperfindBehavior):
         finally:
             os.chmod(path, stat.st_mode)
 
+    def test_an_edit_a_claude_subagent_makes_after_the_session_was_indexed_counts(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        part = path.parent / path.stem / "subagents" / "agent-a1.jsonl"
+        part.parent.mkdir(parents=True)
+        part.write_text("\n".join(edited(t + 5, "s1", str(self.work / "charge.go"))) + "\n")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it 2 times")])
+        with part.open("a") as f:
+            f.write("\n".join(edited(t + 9, "s2", str(self.work / "charge.go"))) + "\n")
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it 3 times")])
+
+    def test_blame_says_when_a_cache_it_cannot_write_may_miss_new_edits(self):
+        t = self.now - 3600
+        self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        self.freeze_cache()
+        self.claude_at(2, *edited(t + 60, "e1", str(self.work / "charge.go")), title="Edited it again")
+        result = self.blame("charge.go", "--json")
+        self.assertEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r"^superfind blame: results may miss what changed in 1 session since ")
+
+    def test_a_grok_session_whose_summary_is_half_written_still_counts_its_edits(self):
+        t = self.now - 3600
+        chat = self.grok_session(uid(1), str(self.work), GROK_SYSTEM, grok_user("round the charges"),
+                                 grok_call("search_replace", "t1", file_path=str(self.work / "charge.go"), old_string="a", new_string="b"),
+                                 title="Rounding")
+        (chat.parent / "summary.json").write_text('{"info": {"cwd": ')
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'), title="Cents")

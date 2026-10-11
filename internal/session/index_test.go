@@ -57,7 +57,7 @@ func freshSearch(t *testing.T) *sql.DB {
 
 func pagesToIndex(t *testing.T, sessions int) int {
 	db := freshSearch(t)
-	if err := updateSearch(db, sessionsSaying(0, sessions, "first"), nil, true); err != nil {
+	if err := updateSearch(db, sessionsSaying(0, sessions, "first"), nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	return pagesRead(t, db)
@@ -72,11 +72,11 @@ func TestIndexingReadsInLineWithTheNumberOfSessions(t *testing.T) {
 
 func pagesToRefresh(t *testing.T, changed int) int {
 	db := freshSearch(t)
-	if err := updateSearch(db, sessionsSaying(0, 400, "first"), nil, true); err != nil {
+	if err := updateSearch(db, sessionsSaying(0, 400, "first"), nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	pagesRead(t, db)
-	if err := updateSearch(db, sessionsSaying(0, changed, "second"), []string{"/sessions/399.jsonl"}, false); err != nil {
+	if err := updateSearch(db, sessionsSaying(0, changed, "second"), nil, []string{"/sessions/399.jsonl"}, false); err != nil {
 		t.Fatal(err)
 	}
 	return pagesRead(t, db)
@@ -91,10 +91,10 @@ func TestRefreshingManySessionsReadsTheIndexOnce(t *testing.T) {
 
 func TestARefreshReplacesChangedSessionsAndDropsRemovedOnes(t *testing.T) {
 	db := freshSearch(t)
-	if err := updateSearch(db, sessionsSaying(0, 3, "first"), nil, true); err != nil {
+	if err := updateSearch(db, sessionsSaying(0, 3, "first"), nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := updateSearch(db, sessionsSaying(1, 2, "second"), []string{"/sessions/2.jsonl"}, false); err != nil {
+	if err := updateSearch(db, sessionsSaying(1, 2, "second"), nil, []string{"/sessions/2.jsonl"}, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := QueryPairs(db, "SELECT path, substr(body, 1, 17) FROM docs ORDER BY path")
@@ -110,11 +110,11 @@ func TestARefreshReplacesChangedSessionsAndDropsRemovedOnes(t *testing.T) {
 func TestARefreshReplacesASessionWhosePathIsNotUTF8(t *testing.T) {
 	db := freshSearch(t)
 	odd := map[string]parsed{"/sessions/caf\xe9.jsonl": {entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "first"}}
-	if err := updateSearch(db, odd, nil, true); err != nil {
+	if err := updateSearch(db, odd, nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	odd["/sessions/caf\xe9.jsonl"] = parsed{entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "second"}
-	if err := updateSearch(db, odd, nil, false); err != nil {
+	if err := updateSearch(db, odd, nil, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := QueryPairs(db, "SELECT path, body FROM docs")
@@ -129,9 +129,9 @@ func TestARefreshReplacesASessionWhosePathIsNotUTF8(t *testing.T) {
 func TestTheIndexKeepsReadsAndFailedEditsApartFromEditsAndReplacesThemOnRefresh(t *testing.T) {
 	db := freshSearch(t)
 	trail := agent.Trail{Edits: []agent.Edit{{Path: "/w/a.go", At: 10}, {Path: "/w/b.go", At: 20, Failed: true}},
-		Reads: []agent.Edit{{Path: "/w/README.md", At: 5}}}
+		Reads: []agent.Edit{{Path: "/w/README.md", At: 5}}, Commits: []agent.Commit{{Command: "git commit -m x", At: 30}}}
 	results := map[string]parsed{"/sessions/1.jsonl": {entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "x", trail: trail}}
-	if err := updateSearch(db, results, nil, true); err != nil {
+	if err := updateSearch(db, results, nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	stored := func() string {
@@ -159,10 +159,52 @@ func TestTheIndexKeepsReadsAndFailedEditsApartFromEditsAndReplacesThemOnRefresh(
 		t.Fatalf("files holds\n%s\nwant\n%s", got, want)
 	}
 	results["/sessions/1.jsonl"] = parsed{entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "x"}
-	if err := updateSearch(db, results, nil, false); err != nil {
+	if err := updateSearch(db, results, nil, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if got := stored(); got != "" {
-		t.Fatalf("a refreshed session with no files still holds\n%s", got)
+	trails := func() string {
+		got, err := QueryPairs(db, "SELECT path, trail FROM trails")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprint(got)
+	}
+	if got := stored(); got != "" || trails() != "[]" {
+		t.Fatalf("a refreshed session with no files still holds\n%s\n%s", got, trails())
+	}
+	unfinished := map[string]parsed{"/sessions/1.jsonl": {trail: agent.Trail{Edits: []agent.Edit{{Path: "/w/c.go", At: 40}},
+		Commits: []agent.Commit{{Command: "git commit -m y", At: 41}}}}}
+	if err := updateSearch(db, nil, unfinished, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	body, err := QueryPairs(db, "SELECT path, body FROM docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got != "/sessions/1.jsonl /w/c.go c.go edited tool false 40" || fmt.Sprint(body) != "[[/sessions/1.jsonl x]]" ||
+		!strings.Contains(trails(), "git commit -m y") {
+		t.Fatalf("an unfinished session's trail wasn't stored next to its search text: %s %v %s", got, body, trails())
+	}
+}
+
+func TestASearchDatabaseThatWasNeverBuiltDoesNotHoldEvenAnEmptyIndex(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	db, err := OpenSearch()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if searchHolds(map[string]cacheEntry{}, false) {
+		t.Fatal("a database that only had its tables created holds the index")
+	}
+	if db, err = OpenSearch(); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := updateSearch(db, nil, nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if !searchHolds(map[string]cacheEntry{}, false) {
+		t.Fatal("a database built from scratch doesn't hold the index")
 	}
 }

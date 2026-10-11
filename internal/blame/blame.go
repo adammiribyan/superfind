@@ -323,11 +323,14 @@ func (t Target) holds(r session.Row, command string) bool {
 
 func trailOf(r session.Row, trails map[string]agent.Trail) agent.Trail {
 	t := trails[r.Path]
+	if len(r.Threads) > 0 {
+		t = agent.Trail{Edits: slices.Clone(t.Edits), Commits: slices.Clone(t.Commits), PRs: slices.Clone(t.PRs)}
+	}
 	for _, path := range r.Threads {
 		thread := trails[path]
-		t.Edits = append(slices.Clip(t.Edits), thread.Edits...)
-		t.Commits = append(slices.Clip(t.Commits), thread.Commits...)
-		t.PRs = append(slices.Clip(t.PRs), thread.PRs...)
+		t.Edits = append(t.Edits, thread.Edits...)
+		t.Commits = append(t.Commits, thread.Commits...)
+		t.PRs = append(t.PRs, thread.PRs...)
 	}
 	return t
 }

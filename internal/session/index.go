@@ -224,7 +224,7 @@ func CachedRows() []Row {
 }
 
 var (
-	tables = []string{"docs", "trails", "files"}
+	tables = []string{"docs", "trails", "files", "built"}
 	schema = []string{
 		"CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')",
 		"CREATE TABLE IF NOT EXISTS trails (path TEXT PRIMARY KEY, trail TEXT NOT NULL)",
@@ -233,6 +233,7 @@ var (
 		"CREATE INDEX IF NOT EXISTS files_by_name ON files (name)",
 		"CREATE INDEX IF NOT EXISTS files_by_path ON files (path)",
 		"CREATE INDEX IF NOT EXISTS files_by_session ON files (session)",
+		"CREATE TABLE IF NOT EXISTS built (version INTEGER NOT NULL)",
 	}
 )
 
@@ -336,9 +337,9 @@ func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
 			want++
 		}
 	}
-	held, err := searchCount()
+	held, built, err := searchCount()
 	if err == nil {
-		return held == want
+		return held == want && built
 	}
 	if !readOnly {
 		discardSearch()
@@ -374,15 +375,18 @@ func intact(db *sql.DB) bool {
 	return db.QueryRow("SELECT term FROM temp.terms LIMIT 1").Scan(&term) == nil
 }
 
-func searchCount() (int, error) {
+func searchCount() (int, bool, error) {
 	db, err := OpenSearch()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer db.Close()
-	var held int
-	err = db.QueryRow("SELECT count(*) FROM docs").Scan(&held)
-	return held, err
+	var held, built int
+	if err := db.QueryRow("SELECT count(*) FROM docs").Scan(&held); err != nil {
+		return 0, false, err
+	}
+	err = db.QueryRow("SELECT count(*) FROM built").Scan(&built)
+	return held, built > 0, err
 }
 
 type found struct {
@@ -476,7 +480,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		announce(len(stale))
 	}
 	results := make(map[string]parsed, len(stale))
-	partial := map[string]cacheEntry{}
+	partial := map[string]parsed{}
 	var mu sync.Mutex
 	work := make(chan found)
 	var wg sync.WaitGroup
@@ -493,7 +497,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 					continue
 				}
 				if incomplete {
-					partial[f.path] = p.entry
+					partial[f.path] = p
 				} else {
 					results[f.path] = p
 				}
@@ -517,7 +521,8 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		if known {
 			fresh[f.path] = entry
 		}
-		shown, listed := partial[f.path]
+		unfinished, listed := partial[f.path]
+		shown := unfinished.entry
 		if !listed || (known && entry.Session == nil) {
 			shown = entry
 		}
@@ -550,10 +555,10 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		return rows, problems, ReadOnly{len(stale) + len(gone), since}
 	}
 	discarded := len(old) == 0
-	if len(results) > 0 || len(gone) > 0 || discarded {
+	if len(results) > 0 || len(partial) > 0 || len(gone) > 0 || discarded {
 		db, err := OpenSearch()
 		if err == nil {
-			err = updateSearch(db, results, gone, discarded)
+			err = updateSearch(db, results, partial, gone, discarded)
 			db.Close()
 		}
 		if err != nil {
@@ -568,7 +573,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	return rows, problems, nil
 }
 
-func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarded bool) error {
+func updateSearch(db *sql.DB, results, partial map[string]parsed, gone []string, discarded bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -579,21 +584,26 @@ func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarde
 		for _, table := range tables {
 			statements = append(statements, "DROP TABLE IF EXISTS "+table)
 		}
-		for _, statement := range append(statements, schema...) {
+		for _, statement := range append(append(statements, schema...), fmt.Sprintf("INSERT INTO built VALUES (%d)", cacheVersion)) {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
 		}
 	} else {
-		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY)"); err != nil {
+		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY, searched INTEGER NOT NULL)"); err != nil {
 			return err
 		}
 		for _, p := range slices.AppendSeq(slices.Clone(gone), maps.Keys(results)) {
-			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?)", p); err != nil {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?, 1)", p); err != nil {
 				return err
 			}
 		}
-		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)",
+		for p := range partial {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?, 0)", p); err != nil {
+				return err
+			}
+		}
+		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced WHERE searched)",
 			"DELETE FROM trails WHERE path IN (SELECT path FROM replaced)",
 			"DELETE FROM files WHERE session IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
 			if _, err := tx.Exec(statement); err != nil {
@@ -613,20 +623,24 @@ func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarde
 				return err
 			}
 		}
-		for how, files := range map[string][]agent.Edit{Edited: r.trail.Edits, Read: r.trail.Reads} {
-			for _, f := range files {
-				if _, err := file.Exec(p, f.Path, filepath.Base(f.Path), how, ByATool, f.Failed, f.At); err != nil {
-					return err
+	}
+	for _, batch := range []map[string]parsed{results, partial} {
+		for p, r := range batch {
+			for how, files := range map[string][]agent.Edit{Edited: r.trail.Edits, Read: r.trail.Reads} {
+				for _, f := range files {
+					if _, err := file.Exec(p, f.Path, filepath.Base(f.Path), how, ByATool, f.Failed, f.At); err != nil {
+						return err
+					}
 				}
 			}
-		}
-		if len(r.trail.Commits)+len(r.trail.PRs) > 0 {
-			trail, err := json.Marshal(agent.Trail{Commits: r.trail.Commits, PRs: r.trail.PRs})
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec("INSERT INTO trails (path, trail) VALUES (?, ?)", p, trail); err != nil {
-				return err
+			if len(r.trail.Commits)+len(r.trail.PRs) > 0 {
+				trail, err := json.Marshal(agent.Trail{Commits: r.trail.Commits, PRs: r.trail.PRs})
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec("INSERT INTO trails (path, trail) VALUES (?, ?)", p, trail); err != nil {
+					return err
+				}
 			}
 		}
 	}

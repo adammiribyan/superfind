@@ -627,7 +627,7 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 		switch {
 		case command == "index" || command == "label":
 			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
-		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+		case (command == "search" || command == "ask" || command == "blame") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}
 		err = nil

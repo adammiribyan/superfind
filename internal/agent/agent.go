@@ -135,6 +135,14 @@ func (a *Agent) Stat(path string) (FileID, float64, error) {
 			id.Size += side.Size()
 		}
 	}
+	if a.parts != nil {
+		for _, part := range a.parts(path) {
+			if side, err := os.Stat(part); err == nil {
+				id.ModNanos += side.ModTime().UnixNano()
+				id.Size += side.Size()
+			}
+		}
+	}
 	return id, float64(info.ModTime().UnixNano()) / 1e9, nil
 }
 
