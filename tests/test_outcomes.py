@@ -227,6 +227,16 @@ class Outcomes(Blame):
                      claude_tool(t, "b1", "Bash", command='git commit -qm "feat: keep a receipt for each charge"'), claude("Done."))
         self.assertEqual(self.outcomes(1, "commit", "repo"), [(made, str(folder))])
 
+    def test_git_c_moves_a_commit_only_when_it_belongs_to_the_commit_call(self):
+        t = self.now - 3600
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        receipts = self.work.parent / "receipts"
+        kept = self.made_in(receipts, "feat: keep a receipt for each charge", t + 60)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git -C ../receipts status && git commit -qm "feat: refund a charge in full"'),
+                       claude_tool(t + 60, "b2", "Bash", command='git -C ../receipts commit -qm "feat: keep a receipt for each charge"'),
+                       title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "repo"), [(made, str(self.work)), (kept, str(receipts))])
+
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)
         self.claude_at(1, title="Just talk")

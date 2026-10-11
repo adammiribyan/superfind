@@ -57,8 +57,9 @@ const (
 )
 
 var (
-	folderChange = regexp.MustCompile(`(?:^|[\s;&|(])(?:cd|git\s+-C)\s+("[^"]*"|'[^']*'|[^\s;&|)]+)`)
-	commitCall   = regexp.MustCompile(`\bgit(?:\s+-[cC]\s+\S+)*\s+commit\b`)
+	folderChange = regexp.MustCompile(`(?:^|[\s;&|(])cd\s+` + folderArg)
+	commitCall   = regexp.MustCompile(`\bgit((?:\s+-[cC]\s+` + folderArg + `)*)\s+commit\b`)
+	gitFolder    = regexp.MustCompile(`(?:^|\s)-C\s+` + folderArg)
 	pullSuffix   = regexp.MustCompile(`\s*\(#\d+\)$`)
 	revertNote   = regexp.MustCompile(`This reverts commit ([0-9a-f]{7,40})`)
 	hexSHA       = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -164,23 +165,32 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 	return out, missing
 }
 
+const folderArg = `("[^"]*"|'[^']*'|[^\s;&|)]+)`
+
 func folderOf(command, cwd string) string {
-	end := len(command)
-	if at := commitCall.FindStringIndex(command); at != nil {
-		end = at[1]
+	call := commitCall.FindStringSubmatchIndex(command)
+	if call == nil {
+		call = []int{len(command), len(command), 0, 0}
 	}
 	dir := cwd
-	for _, m := range folderChange.FindAllStringSubmatchIndex(command[:end], -1) {
-		d := strings.Trim(command[m[2]:m[3]], `"'`)
-		switch {
-		case d == "~" || strings.HasPrefix(d, "~/"):
-			d = filepath.Join(agent.Home(), strings.TrimPrefix(d, "~"))
-		case !filepath.IsAbs(d):
-			d = filepath.Join(dir, d)
-		}
-		dir = d
+	for _, m := range folderChange.FindAllStringSubmatch(command[:call[0]], -1) {
+		dir = moved(dir, m[1])
+	}
+	for _, m := range gitFolder.FindAllStringSubmatch(command[call[2]:call[3]], -1) {
+		dir = moved(dir, m[1])
 	}
 	return dir
+}
+
+func moved(dir, to string) string {
+	to = strings.Trim(to, `"'`)
+	switch {
+	case to == "~" || strings.HasPrefix(to, "~/"):
+		return filepath.Join(agent.Home(), strings.TrimPrefix(to, "~"))
+	case filepath.IsAbs(to):
+		return to
+	}
+	return filepath.Join(dir, to)
 }
 
 func load(top string, since float64) *repo {
