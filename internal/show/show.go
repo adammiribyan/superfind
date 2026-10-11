@@ -1,15 +1,19 @@
 package show
 
 import (
+	"cmp"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 )
 
@@ -62,8 +66,47 @@ func speaker(role string, r session.Record) string {
 	return r.Agent
 }
 
-func WriteText(w io.Writer, r session.Record, c Conversation) error {
+func short(sha string) string { return sha[:min(len(sha), 7)] }
+
+func outcomeLine(o blame.Outcome) string {
+	branch := cmp.Or(o.Branch, "the default branch")
+	head, fate := "made "+short(o.Commit)+" "+oneLine(o.Subject)+" · ", ""
+	switch {
+	case o.Kind == blame.PullRequest:
+		head = fmt.Sprintf("opened #%d · ", o.PR)
+	case o.Commit == "":
+		head = "made a commit "
+	}
+	switch {
+	case o.Stage == blame.Committed:
+		return head + "committed, not pushed"
+	case o.Stage == blame.Pushed:
+		return head + "pushed, not on " + branch
+	case o.Stage == blame.Opened:
+		return head + "not merged into " + branch
+	case o.Kind == blame.PullRequest:
+		fate = "merged into " + branch + " as " + short(o.Landed)
+	case o.Landed != o.Commit:
+		fate = fmt.Sprintf("squashed into %s as %s (#%d)", branch, short(o.Landed), o.PR)
+	default:
+		fate = "merged into " + branch
+	}
+	if o.Stage == blame.Reverted {
+		fate += ", then reverted by " + short(o.RevertedBy)
+	} else if at, err := time.Parse(time.RFC3339, o.LandedAt); err == nil {
+		fate += " " + render.Ago(float64(at.Unix()))
+	}
+	if o.Kind == blame.Made && o.Commit == "" {
+		return head + fate + ": " + oneLine(o.Subject)
+	}
+	return head + fate
+}
+
+func WriteText(w io.Writer, r session.Record, c Conversation, outcomes []blame.Outcome) error {
 	fmt.Fprintf(w, "# %s\n%s · %s · %s\n", oneLine(r.Title), oneLine(r.Agent), oneLine(r.Cwd), oneLine(r.ID))
+	for _, o := range outcomes {
+		fmt.Fprintln(w, outcomeLine(o))
+	}
 	if c.Omitted > 0 {
 		noun := "turns"
 		if c.Omitted == 1 {
@@ -105,18 +148,24 @@ func WriteRecords(w io.Writer, rows []session.Row, db *sql.DB, query string, any
 	return nil
 }
 
-func WriteJSON(w io.Writer, r session.Record, c Conversation) error {
+func WriteJSON(w io.Writer, r session.Record, c Conversation, outcomes []blame.Outcome) error {
 	turns := c.Turns
 	if turns == nil {
 		turns = []Turn{}
 	}
+	cleaned := make([]blame.Outcome, len(outcomes))
+	for i, o := range outcomes {
+		o.Subject = Clean(o.Subject)
+		cleaned[i] = o
+	}
 	out := struct {
 		session.Record
-		TurnsTotal int    `json:"total_turns"`
-		Omitted    int    `json:"omitted_turns"`
-		Truncated  bool   `json:"truncated"`
-		Turns      []Turn `json:"turns"`
-	}{r, c.Total, c.Omitted, c.Truncated, turns}
+		Outcomes   []blame.Outcome `json:"outcomes"`
+		TurnsTotal int             `json:"total_turns"`
+		Omitted    int             `json:"omitted_turns"`
+		Truncated  bool            `json:"truncated"`
+		Turns      []Turn          `json:"turns"`
+	}{r, cleaned, c.Total, c.Omitted, c.Truncated, turns}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
