@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -26,6 +25,7 @@ const (
 	shortestSHA     = 7
 	editWindow      = 3 * 86400
 	fileCommits     = 30
+	claudeWorktrees = ".claude/worktrees/"
 )
 
 type subject struct {
@@ -48,7 +48,6 @@ type Target struct {
 	Commits []commit
 	Note    string
 	folders *sync.Map
-	threads map[string][]string
 }
 
 type Found struct {
@@ -64,13 +63,19 @@ type Found struct {
 var (
 	pullNumber  = regexp.MustCompile(`\(#(\d+)\)$|^Merge pull request #(\d+) `)
 	githubSlug  = regexp.MustCompile(`github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s`)
-	nonWord     = regexp.MustCompile(`[^a-z0-9]+`)
 	lineSuffix  = regexp.MustCompile(`^(.+):([1-9][0-9]*)$`)
 	messageFlag = regexp.MustCompile(`(?:^|\s)(?:-[a-zA-Z]*m|--message)(?:=|\s*)`)
-	word        = regexp.MustCompile(`[A-Za-z0-9_]+`)
 )
 
-func plain(s string) string { return nonWord.ReplaceAllString(strings.ToLower(s), "") }
+func plain(s string) string {
+	kept := make([]byte, 0, len(s))
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			kept = append(kept, byte(r))
+		}
+	}
+	return string(kept)
+}
 
 func git(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -292,14 +297,25 @@ func fileTarget(path, note string) (Target, error) {
 }
 
 func (t Target) relative(path string) (string, bool) {
-	for _, candidate := range []string{path, filepath.Join(t.real(filepath.Dir(path)), filepath.Base(path))} {
-		for _, root := range t.Roots {
-			if candidate == root {
-				return ".", true
-			}
-			if rel, ok := strings.CutPrefix(candidate, root+"/"); ok {
-				return rel, true
-			}
+	rel, ok := t.under(path)
+	if !ok {
+		rel, ok = t.under(filepath.Join(t.real(filepath.Dir(path)), filepath.Base(path)))
+	}
+	if inner, found := strings.CutPrefix(rel, claudeWorktrees); ok && found {
+		if _, rest, found := strings.Cut(inner, "/"); found {
+			return rest, true
+		}
+	}
+	return rel, ok
+}
+
+func (t Target) under(path string) (string, bool) {
+	for _, root := range t.Roots {
+		if path == root {
+			return ".", true
+		}
+		if rel, ok := strings.CutPrefix(path, root+"/"); ok {
+			return rel, true
 		}
 	}
 	return "", false
@@ -315,127 +331,64 @@ func (t Target) real(dir string) string {
 }
 
 func (t Target) holds(r session.Row, command string) bool {
-	if _, ok := t.relative(r.Session.Cwd); ok {
-		return true
-	}
-	if _, err := os.Stat(r.Session.Cwd); err != nil {
+	if _, ok := t.relative(r.Session.Cwd); ok || r.FolderGone {
 		return true
 	}
 	return slices.ContainsFunc(t.Roots, func(root string) bool { return strings.Contains(command, root) })
 }
 
-func threadsOf(rows []session.Row) map[string][]string {
-	indexed, rowOf := map[string]bool{}, map[string]string{}
-	for _, r := range rows {
-		indexed[r.Path] = true
-		rowOf[r.Agent.ID+":"+r.Session.ID] = r.Path
+func trailOf(r session.Row, trails map[string]agent.Trail) agent.Trail {
+	t := trails[r.Path]
+	if len(r.Threads) > 0 {
+		t = agent.Trail{Edits: slices.Clone(t.Edits), Commits: slices.Clone(t.Commits), PRs: slices.Clone(t.PRs)}
 	}
-	parentOf, pathOf := map[string]string{}, map[string]string{}
-	for _, p := range agent.Places() {
-		paths, _ := p.Agent.Sessions(p.Home)
-		for _, path := range paths {
-			if parent := agent.ParentOf(p.Agent, path); parent != "" && !indexed[path] {
-				id := p.Agent.ID + ":" + p.Agent.IDOf(path)
-				parentOf[id], pathOf[id] = p.Agent.ID+":"+parent, path
-			}
-		}
+	for _, path := range r.Threads {
+		thread := trails[path]
+		t.Edits = append(t.Edits, thread.Edits...)
+		t.Commits = append(t.Commits, thread.Commits...)
+		t.PRs = append(t.PRs, thread.PRs...)
 	}
-	threads := map[string][]string{}
-	for id, path := range pathOf {
-		root := parentOf[id]
-		for hops := 0; rowOf[root] == "" && parentOf[root] != "" && hops < 8; hops++ {
-			root = parentOf[root]
-		}
-		if row := rowOf[root]; row != "" {
-			threads[row] = append(threads[row], path)
-		}
-	}
-	return threads
+	return t
 }
 
 func Blame(t Target, rows []session.Row) ([]Found, []error) {
-	t.threads = threadsOf(rows)
-	found, problems := t.scan(rows, t.needles(false))
-	direct := slices.ContainsFunc(found, func(f *Found) bool { return f != nil && !f.Guess })
-	if t.File == "" && !direct {
-		var recent []session.Row
-		for _, r := range rows {
-			if t.lastChanged(r) >= t.Commits[0].At-editWindow {
-				recent = append(recent, r)
-			}
+	names := []string{filepath.Base(t.File)}
+	if t.File == "" {
+		names = nil
+		for f := range t.Commits[0].Files {
+			names = append(names, filepath.Base(f))
 		}
-		found, problems = t.scan(recent, t.needles(true))
 	}
+	trails, err := session.Trails(names)
+	if err != nil {
+		return nil, []error{fmt.Errorf("reading what sessions edited and committed: %w", err)}
+	}
+	found := make([]*Found, len(rows))
+	for i, r := range rows {
+		if trail := trailOf(r, trails); len(trail.Edits)+len(trail.Commits)+len(trail.PRs) > 0 {
+			found[i] = t.judge(r, trail)
+		}
+	}
+	direct := slices.ContainsFunc(found, func(f *Found) bool { return f != nil && !f.Guess })
 	var out []Found
-	for _, f := range found {
-		if f != nil && (t.File != "" || !direct || !f.Guess) {
+	for i, f := range found {
+		recent := t.File != "" || direct || t.lastChanged(rows[i]) >= t.Commits[0].At-editWindow
+		if f != nil && recent && (t.File != "" || !direct || !f.Guess) {
 			out = append(out, *f)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].before(out[j], t.File != "") })
-	return out, problems
+	return out, nil
 }
 
 func (t Target) lastChanged(r session.Row) float64 {
 	latest := r.Session.Mtime
-	for _, path := range t.threads[r.Path] {
+	for _, path := range r.Threads {
 		if info, err := os.Stat(path); err == nil {
 			latest = max(latest, float64(info.ModTime().UnixNano())/1e9)
 		}
 	}
 	return latest
-}
-
-func (t Target) scan(candidates []session.Row, needles [][]byte) ([]*Found, []error) {
-	found, problems := make([]*Found, len(candidates)), make([]error, len(candidates))
-	next := make(chan int)
-	var wg sync.WaitGroup
-	for range min(runtime.NumCPU(), max(len(candidates), 1)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				trail, err := agent.ReadTrail(candidates[i].Agent, candidates[i].Path, needles, t.threads[candidates[i].Path]...)
-				found[i], problems[i] = t.judge(candidates[i], trail), err
-			}
-		}()
-	}
-	for i := range candidates {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
-	return found, slices.DeleteFunc(problems, func(err error) bool { return err == nil })
-}
-
-func (t Target) needles(files bool) [][]byte {
-	var found [][]byte
-	add := func(s string) { found = append(found, []byte(s)) }
-	if t.File != "" {
-		add(filepath.Base(t.File))
-	}
-	for _, c := range t.Commits {
-		add(c.SHA[:shortestSHA])
-		for _, s := range c.Subjects {
-			longest := ""
-			for _, w := range word.FindAllString(s.typed, -1) {
-				if len(w) > len(longest) {
-					longest = w
-				}
-			}
-			add(longest)
-		}
-		if c.PR > 0 {
-			add(fmt.Sprintf("/pull/%d", c.PR))
-			add(fmt.Sprintf(`"prNumber":%d`, c.PR))
-		}
-		if files && t.File == "" {
-			for f := range c.Files {
-				add(filepath.Base(f))
-			}
-		}
-	}
-	return found
 }
 
 const (
@@ -462,7 +415,7 @@ func (a Found) before(b Found, byTime bool) bool {
 func (t Target) judge(r session.Row, trail agent.Trail) *Found {
 	messages := make([][]string, len(trail.Commits))
 	for i, m := range trail.Commits {
-		if t.holds(r, m.Command) {
+		if t.holds(r, m.Command) && t.mayName(m.Command) {
 			messages[i] = messageLines(m.Command, 0)
 		}
 	}
@@ -517,6 +470,13 @@ func (t Target) judge(r session.Row, trail agent.Trail) *Found {
 			Guess: true, tier: edited, count: len(touched), latest: latest})
 	}
 	return best
+}
+
+func (t Target) mayName(command string) bool {
+	flat := plain(strings.ReplaceAll(command, `\n`, "\n"))
+	return slices.ContainsFunc(t.Commits, func(c commit) bool {
+		return slices.ContainsFunc(c.Subjects, func(s subject) bool { return strings.Contains(flat, s.plain) })
+	})
 }
 
 func messageLines(command string, depth int) []string {

@@ -292,7 +292,8 @@ git repository, or pass a file in one.
                session did in match
 
 A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+started it, and an edit in a Claude Code worktree counts for the file it changed, even after
+the worktree is removed. It reads the commands and edits each agent recorded, so it misses a commit made by
 hand in a terminal or on another machine, and one whose message and hash the session never
 recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
 letters and digits, and the session ran it from a folder in the repository or one that no
@@ -688,7 +689,7 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 		switch {
 		case command == "index" || command == "label":
 			fail("superfind " + command + ": " + store.CacheDir() + " can't be written from here, so nothing was saved")
-		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+		case (command == "search" || command == "ask" || command == "blame") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}
 		err = nil
@@ -799,7 +800,7 @@ func runShow(args []string) {
 	if target == "" {
 		usageError("superfind show: which session? Pass its id, or a path that superfind search prints first.")
 	}
-	r, indexed, rows := findSession("show", target)
+	r, indexed, _ := findSession("show", target)
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
@@ -807,7 +808,7 @@ func runShow(args []string) {
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
-	outcomes, err := blame.Outcomes(r, rows)
+	outcomes, err := blame.Outcomes(r)
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
 	}

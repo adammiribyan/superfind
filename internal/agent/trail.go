@@ -5,19 +5,20 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Edit struct {
-	Path string
-	At   float64
+	Path   string
+	At     float64
+	Failed bool
 }
 
 type Commit struct {
@@ -34,6 +35,7 @@ type PR struct {
 
 type Trail struct {
 	Edits   []Edit
+	Reads   []Edit
 	Commits []Commit
 	PRs     []PR
 }
@@ -50,6 +52,7 @@ var (
 type pending struct {
 	command string
 	edits   []Edit
+	reads   []Edit
 	process string
 }
 
@@ -116,10 +119,14 @@ func (t *Trail) answered(p pending, output, sha string, failed bool) {
 			}
 		}
 	}
+	for _, e := range p.edits {
+		e.Failed = failed
+		t.Edits = append(t.Edits, e)
+	}
 	if failed {
 		return
 	}
-	t.Edits = append(t.Edits, p.edits...)
+	t.Reads = append(t.Reads, p.reads...)
 	if strings.Contains(p.command, "gh pr create") {
 		for _, m := range pullURL.FindAllStringSubmatch(output, -1) {
 			t.opened(m[1], m[2])
@@ -141,97 +148,92 @@ func stamp(s string) float64 {
 	return float64(at.UnixNano()) / 1e9
 }
 
-func ReadTrail(a *Agent, path string, needles [][]byte, threads ...string) (Trail, error) {
+func ReadTrail(a *Agent, path string, threads ...string) (Trail, error) {
 	var t Trail
 	paths := []string{path}
+	var problems []error
 	if a.parts != nil {
-		paths = append(paths, a.parts(path)...)
+		parts, err := a.parts(path)
+		paths, problems = append(paths, parts...), append(problems, err)
 	}
 	paths = append(paths, threads...)
-	var problems []error
 	for _, p := range paths {
-		found, err := mentions(p, needles)
-		if err == nil && found {
-			err = eachLine(p, a.trail(&t))
-		}
-		problems = append(problems, err)
+		problems = append(problems, eachLine(p, a.trail(&t)))
 	}
 	return t, errors.Join(problems...)
 }
 
-func mentions(path string, needles [][]byte) (bool, error) {
-	if needles == nil {
-		return true, nil
-	}
-	f, err := openFile(path)
+type PartUnread struct{ err error }
+
+func (p *PartUnread) Error() string { return p.err.Error() }
+
+func (p *PartUnread) Unwrap() error { return p.err }
+
+func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
+	r, err := a.reader(path, Transcript{Last: Replied})
 	if err != nil {
-		return false, err
+		return Transcript{}, Trail{}, err
 	}
-	defer f.Close()
-	overlap := 0
-	for _, n := range needles {
-		overlap = max(overlap, len(n)-1)
-	}
-	buf, carried := make([]byte, 1<<20+overlap), 0
-	for {
-		n, err := io.ReadFull(f, buf[carried:])
-		window := buf[:carried+n]
-		for _, needle := range needles {
-			if len(needle) > 0 && bytes.Contains(window, needle) {
-				return true, nil
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return false, nil
-			}
-			return false, err
-		}
-		carried = copy(buf, window[len(window)-min(overlap, len(window)):])
-	}
-}
-
-func ParentOf(a *Agent, path string) string {
-	if a.parent == nil {
-		return ""
-	}
-	return a.parent(path)
-}
-
-func codexParent(path string) string {
-	parent := ""
-	eachLine(path, func(raw []byte) bool {
-		var l codexLine
-		var item codexItem
-		if json.Unmarshal(raw, &l) == nil && l.Type == "session_meta" && json.Unmarshal(l.Payload, &item) == nil {
-			parent = item.ParentThreadID
-		}
-		return false
+	var trail Trail
+	reading, follow := true, a.trail(&trail)
+	err = eachLine(path, func(raw []byte) bool {
+		reading = reading && r.feed(raw)
+		follow(raw)
+		return true
 	})
-	return parent
+	t := r.done()
+	if a.parts != nil && err == nil {
+		parts, problem := a.parts(path)
+		for _, p := range parts {
+			problem = errors.Join(problem, eachLine(p, a.trail(&trail)))
+		}
+		if problem != nil {
+			err = &PartUnread{problem}
+		}
+	}
+	return t, trail, err
 }
 
-func claudeParts(path string) []string {
-	found, _ := filepath.Glob(filepath.Join(globMeta.Replace(strings.TrimSuffix(path, ".jsonl")), "subagents", "*.jsonl"))
-	sort.Strings(found)
-	return found
+func claudeParts(path string) ([]string, error) {
+	dir := filepath.Join(strings.TrimSuffix(path, ".jsonl"), "subagents")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		err = nil
+	}
+	var found []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			found = append(found, filepath.Join(dir, e.Name()))
+		}
+	}
+	return found, err
 }
 
 type claudeTrailLine struct {
-	Type          string `json:"type"`
-	Timestamp     string `json:"timestamp"`
-	PRRepository  string `json:"prRepository"`
-	PRNumber      int    `json:"prNumber"`
-	ToolUseResult struct {
-		GitOperation struct {
-			Commit struct {
-				SHA string `json:"sha"`
-			} `json:"commit"`
-		} `json:"gitOperation"`
-	} `json:"toolUseResult"`
-	Message struct {
+	Type          string          `json:"type"`
+	Timestamp     string          `json:"timestamp"`
+	PRRepository  string          `json:"prRepository"`
+	PRNumber      int             `json:"prNumber"`
+	ToolUseResult json.RawMessage `json:"toolUseResult"`
+	Message       struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+type claudeToolResult struct {
+	GitOperation struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	} `json:"gitOperation"`
+}
+
+func committedBy(raw json.RawMessage) string {
+	var r claudeToolResult
+	if bytes.HasPrefix(raw, []byte("{")) && json.Unmarshal(raw, &r) == nil {
+		return r.GitOperation.Commit.SHA
+	}
+	return ""
 }
 
 type claudeTrailBlock struct {
@@ -250,11 +252,11 @@ type claudeTrailBlock struct {
 
 var claudeEditors = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
 
-var editMarks = [][]byte{[]byte(`"Edit"`), []byte(`"Write"`), []byte(`"MultiEdit"`), []byte(`"NotebookEdit"`), []byte(`"FileChange"`),
-	[]byte(`"search_replace"`), []byte(`"write"`), []byte("*** ")}
+var fileMarks = [][]byte{[]byte(`"Read"`), []byte(`"read_file"`), []byte(`"Edit"`), []byte(`"Write"`), []byte(`"MultiEdit"`),
+	[]byte(`"NotebookEdit"`), []byte(`"FileChange"`), []byte(`"search_replace"`), []byte(`"write"`), []byte("*** ")}
 
-func mayEdit(raw []byte) bool {
-	for _, m := range editMarks {
+func mayTouchFiles(raw []byte) bool {
+	for _, m := range fileMarks {
 		if bytes.Contains(raw, m) {
 			return true
 		}
@@ -278,7 +280,7 @@ func awaited(raw []byte, waiting map[string]pending) bool {
 func claudeTrail(t *Trail) func([]byte) bool {
 	waiting := map[string]pending{}
 	return func(raw []byte) bool {
-		tool := bytes.Contains(raw, []byte(`"tool_use"`)) && (mayEdit(raw) || mayCommit(raw))
+		tool := bytes.Contains(raw, []byte(`"tool_use"`)) && (mayTouchFiles(raw) || mayCommit(raw))
 		link := len(raw) < 4096 && bytes.Contains(raw, []byte(`"pr-link"`))
 		if !tool && !link && !awaited(raw, waiting) {
 			return true
@@ -296,9 +298,11 @@ func claudeTrail(t *Trail) func([]byte) bool {
 		json.Unmarshal(l.Message.Content, &blocks)
 		for _, b := range blocks {
 			switch {
+			case b.Type == "tool_use" && b.Name == "Read" && b.Input.FilePath != "":
+				waiting[b.ID] = pending{reads: []Edit{{Path: b.Input.FilePath, At: at}}}
 			case b.Type == "tool_use" && claudeEditors[b.Name]:
 				if p := b.Input.FilePath + b.Input.NotebookPath; p != "" {
-					waiting[b.ID] = pending{edits: []Edit{{p, at}}}
+					waiting[b.ID] = pending{edits: []Edit{{Path: p, At: at}}}
 				}
 			case b.Type == "tool_use" && b.Name == "Bash":
 				if t.ran(b.Input.Command, "", at) {
@@ -307,7 +311,11 @@ func claudeTrail(t *Trail) func([]byte) bool {
 			case b.Type == "tool_result":
 				if p, ok := waiting[b.ToolUseID]; ok {
 					delete(waiting, b.ToolUseID)
-					t.answered(p, decodeContent(b.Content).text, l.ToolUseResult.GitOperation.Commit.SHA, b.IsError)
+					output := ""
+					if p.command != "" {
+						output = decodeContent(b.Content).text
+					}
+					t.answered(p, output, committedBy(l.ToolUseResult), b.IsError)
 				}
 			}
 		}
@@ -377,9 +385,7 @@ func codexTrail(t *Trail) func([]byte) bool {
 				waiting[p.Item.ID] = w
 			}
 			for path := range p.Item.Changes {
-				if p.Item.Status != "failed" {
-					t.Edits = append(t.Edits, Edit{path, at})
-				}
+				t.Edits = append(t.Edits, Edit{Path: path, At: at, Failed: p.Item.Status == "failed"})
 			}
 		case l.Type == "event_msg" && p.Type == "item_completed" && p.Item.Type == "CommandExecution":
 			command := commandText(p.Item.Command)
@@ -406,7 +412,7 @@ func codexTrail(t *Trail) func([]byte) bool {
 						if !filepath.IsAbs(path) {
 							path = filepath.Join(base, path)
 						}
-						w.edits = append(w.edits, Edit{path, at})
+						w.edits = append(w.edits, Edit{Path: path, At: at})
 					}
 				}
 			}
@@ -482,7 +488,7 @@ type grokTrailLine struct {
 func grokTrail(t *Trail) func([]byte) bool {
 	waiting := map[string]pending{}
 	return func(raw []byte) bool {
-		if !mayEdit(raw) && !mayCommit(raw) && !awaited(raw, waiting) {
+		if !mayTouchFiles(raw) && !mayCommit(raw) && !awaited(raw, waiting) {
 			return true
 		}
 		var l grokTrailLine
@@ -491,14 +497,19 @@ func grokTrail(t *Trail) func([]byte) bool {
 		}
 		for _, c := range l.ToolCalls {
 			var args struct {
-				FilePath string `json:"file_path"`
-				Command  string `json:"command"`
+				FilePath   string `json:"file_path"`
+				TargetFile string `json:"target_file"`
+				Command    string `json:"command"`
 			}
 			json.Unmarshal([]byte(c.Arguments), &args)
 			switch c.Name {
 			case "search_replace", "write":
 				if args.FilePath != "" {
-					t.Edits = append(t.Edits, Edit{args.FilePath, 0})
+					t.Edits = append(t.Edits, Edit{Path: args.FilePath})
+				}
+			case "read_file":
+				if args.TargetFile != "" {
+					t.Reads = append(t.Reads, Edit{Path: args.TargetFile})
 				}
 			case "run_terminal_command":
 				if t.ran(args.Command, "", 0) {
