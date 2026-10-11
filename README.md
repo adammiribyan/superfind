@@ -195,7 +195,7 @@ superfind command "$id"               # the command that resumes it
 The fields are described under [What `show` prints](#what-show-prints), which prints the same ones. Two more matter here:
 
 - `kind` is `agent` when another program started the session, and `interactive` otherwise.
-- `match` is the passage that holds your words, about ten words long, or empty when you gave no words or no passage holds them all. `ask` finds sessions by meaning, so its results often have an empty `match`.
+- `match` is a passage of about ten words that holds your words, or empty when you gave no words or none of them is in the conversation. In a conversation longer than about 2,000 characters, it comes from where your less common words appear together most, or from the start of the conversation when every word you typed is very common, such as `the`. `ask` finds sessions by meaning, so its results often have an empty `match`.
 
 ### Naming a session
 
@@ -263,6 +263,10 @@ Masking catches common formats, not every secret, so don't rely on it alone. Pat
 ### When an agent reads your sessions
 
 `search`, `show`, `preview`, and `command` send nothing anywhere. But an agent that runs them passes what it reads to its own model provider. For example, Codex reading a Claude Code session with `show` sends that conversation to OpenAI. `ask` sends what [What leaves your machine](#what-leaves-your-machine) describes, whoever runs it.
+
+### In a sandbox
+
+Agents often run commands in a sandbox that can't write to superfind's cache folder, such as Codex's `read-only` mode. There superfind can't update its index, so it reads the index as it was last written, and changes nothing in the cache. Lists, `show`, `preview`, and `command` still see every session as it is now. But `search` and `ask` match the words each session held at the last index, so they can miss what changed since, and can't match a new session by its words at all. When sessions changed, they say so on stderr. `superfind index` and `superfind label` exit 1. If there is no index yet, or it needs a rebuild, run `superfind index` once outside the sandbox, or set `XDG_CACHE_HOME` to a folder the sandbox can write. `ask` also needs the network, which some sandboxes block.
 
 ### Old conversations are not instructions
 
