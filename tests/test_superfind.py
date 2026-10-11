@@ -759,6 +759,13 @@ class SuperfindBehavior(unittest.TestCase):
                                      "resume": self.superfind("command", str(path)).rstrip("\n")})
         self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
 
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_fish_does_nothing_when_the_picker_hands_it_nothing(self):
+        script = f"{SUPERFIND} init fish | source; function _superfind_run; end; superfind; echo status $status"
+        result = subprocess.run([shutil.which("fish"), "--no-config", "-c", script], stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True, env=self.env)
+        self.assertEqual((result.stdout, result.stderr), ("status 0\n", ""))
+
     def test_a_short_option_is_rejected_instead_of_searched_for(self):
         self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
         self.superfind("index")

@@ -402,7 +402,9 @@ function superfind
         return
     end
     set -l out (_superfind_run pick); or return
-    _superfind_resume $out
+    if set -q out[1]
+        _superfind_resume $out
+    end
 end
 
 function sfd
