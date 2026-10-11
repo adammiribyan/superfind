@@ -80,7 +80,10 @@ OUTCOME_FIELDS = {
             "was cut. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest commit first; `--max-bytes 0` lifts that. Empty for a pull "
             "request, and for a commit that a squash merge carried after its branch was deleted.",
     "repo": "The repository's top folder.",
-    "stage": "How far it got. A commit is `committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
+    "stage": "How far it got. A commit is `dangling` (committed, but no ref, such as a branch, tag, remote branch, or "
+             "stash, and no worktree's checkout reaches it any more; while git's reflog keeps it, "
+             "`git branch NAME HASH` brings it back), "
+             "`committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
              "directly or in a squash), or `reverted` (merged, then a later commit on the default branch reverts it). "
              "A pull request is `opened`, `merged`, or `reverted`.",
     "branch": "The default branch it is measured against, such as `main`, or empty when none was found.",

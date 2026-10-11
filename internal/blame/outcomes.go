@@ -17,14 +17,15 @@ import (
 type Stage int
 
 const (
-	Committed Stage = iota
+	Dangling Stage = iota
+	Committed
 	Pushed
 	Opened
 	Merged
 	Reverted
 )
 
-var stageNames = [...]string{"committed", "pushed", "opened", "merged", "reverted"}
+var stageNames = [...]string{"dangling", "committed", "pushed", "opened", "merged", "reverted"}
 
 func (s Stage) String() string { return stageNames[s] }
 
@@ -175,7 +176,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 
 func withoutRedone(out []Outcome) []Outcome {
 	redone := func(o Outcome) bool {
-		return o.dangling && o.Stage == Committed && slices.ContainsFunc(out, func(m Outcome) bool {
+		return o.dangling && o.Stage <= Committed && slices.ContainsFunc(out, func(m Outcome) bool {
 			return m.Repo == o.Repo && m.Commit != "" && m.Commit != o.Commit && !m.dangling && plain(m.Subject) == plain(o.Subject) &&
 				m.authored >= o.authored && m.authored-o.authored <= matchAfter
 		})
@@ -422,6 +423,21 @@ func (rp *repo) judge(e entry) Outcome {
 	}
 	if _, ok := rp.copyOf(e, rp.onRemote); ok || rp.onRemote[e.SHA] {
 		o.Stage = Pushed
+		return o
+	}
+	if !o.dangling {
+		return o
+	}
+	unreached, err := git(rp.top, "rev-list", "-n1", e.SHA, "--not", "--all")
+	switch {
+	case err != nil:
+	case strings.TrimSpace(unreached) == e.SHA:
+		o.Stage = Dangling
+	default:
+		o.dangling = false
+		if remote, _ := git(rp.top, "for-each-ref", "--contains", e.SHA, "--count=1", "refs/remotes"); remote != "" {
+			o.Stage = Pushed
+		}
 	}
 	return o
 }
