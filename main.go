@@ -130,11 +130,16 @@ unless you ask for them with is:agent.
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
-  --limit N       print only the first N sessions
+  --limit N       print only the first N sessions (default: all)
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with -, put --
 before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
+
+  superfind search --json --limit 1 retry | jq -r .id   the best match's id
+  superfind search --json retry | jq -s 'map(.title)'   every match, as one array
+  superfind search --json retry | wc -l                 how many match (jq length counts
+                                                        each object's fields instead)
 `,
 	"ask": `superfind ask WORDS [--json] [--limit N]
 
