@@ -152,6 +152,8 @@ func CachedRows() []Row {
 	return rows
 }
 
+const docsModule = "fts5(path UNINDEXED, title, body, tokenize='porter unicode61')"
+
 func OpenSearch() (*sql.DB, error) {
 	if err := makeCacheDir(); err != nil {
 		return nil, err
@@ -175,7 +177,7 @@ func OpenSearch() (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')`); err != nil {
+	if _, err := db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS docs USING " + docsModule); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -406,8 +408,10 @@ func updateSearch(results map[string]parsed, gone []string, discarded bool) erro
 	}
 	defer tx.Rollback()
 	if discarded {
-		if _, err := tx.Exec("DELETE FROM docs"); err != nil {
-			return err
+		for _, statement := range []string{"DROP TABLE docs", "CREATE VIRTUAL TABLE docs USING " + docsModule} {
+			if _, err := tx.Exec(statement); err != nil {
+				return err
+			}
 		}
 	}
 	for p, r := range results {

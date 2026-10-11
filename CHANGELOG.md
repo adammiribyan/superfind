@@ -13,6 +13,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - The index is rebuilt once after upgrading, to record how each session ended.
+- That rebuild starts the search index afresh instead of deleting every row from it, so it ends up the size of a new index (about 17% smaller on a 10,000-session test corpus) and stays searchable from other windows while it runs.
 - A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.
 
 ## [0.10.0] - 2026-10-10

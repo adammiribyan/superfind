@@ -559,7 +559,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
         db = sqlite3.connect(self.home / ".cache" / "superfind" / "search.db")
-        db.executescript("DROP TABLE docs; CREATE TABLE docs (path, title, body);")
+        db.executescript("CREATE TABLE plain AS SELECT path, title, body FROM docs; DROP TABLE docs; ALTER TABLE plain RENAME TO docs;")
         db.close()
         self.open_picker()
         self.keys("charged")
