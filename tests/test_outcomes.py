@@ -142,6 +142,17 @@ class Outcomes(Blame):
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -F - <<EOF\nfeat: refund a charge in full\n\nwip\nEOF'), title="Refunds")
         self.assertEqual(self.outcomes(1, "commit", "subject"), [(made, "feat: refund a charge in full")])
 
+    def test_a_key_or_escape_code_in_an_outcome_is_masked_in_text_and_json(self):
+        t = self.now - 3600
+        key = "sk-ant-" + "a1B2c3D4e5" * 3
+        made = self.commit(f"fix: stop logging {key}\x1b[31m", {"a.go": "a\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command=f'git commit -qm "fix: stop logging {key}"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] fix: stop logging"), title="Keys")
+        result = self.run_superfind("show", uid(1), "--json")
+        self.assertNotIn(key, result.stdout)
+        self.assertEqual(self.outcomes(1, "subject"), [("fix: stop logging [masked Anthropic key]",)])
+        self.assertRegex(self.text(1)[0], rf"^made {made[:7]} fix: stop logging \[masked Anthropic key\] · merged into main \S+ ago$")
+
     def test_of_two_copies_of_a_commit_the_one_on_main_counts(self):
         t = self.now - 3600
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)

@@ -665,6 +665,10 @@ func runShow(args []string) {
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: "+session.Unreadable([]error{err}))
 	}
+	for i := range outcomes {
+		o := &outcomes[i]
+		o.Subject, o.Repo, o.Branch = show.Clean(o.Subject), show.Clean(o.Repo), show.Clean(o.Branch)
+	}
 	record := session.RecordOf(r, show.Clean)
 	if asJSON {
 		err = show.WriteJSON(stdout, record, conversation, outcomes)

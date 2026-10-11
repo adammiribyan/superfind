@@ -153,10 +153,8 @@ func WriteJSON(w io.Writer, r session.Record, c Conversation, outcomes []blame.O
 	if turns == nil {
 		turns = []Turn{}
 	}
-	cleaned := make([]blame.Outcome, len(outcomes))
-	for i, o := range outcomes {
-		o.Subject = Clean(o.Subject)
-		cleaned[i] = o
+	if outcomes == nil {
+		outcomes = []blame.Outcome{}
 	}
 	out := struct {
 		session.Record
@@ -165,7 +163,7 @@ func WriteJSON(w io.Writer, r session.Record, c Conversation, outcomes []blame.O
 		Omitted    int             `json:"omitted_turns"`
 		Truncated  bool            `json:"truncated"`
 		Turns      []Turn          `json:"turns"`
-	}{r, cleaned, c.Total, c.Omitted, c.Truncated, turns}
+	}{r, outcomes, c.Total, c.Omitted, c.Truncated, turns}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	return enc.Encode(out)
