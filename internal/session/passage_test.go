@@ -75,7 +75,7 @@ func oldSnippet(t *testing.T, db *sql.DB, path, match string, tokens int, before
 }
 
 func oldPassage(t *testing.T, db *sql.DB, path, query string) string {
-	return oldSnippet(t, db, path, oldMatch(query, " ", false), passageTokens, "", "", true)
+	return oldSnippet(t, db, path, oldMatch(query, " ", false), PassageTokens, "", "", true)
 }
 
 func boundedWindows(t *testing.T, db *sql.DB, query string, tokens int) map[string]string {
@@ -134,7 +134,7 @@ func TestShortSessionsKeepTheExactPassageAndPreviewTheyHadBefore(t *testing.T) {
 				t.Errorf("%s for %q: got %q, want %q", path, query, got[path], want)
 			}
 			if path < "/e" || path == "/many/007" {
-				want := oldSnippet(t, db, path, oldMatch(query, " ", false), passageTokens, "[", "]", false)
+				want := oldSnippet(t, db, path, oldMatch(query, " ", false), PassageTokens, "[", "]", false)
 				if preview := Snippet(db, path, query, "[", "]"); preview != want {
 					t.Errorf("preview %s for %q: got %q, want %q", path, query, preview, want)
 				}
@@ -164,7 +164,7 @@ func TestADeepWordGetsThePassageFts5GivesFromABoundedWindow(t *testing.T) {
 		if got != want || !strings.Contains(got, c.word) {
 			t.Errorf("%s: got %q, want fts5's %q, holding %q", c.name, got, want, c.word)
 		}
-		if window := boundedWindows(t, db, c.query, passageTokens)["/a"]; !strings.Contains(window, c.word) || len(window) >= len(c.body) {
+		if window := boundedWindows(t, db, c.query, PassageTokens)["/a"]; !strings.Contains(window, c.word) || len(window) >= len(c.body) {
 			t.Errorf("%s: the bounded window %q does not hold %q", c.name, window, c.word)
 		}
 	}
@@ -198,7 +198,7 @@ func TestALongSessionThatMatchesOnlyByTitleHasNoPassageButKeepsItsPreview(t *tes
 		t.Fatalf("got %q", got)
 	}
 	for _, path := range []string{"/a", "/b"} {
-		want := oldSnippet(t, db, path, oldMatch("billing", " ", false), passageTokens, "[", "]", false)
+		want := oldSnippet(t, db, path, oldMatch("billing", " ", false), PassageTokens, "[", "]", false)
 		if got := Snippet(db, path, "billing", "[", "]"); got != want || got == "" {
 			t.Errorf("preview %s: got %q, want %q", path, got, want)
 		}
