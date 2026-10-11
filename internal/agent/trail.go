@@ -125,12 +125,13 @@ func stamp(s string) float64 {
 	return float64(at.UnixNano()) / 1e9
 }
 
-func ReadTrail(a *Agent, path string, needles [][]byte) (Trail, error) {
+func ReadTrail(a *Agent, path string, needles [][]byte, threads ...string) (Trail, error) {
 	var t Trail
 	paths := []string{path}
 	if a.parts != nil {
 		paths = append(paths, a.parts(path)...)
 	}
+	paths = append(paths, threads...)
 	var problems []error
 	for _, p := range paths {
 		found, err := mentions(p, needles)
@@ -172,6 +173,26 @@ func mentions(path string, needles [][]byte) (bool, error) {
 		}
 		carried = copy(buf, window[len(window)-min(overlap, len(window)):])
 	}
+}
+
+func ParentOf(a *Agent, path string) string {
+	if a.parent == nil {
+		return ""
+	}
+	return a.parent(path)
+}
+
+func codexParent(path string) string {
+	parent := ""
+	eachLine(path, func(raw []byte) bool {
+		var l codexLine
+		var item codexItem
+		if json.Unmarshal(raw, &l) == nil && l.Type == "session_meta" && json.Unmarshal(l.Payload, &item) == nil {
+			parent = item.ParentThreadID
+		}
+		return false
+	})
+	return parent
 }
 
 func claudeParts(path string) []string {

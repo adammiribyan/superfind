@@ -48,6 +48,7 @@ type Target struct {
 	Commits []commit
 	Note    string
 	folders *sync.Map
+	threads map[string][]string
 }
 
 type Found struct {
@@ -307,7 +308,37 @@ func (t Target) holds(r session.Row, command string) bool {
 	return slices.ContainsFunc(t.Roots, func(root string) bool { return strings.Contains(command, root) })
 }
 
+func threadsOf(rows []session.Row) map[string][]string {
+	indexed, rowOf := map[string]bool{}, map[string]string{}
+	for _, r := range rows {
+		indexed[r.Path] = true
+		rowOf[r.Agent.ID+":"+r.Session.ID] = r.Path
+	}
+	parentOf, pathOf := map[string]string{}, map[string]string{}
+	for _, p := range agent.Places() {
+		paths, _ := p.Agent.Sessions(p.Home)
+		for _, path := range paths {
+			if parent := agent.ParentOf(p.Agent, path); parent != "" && !indexed[path] {
+				id := p.Agent.ID + ":" + p.Agent.IDOf(path)
+				parentOf[id], pathOf[id] = p.Agent.ID+":"+parent, path
+			}
+		}
+	}
+	threads := map[string][]string{}
+	for id, path := range pathOf {
+		root := parentOf[id]
+		for hops := 0; rowOf[root] == "" && parentOf[root] != "" && hops < 8; hops++ {
+			root = parentOf[root]
+		}
+		if row := rowOf[root]; row != "" {
+			threads[row] = append(threads[row], path)
+		}
+	}
+	return threads
+}
+
 func Blame(t Target, rows []session.Row) ([]Found, []error) {
+	t.threads = threadsOf(rows)
 	found, problems := t.scan(rows, t.needles(false))
 	direct := slices.ContainsFunc(found, func(f *Found) bool { return f != nil && !f.Guess })
 	if t.File == "" && !direct {
@@ -338,7 +369,7 @@ func (t Target) scan(candidates []session.Row, needles [][]byte) ([]*Found, []er
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				trail, err := agent.ReadTrail(candidates[i].Agent, candidates[i].Path, needles)
+				trail, err := agent.ReadTrail(candidates[i].Agent, candidates[i].Path, needles, t.threads[candidates[i].Path]...)
 				found[i], problems[i] = t.judge(candidates[i], trail), err
 			}
 		}()

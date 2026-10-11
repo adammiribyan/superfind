@@ -151,6 +151,22 @@ class Blame(SuperfindBehavior):
         self.commit("chore: notes", {"notes.md": "n\n"}, t, body="* fix: retry a charge only once")
         self.assertEqual(self.found("HEAD"), [(uid(1), "edited 1 of the commit's 2 files")])
 
+    def test_a_commit_a_codex_subagent_thread_made_names_the_session_that_started_it(self):
+        t = self.now - 3600
+        self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.codex_session(uid(1), codex_meta(cwd=str(self.work)), codex_user("refunds, with a helper"), codex_reply("Started one."))
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work), parent=uid(1)), codex_user("write refunds"),
+                           codex_at(t, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -qam 'feat: refund a charge in full'"})),
+                           codex_at(t + 1, "response_item", type="function_call_output", call_id="c1", output="Process exited with code 0"))
+        self.codex_session(uid(3), codex_meta(cwd=str(self.work), parent=uid(2)), codex_user("check refunds"),
+                           codex_at(t + 5, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -qam 'feat: refund a settled charge'"})),
+                           codex_at(t + 6, "response_item", type="function_call_output", call_id="c1", output="Process exited with code 0"))
+        self.assertEqual(self.found("HEAD"), [(uid(1), "made this commit")])
+        self.commit("feat: refund a settled charge", {"refund.go": "settled\n"}, t + 10)
+        self.assertEqual(self.found("HEAD"), [(uid(1), "made this commit")])
+
     def test_a_long_lived_pull_request_and_a_merge_commit_still_find_their_sessions(self):
         t = self.now - 3600
         self.git("remote", "add", "upstream", "https://github.com/Acme/Billing.git")
