@@ -22,6 +22,8 @@ type Query struct {
 	Statuses []string
 	From     []*agent.Agent
 	Branches []string
+	Files    []string
+	Commits  bool
 	After    time.Time
 	Before   time.Time
 	Problem  *Problem
@@ -70,6 +72,16 @@ var filters = map[string]filter{
 			q.Branches = append(q.Branches, v)
 		}
 		return v != ""
+	}},
+	"file": {hint: "file: takes a file or folder, like file:main.go or file:internal/.", parse: func(q *Query, v string, _ time.Time) bool {
+		if v != "" {
+			q.Files = append(q.Files, v)
+		}
+		return v != ""
+	}},
+	"has": {hint: "has: takes commit, as in has:commit.", parse: func(q *Query, v string, _ time.Time) bool {
+		q.Commits = q.Commits || strings.EqualFold(v, "commit")
+		return strings.EqualFold(v, "commit")
 	}},
 	"after": {hint: "after" + whenHint, parse: func(q *Query, v string, now time.Time) bool {
 		t, ok := moment(v, now)
@@ -177,9 +189,16 @@ func (q Query) Rows(rows []Row, everyKind bool) []Row {
 	if q.Here {
 		here = hereMatcher()
 	}
+	edited := func(Row) bool { return true }
+	if len(q.Files) > 0 {
+		sessions := EditedFiles(q.Files)
+		edited = func(r Row) bool {
+			return sessions[r.Path] || slices.ContainsFunc(r.Threads, func(path string) bool { return sessions[path] })
+		}
+	}
 	var kept []Row
 	for _, r := range rows {
-		if q.keeps(r, everyKind) && here(r.Session.Cwd) {
+		if q.keeps(r, everyKind) && here(r.Session.Cwd) && edited(r) {
 			kept = append(kept, r)
 		}
 	}
@@ -196,6 +215,8 @@ func (q Query) keeps(r Row, everyKind bool) bool {
 	case len(q.Statuses) > 0 && !slices.Contains(q.Statuses, r.Status):
 		return false
 	case len(q.From) > 0 && !slices.Contains(q.From, r.Agent):
+		return false
+	case q.Commits && r.Commits == 0:
 		return false
 	case len(q.Branches) > 0 && !slices.ContainsFunc(q.Branches, func(b string) bool { return strings.EqualFold(b, s.Branch) }):
 		return false

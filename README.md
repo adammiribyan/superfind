@@ -68,7 +68,7 @@ Open the picker with `sfd`, `superfind`, or **Ctrl-X**, then **c**. Type to sear
 
 Try a description like `where we fixed duplicate charges`, then press **Ctrl-R**. Search by description requires Claude Code installed and logged in, or a TypeSafe API key.
 
-Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`. Use `is:unfinished` for sessions that stopped partway. Use `is:open` for sessions an agent has open right now; their rows say **open**.
+Filter by agent with `agent:claude`, `agent:codex`, or `agent:grok`. Use `is:unfinished` for sessions that stopped partway. Use `is:open` for sessions an agent has open right now; their rows say **open**. Use `file:PATH` for sessions that edited a file or folder, and `has:commit` for sessions that committed.
 
 Press Enter on a session that's already open to go to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
 

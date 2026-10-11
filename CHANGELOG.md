@@ -5,6 +5,10 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- `file:PATH` filters the picker, `search`, `ask`, and `last` to sessions that edited a file, or a file in a folder, with an edit tool, in any worktree of its repository, including a Claude Code worktree since removed. `has:commit` keeps sessions that ran a git commit.
+
 ### Changed
 
 - `superfind blame FILE` answers from the index instead of reading every transcript again. On about 950 sessions it went from about 9.4 to 0.18 seconds of CPU time.

@@ -32,11 +32,13 @@ If `superfind` fails with a missing shell function such as `_superfind_run`, an 
 - `agent:claude`, `agent:codex`, `agent:grok`: one agent's sessions
 - `in:here`: sessions started in this folder or a folder that holds it
 - `branch:NAME`: sessions that ended on that branch
+- `file:PATH`: sessions that edited that file, or a file in that folder, with an edit tool, in any worktree of its repository; `superfind blame FILE` also finds the sessions that made its commits
+- `has:commit`: sessions that ran a git commit
 - `after:DAY`, `before:DAY`: last active on or after, or before, a day: `2026-10-09`, `today`, `yesterday`, `12h`, `3d`, `2w`
 - `is:unfinished`: sessions that stopped mid-task; `is:waiting`: sessions waiting on the user, which needs a TypeSafe key
 - `is:agent`: only sessions another program started
 
-Two `agent:` or `branch:` filters, or `is:waiting` with `is:unfinished`, keep sessions that fit either; other filters must all fit.
+Two `agent:`, `branch:`, or `file:` filters, or `is:waiting` with `is:unfinished`, keep sessions that fit either; other filters must all fit.
 
 A session is named by its `path` from `--json`, its id, or a unique start of an id with 8 or more characters. The recipes use the path, which is never ambiguous.
 
