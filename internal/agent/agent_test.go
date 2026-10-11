@@ -32,7 +32,7 @@ func FuzzReadersNeverPanic(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, line []byte) {
 		for _, a := range Agents {
-			r, err := a.reader("/nowhere/x/y/chat_history.jsonl")
+			r, err := a.reader("/nowhere/x/y/chat_history.jsonl", Transcript{Last: Replied})
 			if err != nil {
 				t.Fatal(err)
 			}

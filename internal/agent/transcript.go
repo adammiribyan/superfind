@@ -106,6 +106,8 @@ type Transcript struct {
 	Last                             Event
 	Hidden, Incomplete               bool
 	ByAgent, PeerDriven              bool
+	hear                             func(peer bool, role, text string)
+	peer                             bool
 }
 
 type reader interface {
@@ -177,6 +179,10 @@ func eachLine(path string, fn func(raw []byte) bool) error {
 }
 
 func (t *Transcript) say(role, text string) {
+	if t.hear != nil {
+		t.hear(t.peer, role, text)
+		return
+	}
 	if n := len(t.Turns); n > 0 && t.Turns[n-1].Role == role {
 		t.Turns[n-1].Text += "\n\n" + text
 	} else {
@@ -185,8 +191,23 @@ func (t *Transcript) say(role, text string) {
 	t.Messages = append(t.Messages, text)
 }
 
+func (t *Transcript) ask(prompt string) {
+	if t.hear == nil {
+		t.Prompts = append(t.Prompts, prompt)
+	}
+	t.say("user", prompt)
+}
+
 func ReadTranscript(a *Agent, path string) (Transcript, error) {
-	r, err := a.reader(path)
+	return read(a, path, Transcript{Last: Replied})
+}
+
+func Listen(a *Agent, path string, hear func(peer bool, role, text string)) (Transcript, error) {
+	return read(a, path, Transcript{Last: Replied, hear: hear})
+}
+
+func read(a *Agent, path string, start Transcript) (Transcript, error) {
+	r, err := a.reader(path, start)
 	if err != nil {
 		return Transcript{}, err
 	}
@@ -216,7 +237,7 @@ func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error)
 		if start > 0 {
 			buf = buf[bytes.IndexByte(buf, '\n')+1:]
 		}
-		r, err := a.reader(path)
+		r, err := a.reader(path, Transcript{Last: Replied})
 		if err != nil {
 			return nil, err
 		}

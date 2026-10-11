@@ -414,12 +414,11 @@ func runShow(args []string) {
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
-	t, err := agent.ReadTranscript(r.Agent, r.Path)
+	conversation, err := show.Read(r.Agent, r.Path, opt)
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
 	record := session.RecordOf(r, show.Clean)
-	conversation := show.Select(t.Turns, opt)
 	if asJSON {
 		err = show.WriteJSON(stdout, record, conversation)
 	} else {

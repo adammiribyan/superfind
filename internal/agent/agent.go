@@ -21,13 +21,13 @@ type Agent struct {
 	resume   string
 	IDOf     func(path string) string
 	Names    func(home string) map[string]string
-	reader   func(path string) (reader, error)
+	reader   func(path string, start Transcript) (reader, error)
 }
 
 var Agents = []*Agent{
 	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "SUPERFIND_CLAUDE_DIRS",
 		glob: "projects/*/*.jsonl", resume: "claude --resume", IDOf: stem,
-		reader: func(string) (reader, error) { return newParser(), nil }},
+		reader: func(_ string, start Transcript) (reader, error) { return &parser{t: start}, nil }},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
 		reader: newCodexReader},
