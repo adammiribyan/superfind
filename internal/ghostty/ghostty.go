@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/proc"
 )
 
@@ -15,8 +16,8 @@ const (
 	ancestors = 32
 )
 
-func Focus(pid int, tty proc.TTY) bool {
-	if tty == (proc.TTY{}) || !underGhostty(pid, proc.Lookup) {
+func Focus(s open.State) bool {
+	if s.TTY == (proc.TTY{}) || !underGhostty(s.PID, proc.Lookup) {
 		return false
 	}
 	osascript, err := exec.LookPath("osascript")
@@ -29,7 +30,7 @@ func Focus(pid int, tty proc.TTY) bool {
 	if err != nil {
 		return false
 	}
-	path, ok := terminalFor(out, tty, proc.TerminalOf)
+	path, ok := terminalFor(out, s.TTY, proc.TerminalOf)
 	if !ok {
 		return false
 	}

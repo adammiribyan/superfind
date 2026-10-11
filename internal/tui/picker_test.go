@@ -24,6 +24,17 @@ import (
 	"github.com/adammiribyan/superfind/internal/session"
 )
 
+func TestMain(m *testing.M) {
+	empty, err := os.MkdirTemp("", "no-osascript")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("PATH", empty)
+	code := m.Run()
+	os.Remove(empty)
+	os.Exit(code)
+}
+
 func testPicker(t *testing.T) picker {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", "")
@@ -442,29 +453,103 @@ func openPicker(t *testing.T) picker {
 		{Path: "b", Agent: agent.Named("claude"), Session: session.Session{ID: "id-b", Title: "Invoice layout", Cwd: "/tmp", Mtime: 1, Prompts: 5}},
 	}
 	m := newPicker(rows, nil, "")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 20})
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 160, Height: 20})
 	m = next.(picker)
 	m.started = true
 	for i := range m.shown {
 		m.shown[i].Open = &open.State{PID: 4242, Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}
 	}
+	m.focus = func(open.State) bool { return false }
 	return m
 }
 
-func TestEnterOnASessionStillOpenOutsideAPaneSaysSoAndKeepsThePickerOpen(t *testing.T) {
+const confirmLine = "Open in another window. Enter again resumes a copy; Esc goes back."
+
+func screenOf(m picker) string { return ansi.Strip(m.View().Content) }
+
+func TestEnterOnASessionOpenElsewhereAsksFirstAndEnterAgainResumesACopy(t *testing.T) {
 	openedByThisProcess(t, "id-a")
 	t.Setenv("TMUX", "/private/tmp/tmux-501/default,1,0")
 	m := openPicker(t)
+	if !m.compact() {
+		t.Fatal("the picker is not in its short layout")
+	}
 	m, msg := press(m, tea.KeyEnter)
 	if _, quit := msg.(tea.QuitMsg); quit || m.quitting || m.chosen != nil {
-		t.Fatalf("enter on a session open outside tmux quit=%v chosen=%v, want the picker still open with nothing chosen", quit || m.quitting, m.chosen)
+		t.Fatalf("the first enter quit=%v chose %v, want the picker still open with nothing chosen", quit || m.quitting, m.chosen)
 	}
-	if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
-		t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open in another terminal window", screen)
+	screen := screenOf(m)
+	if !strings.Contains(screen, confirmLine) || !strings.Contains(screen, "enter resume a copy") {
+		t.Fatalf("after enter the screen reads\n%s\nwant %q and the hint enter resume a copy", screen, confirmLine)
 	}
-	m, _ = press(m, tea.KeyDown)
-	if screen := ansi.Strip(m.View().Content); strings.Contains(screen, "Already open") {
-		t.Fatalf("after moving down the screen still reads\n%s", screen)
+	m, msg = press(m, tea.KeyEnter)
+	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Path != "a" || m.chosen.Open == nil || m.chosen.Open.PID != os.Getpid() {
+		t.Fatalf("the second enter sent %v and chose %+v, want it to quit choosing a, open in this process", msg, m.chosen)
+	}
+}
+
+func TestEscOnTheQuestionGoesBackToThePicker(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	m, _ := press(openPicker(t), tea.KeyEnter)
+	m, msg := press(m, tea.KeyEscape)
+	if msg != nil || m.quitting {
+		t.Fatalf("esc on the question sent %v quitting=%v, want the picker still open", msg, m.quitting)
+	}
+	if screen := screenOf(m); strings.Contains(screen, confirmLine) || !strings.Contains(screen, "enter resume ·") {
+		t.Fatalf("after esc the screen reads\n%s\nwant the question gone and the hint enter resume", screen)
+	}
+	m, _ = press(m, tea.KeyEnter)
+	if m.chosen != nil || !strings.Contains(screenOf(m), confirmLine) {
+		t.Fatalf("enter after esc chose %+v, want the question again", m.chosen)
+	}
+	m, _ = press(m, tea.KeyEscape)
+	if _, msg = press(m, tea.KeyEscape); msg != (tea.QuitMsg{}) {
+		t.Fatalf("a second esc sent %v, want it to quit the picker", msg)
+	}
+}
+
+func TestAnyOtherKeyAPasteOrTheSessionClosingTakesTheQuestionAway(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	asked := func(t *testing.T) picker {
+		m, _ := press(openPicker(t), tea.KeyEnter)
+		if !strings.Contains(screenOf(m), confirmLine) {
+			t.Fatalf("after enter the screen reads\n%s\nwant %q", screenOf(m), confirmLine)
+		}
+		return m
+	}
+	m, _ := press(asked(t), tea.KeyDown)
+	m, _ = press(m, tea.KeyUp)
+	if screen := screenOf(m); strings.Contains(screen, confirmLine) {
+		t.Errorf("after moving down and back the screen still reads\n%s", screen)
+	}
+	if m, _ = press(m, tea.KeyEnter); m.chosen != nil {
+		t.Errorf("enter after moving away and back chose %+v, want the question again", m.chosen)
+	}
+	next, _ := asked(t).Update(heldMsg{})
+	if screen := screenOf(next.(picker)); strings.Contains(screen, confirmLine) {
+		t.Errorf("after the session closed the screen still reads\n%s", screen)
+	}
+	next, _ = asked(t).Update(tea.PasteMsg{Content: "ledger"})
+	if screen := screenOf(next.(picker)); strings.Contains(screen, confirmLine) {
+		t.Errorf("after a paste the screen still reads\n%s", screen)
+	}
+}
+
+func TestEnterOnASessionInAGhosttyTabSwitchesToItAndHandsTheShellNothing(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	t.Setenv("TMUX", "")
+	m := openPicker(t)
+	var asked []int
+	m.focus = func(s open.State) bool {
+		asked = append(asked, s.PID)
+		return true
+	}
+	m, msg := press(m, tea.KeyEnter)
+	if msg != (tea.QuitMsg{}) || m.chosen != nil || !slices.Equal(asked, []int{os.Getpid()}) {
+		t.Fatalf("enter sent %v, chose %+v and asked Ghostty about %v, want it to quit choosing nothing after asking about %d",
+			msg, m.chosen, asked, os.Getpid())
 	}
 }
 
@@ -479,33 +564,24 @@ func TestEnterOnASessionThatClosedSinceTheLastLookResumesIt(t *testing.T) {
 	}
 }
 
-func TestEnterGoesToTheTmuxPaneOnlyWhenTheSessionIsOpenInOneAndSuperfindRunsInTmux(t *testing.T) {
+func TestEnterKeepsTheLastKnownPaneOnlyForTheSameProcess(t *testing.T) {
 	pane := &open.Pane{ID: "%3", Session: "work", Window: 1}
+	other := &open.Pane{ID: "%9", Session: "play", Window: 2}
 	cases := []struct {
-		name     string
-		cached   *open.State
-		fresh    *open.State
-		inTmux   bool
-		want     enterAction
-		wantPane *open.Pane
+		name          string
+		cached, fresh *open.State
+		want          *open.State
 	}{
-		{"closed", nil, nil, true, resumeIt, nil},
-		{"closed since the last look", &open.State{PID: 4242, Tmux: pane}, nil, true, resumeIt, nil},
-		{"closed outside tmux", nil, nil, false, resumeIt, nil},
-		{"open in a pane", nil, &open.State{PID: 4242, Tmux: pane}, true, goToPane, pane},
-		{"open in a pane outside tmux", nil, &open.State{PID: 4242, Tmux: pane}, false, sayWhere, pane},
-		{"open without a pane", nil, &open.State{PID: 4242}, true, sayWhere, nil},
-		{"tmux did not answer the fresh look", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242}, true, goToPane, pane},
-		{"another process has it open now", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4343}, true, sayWhere, nil},
+		{"closed", nil, nil, nil},
+		{"closed since the last look", &open.State{PID: 4242, Tmux: pane}, nil, nil},
+		{"tmux did not answer the fresh look", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242}, &open.State{PID: 4242, Tmux: pane}},
+		{"another process has it open now", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4343}, &open.State{PID: 4343}},
+		{"moved to another pane", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242, Tmux: other}, &open.State{PID: 4242, Tmux: other}},
 	}
 	for _, c := range cases {
-		got, state := onEnter(c.cached, c.fresh, c.inTmux)
-		var gotPane *open.Pane
-		if state != nil {
-			gotPane = state.Tmux
-		}
-		if got != c.want || gotPane != c.wantPane {
-			t.Errorf("%s: enter does %d in pane %v, want %d in pane %v", c.name, got, gotPane, c.want, c.wantPane)
+		got := freshest(c.cached, c.fresh)
+		if (got == nil) != (c.want == nil) || got != nil && !got.Equal(*c.want) {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
 		}
 	}
 }
@@ -518,9 +594,8 @@ func TestTheEnterHintSaysWhatEnterDoesOnTheFocusedSession(t *testing.T) {
 		want string
 	}{
 		{"/private/tmp/tmux-501/default,1,0", &open.State{PID: 4242, Tmux: pane}, "go to it"},
-		{"", &open.State{PID: 4242, Tmux: pane}, "see where"},
-		{"/private/tmp/tmux-501/default,1,0", &open.State{PID: 4242}, "see where"},
-		{"", &open.State{PID: 4242}, "see where"},
+		{"", &open.State{PID: 4242, Tmux: pane}, "resume"},
+		{"/private/tmp/tmux-501/default,1,0", &open.State{PID: 4242}, "resume"},
 		{"/private/tmp/tmux-501/default,1,0", nil, "resume"},
 	}
 	for _, c := range cases {
@@ -533,7 +608,7 @@ func TestTheEnterHintSaysWhatEnterDoesOnTheFocusedSession(t *testing.T) {
 	}
 }
 
-func TestEnterOnASessionThatOpenedSinceTheLastLookSaysWhereItIsOpen(t *testing.T) {
+func TestEnterOnASessionThatOpenedSinceTheLastLookAsksFirst(t *testing.T) {
 	openedByThisProcess(t, "id-a")
 	t.Setenv("TMUX", "")
 	m := openPicker(t)
@@ -541,11 +616,8 @@ func TestEnterOnASessionThatOpenedSinceTheLastLookSaysWhereItIsOpen(t *testing.T
 		m.shown[i].Open = nil
 	}
 	m, msg := press(m, tea.KeyEnter)
-	if _, quit := msg.(tea.QuitMsg); quit || m.quitting || m.chosen != nil {
-		t.Fatalf("enter on a session opened since the last look quit=%v chosen=%v, want the picker still open with nothing chosen", quit || m.quitting, m.chosen)
-	}
-	if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
-		t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open in another terminal window", screen)
+	if _, quit := msg.(tea.QuitMsg); quit || m.chosen != nil || !strings.Contains(screenOf(m), confirmLine) {
+		t.Fatalf("enter on a session opened since the last look quit=%v chose %v and shows\n%s\nwant %q", quit, m.chosen, screenOf(m), confirmLine)
 	}
 }
 
@@ -557,25 +629,5 @@ func TestEnterKeepsTheKnownPaneWhenTmuxDoesNotAnswerTheFreshLook(t *testing.T) {
 	m, msg := press(m, tea.KeyEnter)
 	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Open == nil || m.chosen.Open.Tmux == nil || m.chosen.Open.Tmux.ID != "%3" {
 		t.Fatalf("enter sent %v and chose %+v, want it to quit choosing the session in pane %%3", msg, m.chosen)
-	}
-}
-
-func TestTheAlreadyOpenNoticeGoesAwayWhenTheSessionClosesOrTheSearchChanges(t *testing.T) {
-	openedByThisProcess(t, "id-a")
-	t.Setenv("TMUX", "")
-	notice := func(t *testing.T) picker {
-		m, _ := press(openPicker(t), tea.KeyEnter)
-		if screen := ansi.Strip(m.View().Content); !strings.Contains(screen, "Already open in another terminal window.") {
-			t.Fatalf("after enter the screen reads\n%s\nwant it to say the session is already open", screen)
-		}
-		return m
-	}
-	next, _ := notice(t).Update(heldMsg{})
-	if screen := ansi.Strip(next.(picker).View().Content); strings.Contains(screen, "Already open") {
-		t.Errorf("after the session closed the screen still reads\n%s", screen)
-	}
-	next, _ = notice(t).Update(tea.PasteMsg{Content: "ledger"})
-	if screen := ansi.Strip(next.(picker).View().Content); strings.Contains(screen, "Already open") {
-		t.Errorf("after a paste the screen still reads\n%s", screen)
 	}
 }

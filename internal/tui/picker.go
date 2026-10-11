@@ -28,6 +28,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/ghostty"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
@@ -195,8 +196,9 @@ type picker struct {
 	askedFor    string
 	explained   map[string]string
 	message     string
-	notice      notice
+	confirming  string
 	inTmux      bool
+	focus       func(open.State) bool
 
 	asks     *asks
 	reported *atomic.Bool
@@ -205,8 +207,6 @@ type picker struct {
 	reindex  bool
 	indexing bool
 }
-
-type notice struct{ path, text string }
 
 type phase int
 
@@ -249,7 +249,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "",
+		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", focus: ghostty.Focus,
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
@@ -296,7 +296,7 @@ func (m picker) layout() layout {
 	l := layout{listWidth: m.width, compact: m.compact(), search: 3, message: 1}
 	if l.compact {
 		l.search = 1
-		if m.message == "" {
+		if m.shownMessage() == "" {
 			l.message = 0
 		}
 	}
@@ -530,6 +530,9 @@ func (m picker) reannotate() (tea.Model, tea.Cmd) {
 	if i := slices.Index(pathsOf(m.shown), focused); i >= 0 {
 		m.cursor = i
 	}
+	if !m.asksToConfirm() {
+		m.confirming = ""
+	}
 	return m.afterMove()
 }
 
@@ -673,11 +676,15 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.loadPreview()
 		}
 	case tea.PasteMsg:
-		m.notice = notice{}
+		m.confirming = ""
 	case tea.KeyPressMsg:
-		m.notice = notice{}
+		confirming := m.asksToConfirm()
+		m.confirming = ""
 		switch msg.String() {
 		case "esc":
+			if confirming {
+				return m, nil
+			}
 			if m.phase() != searching {
 				m.search()
 				return m.afterMove()
@@ -688,7 +695,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
-			return m.enter()
+			return m.enter(confirming)
 		case "up", "ctrl+p":
 			m.cursor--
 			return m.afterMove()
@@ -726,32 +733,30 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.editInput(msg)
 }
 
-type enterAction int
+const confirmCopy = "Open in another window. Enter again resumes a copy; Esc goes back."
 
-const (
-	resumeIt enterAction = iota
-	goToPane
-	sayWhere
-)
-
-var enterHints = map[enterAction]string{resumeIt: "resume", goToPane: "go to it", sayWhere: "see where"}
-
-func onEnter(cached, fresh *open.State, inTmux bool) (enterAction, *open.State) {
+func freshest(cached, fresh *open.State) *open.State {
 	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
 		kept := *fresh
 		kept.Tmux = cached.Tmux
-		fresh = &kept
+		return &kept
 	}
-	switch {
-	case fresh == nil:
-		return resumeIt, nil
-	case fresh.Tmux != nil && inTmux:
-		return goToPane, fresh
-	}
-	return sayWhere, fresh
+	return fresh
 }
 
-func (m picker) enter() (tea.Model, tea.Cmd) {
+func (m picker) asksToConfirm() bool {
+	r := m.focused()
+	return r != nil && r.Open != nil && r.Path == m.confirming
+}
+
+func (m picker) shownMessage() string {
+	if m.asksToConfirm() {
+		return confirmCopy
+	}
+	return m.message
+}
+
+func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
 	r := m.focused()
 	if r == nil {
 		m.quitting = true
@@ -761,17 +766,20 @@ func (m picker) enter() (tea.Model, tea.Cmd) {
 	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
 		fresh = &state
 	}
-	action, state := onEnter(r.Open, fresh, m.inTmux)
 	chosen := *r
-	chosen.Open = state
-	if action == sayWhere {
-		text := "Already open in another terminal window."
-		if pane := state.Tmux; pane != nil {
-			text = fmt.Sprintf("Already open in tmux session “%s”, window %d.", render.Flat(pane.Session), pane.Window)
-		}
+	chosen.Open = freshest(r.Open, fresh)
+	reach := open.NotOpen
+	if !confirmed {
+		reach = open.Reaching(chosen.Open, m.inTmux, m.focus)
+	}
+	switch reach {
+	case open.Focused:
+		m.quitting = true
+		return m, tea.Quit
+	case open.Elsewhere:
 		m.shown = slices.Clone(m.shown)
-		m.shown[m.cursor].Open = state
-		m.notice = notice{r.Path, text}
+		m.shown[m.cursor].Open = chosen.Open
+		m.confirming = r.Path
 		return m, nil
 	}
 	m.chosen, m.quitting = &chosen, true
@@ -903,10 +911,11 @@ func (m picker) inputBox(width int) []string {
 }
 
 func (m picker) hints() [][2]string {
-	enter := enterHints[resumeIt]
-	if r := m.focused(); r != nil {
-		action, _ := onEnter(r.Open, r.Open, m.inTmux)
-		enter = enterHints[action]
+	enter := "resume"
+	if r := m.focused(); m.asksToConfirm() {
+		enter = "resume a copy"
+	} else if r != nil && r.Open != nil && r.Open.Tmux != nil && m.inTmux {
+		enter = "go to it"
 	}
 	switch {
 	case m.phase() == asking:
@@ -1005,12 +1014,8 @@ func (m picker) View() tea.View {
 	l := m.layout()
 	muted := m.colors.muted
 	column := m.inputBox(l.listWidth)
-	message := m.message
-	if r := m.focused(); r != nil && r.Path == m.notice.path && r.Open != nil {
-		message = m.notice.text
-	}
 	if l.message > 0 {
-		column = append(column, ansi.Truncate(muted.Render(" "+fitMessage(message, l.listWidth-1)), l.listWidth, "…"))
+		column = append(column, ansi.Truncate(muted.Render(" "+fitMessage(m.shownMessage(), l.listWidth-1)), l.listWidth, "…"))
 	}
 	cols, words := m.widths.Fit(l.listWidth), m.matchWords()
 	for i := m.offset; i < m.offset+l.listHeight; i++ {

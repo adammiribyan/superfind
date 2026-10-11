@@ -268,3 +268,31 @@ func TestFindReadsOnlyARegistryThatIsAPlainSmallFile(t *testing.T) {
 		t.Fatalf("a plain pid file was not read: %+v", got)
 	}
 }
+
+func TestASessionIsReachedInItsPaneThenInGhosttyThenNotAtAll(t *testing.T) {
+	pane := &Pane{ID: "%3", Session: "work", Window: 1}
+	cases := []struct {
+		name    string
+		state   *State
+		inTmux  bool
+		focused bool
+		want    Reach
+		asked   bool
+	}{
+		{"closed", nil, true, true, NotOpen, false},
+		{"in a pane while superfind runs in tmux", &State{PID: 4242, Tmux: pane}, true, true, InPane, false},
+		{"in a pane while superfind runs outside tmux", &State{PID: 4242, Tmux: pane}, false, true, Focused, true},
+		{"in a Ghostty tab", &State{PID: 4242}, true, true, Focused, true},
+		{"somewhere Ghostty can't switch to", &State{PID: 4242}, false, false, Elsewhere, true},
+	}
+	for _, c := range cases {
+		var asked *State
+		got := Reaching(c.state, c.inTmux, func(s State) bool {
+			asked = &s
+			return c.focused
+		})
+		if got != c.want || (asked != nil) != c.asked || asked != nil && asked.PID != 4242 {
+			t.Errorf("%s: reached %d asking Ghostty about %+v, want %d asking=%v", c.name, got, asked, c.want, c.asked)
+		}
+	}
+}

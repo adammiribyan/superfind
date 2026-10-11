@@ -36,6 +36,27 @@ func (s State) Equal(t State) bool {
 	return s.PID == t.PID && s.Status == t.Status && s.TTY == t.TTY && (s.Tmux == t.Tmux || s.Tmux != nil && t.Tmux != nil && *s.Tmux == *t.Tmux)
 }
 
+type Reach int
+
+const (
+	NotOpen Reach = iota
+	InPane
+	Focused
+	Elsewhere
+)
+
+func Reaching(s *State, inTmux bool, focus func(State) bool) Reach {
+	switch {
+	case s == nil:
+		return NotOpen
+	case s.Tmux != nil && inTmux:
+		return InPane
+	case focus(*s):
+		return Focused
+	}
+	return Elsewhere
+}
+
 type Key struct{ Agent, ID string }
 
 func KeyOf(agent, id string) Key { return Key{agent, strings.ToLower(id)} }
