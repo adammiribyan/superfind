@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
+	"github.com/adammiribyan/superfind/internal/blame"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
@@ -51,6 +53,8 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print a session's conversation as plain text, for scripts and agents
   superfind command SESSION
                           print the shell command that resumes a session
+  superfind blame FILE|FILE:LINE|COMMIT [--json]
+                          print the sessions that made a commit, or that edited a file
   superfind index         build or refresh the index
   superfind label         mark sessions waiting on you (needs a TypeSafe key)
   superfind help COMMAND  explain one command
@@ -138,6 +142,33 @@ superfind search prints first.
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
 `,
+	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
+
+Print the sessions on this machine that made a commit, or that changed a file, from any agent,
+best first, in the same fields as search. Each line's summary starts with what the session did,
+such as made this commit, made a commit it squashed, opened #19, or edited it 3 times.
+To resume one, run the command that superfind command prints for its id. Run blame inside the
+git repository, or pass a file in one.
+
+  COMMIT       a commit, such as a hash, HEAD~2, or a branch. Lists the session that ran its
+               git commit, then any that opened its pull request, named by a (#N) suffix or a
+               "Merge pull request #N" subject. A squash merge lists the sessions that made
+               the commits it squashed. When no session left a record of either, it says so,
+               then lists the sessions that edited its files in the three days before it.
+  FILE         lists the sessions that edited the file, or made or opened the pull request of
+               one of its last 30 commits, most recent first
+  FILE:LINE    blames the commit that last changed that line. A file whose name ends in
+               :LINE is read as that file.
+  --json       print one JSON object per session, as search --json does, with what the
+               session did in match
+
+A commit or edit that a Claude Code or Codex subagent made counts for the session that
+started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+hand in a terminal or on another machine, and one whose message and hash the session never
+recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
+letters and digits, and the session ran it from a folder in the repository or one that no
+longer exists. Grok records no times, so its edits count as recent whenever its session is.
+`,
 	"index": `superfind index
 
 Build or refresh the index in ~/.cache/superfind/, or $XDG_CACHE_HOME/superfind/ when that is
@@ -156,7 +187,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "search", "ask", "preview", "show", "command", "index", "label"}
+var commandNames = []string{"init", "pick", "search", "ask", "preview", "show", "command", "blame", "index", "label"}
 
 const zshSetup = `_superfind_run() {
   if [[ -x %[1]s ]]; then
@@ -232,10 +263,13 @@ var shellSetups = map[string]string{"zsh": zshSetup, "bash": bashSetup}
 
 var stdout, stderr io.Writer = os.Stdout, os.Stderr
 
-func printRows(rows []session.Row, shown render.Tags) {
+func printRows(rows []session.Row, shown render.Tags, evidence ...string) {
 	secondary := render.SecondaryFromEnv()
-	for _, r := range rows {
+	for i, r := range rows {
 		t := render.RowTextOf(r, shown)
+		if i < len(evidence) {
+			t.Context = append([]string{field(evidence[i])}, t.Context...)
+		}
 		display := " " + t.Title + "  " + secondary + render.RowContext(t, secondary) + render.Reset
 		fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\t%s\t%s\n", field(r.Path), field(r.Session.Cwd), field(r.Session.ID), field(r.Home), t.Title, display)
 	}
@@ -426,6 +460,66 @@ func runShow(args []string) {
 	}
 	if err != nil {
 		fail("superfind show: " + err.Error())
+	}
+}
+
+func runBlame(args []string) {
+	asJSON, target, rest := false, "", false
+	for _, arg := range args {
+		switch {
+		case rest && target == "":
+			target = arg
+		case arg == "--" && !rest:
+			rest = true
+		case arg == "--json":
+			asJSON = true
+		case strings.HasPrefix(arg, "-"):
+			usageError("superfind blame: there is no " + arg + " option. See superfind help blame.")
+		case target != "":
+			usageError("superfind blame: one file or commit at a time, not " + arg + " too.")
+		default:
+			target = arg
+		}
+	}
+	if target == "" {
+		usageError("superfind blame: which file or commit? See superfind help blame.")
+	}
+	t, err := blame.Resolve(target)
+	if err != nil {
+		fail("superfind blame: " + err.Error())
+	}
+	if t.Note != "" {
+		fmt.Fprintln(stderr, "superfind blame: "+t.Note)
+	}
+	rows := session.Annotate(mustIndex("blame"))
+	found, problems := blame.Blame(t, rows)
+	if unreadable := session.Unreadable(problems); unreadable != "" {
+		fmt.Fprintln(stderr, "superfind blame: "+unreadable)
+	}
+	switch {
+	case len(found) == 0 && t.File != "":
+		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its last 30 commits")
+	case len(found) == 0:
+		fmt.Fprintln(stderr, "superfind blame: no session on this machine made "+field(target)+" or edited its files in the three days before it")
+	case t.File == "" && found[0].Guess:
+		fmt.Fprintln(stderr, "superfind blame: no session left a record of making "+field(target)+"; these edited its files in the three days before it")
+	}
+	if !asJSON {
+		shown, evidence := make([]session.Row, len(found)), make([]string, len(found))
+		for i, f := range found {
+			shown[i], evidence[i] = f.Row, f.Evidence
+		}
+		printRows(shown, render.TagsFor(rows), evidence...)
+		return
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetEscapeHTML(false)
+	for _, f := range found {
+		record := session.RecordOf(f.Row, show.Clean)
+		record.Match = show.Clean(f.Evidence)
+		if err := enc.Encode(record); err != nil {
+			fail("superfind: couldn't write the output: " + err.Error())
+		}
 	}
 }
 
@@ -644,6 +738,8 @@ func run(args []string) {
 		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
 	case "show":
 		runShow(args[1:])
+	case "blame":
+		runBlame(args[1:])
 	case "pick":
 		chosen, err := tui.Pick()
 		if err != nil {
