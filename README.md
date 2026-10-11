@@ -22,7 +22,7 @@ curl -fsSL https://superfind.dev/install | sh
 Open a new terminal tab, then run:
 
 ```sh
-sfd
+superfind
 ```
 
 You need the corresponding agent CLI installed to resume a session.
