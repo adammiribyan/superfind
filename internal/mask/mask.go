@@ -56,6 +56,7 @@ var (
 )
 
 func Unclosed(text string) bool {
+	text = maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key")))
 	for _, m := range quotedSecret.FindAllStringIndex(text, -1) {
 		quote, closed := text[m[1]-1], false
 		for i := m[1]; i < len(text) && !closed; i++ {

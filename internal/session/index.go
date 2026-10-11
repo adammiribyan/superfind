@@ -63,19 +63,15 @@ func cutAt(s string, n int) (int, bool) {
 }
 
 func clipMasked(s string, n int) string {
-	s = strings.Join(strings.Fields(s), " ")
 	for window := maskWindow; window < len(s); window *= 4 {
-		end := len(s)
-		if space := strings.IndexByte(s[window:], ' '); space >= 0 {
-			end = window + space
-		}
-		if end == len(s) {
+		space := strings.IndexAny(s[window:], " \t\n\r\f\v")
+		if space < 0 {
 			break
 		}
-		if mask.Unclosed(s[:end]) {
+		if mask.Unclosed(s[:window+space]) {
 			continue
 		}
-		head := mask.Secrets(s[:end])
+		head := strings.Join(strings.Fields(mask.Secrets(s[:window+space])), " ")
 		if cut, over := cutAt(head, n); over && cut <= len(head)-maskMargin {
 			return head[:cut] + "…"
 		}
