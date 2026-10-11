@@ -110,6 +110,8 @@ superfind search --json |
     [.updated[:10], .agent, .project, .title] | @tsv'
 ```
 
+To brief another agent on a session, `superfind handoff ID` prints how it ended, how to resume it, and quoted excerpts.
+
 See `superfind --help` for all commands and `superfind help <command>` for details. Agents can read the whole reference in one file, [llms-full.txt](https://superfind.dev/llms-full.txt).
 
 ## Privacy
