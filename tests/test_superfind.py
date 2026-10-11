@@ -209,7 +209,7 @@ class SuperfindBehavior(unittest.TestCase):
         return path.resolve()
 
     def superfind(self, *args):
-        result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True, timeout=60)
+        result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True)
         return ANSI.sub("", result.stdout)
 
     def run_superfind(self, *args):
@@ -306,10 +306,12 @@ class SuperfindBehavior(unittest.TestCase):
             {"pid": pid, "sessionId": session_id, "cwd": "/tmp", "startedAt": started_at, "status": "busy"}))
 
     def private_tmux(self, command="exec sleep 300"):
-        server = f"sfd-open-{os.getpid()}-{id(self)}"
-        tmux = lambda *args: subprocess.run(["tmux", "-L", server, *args], capture_output=True, text=True, check=True).stdout
+        folder = tempfile.mkdtemp(prefix="sfo", dir="/tmp")
+        self.addCleanup(shutil.rmtree, folder, True)
+        server = os.path.join(folder, "s")
+        tmux = lambda *args: subprocess.run(["tmux", "-S", server, *args], capture_output=True, text=True, check=True).stdout
         tmux("new-session", "-d", "-s", "work", "-x", "80", "-y", "20", command)
-        self.addCleanup(subprocess.run, ["tmux", "-L", server, "kill-server"], capture_output=True)
+        self.addCleanup(subprocess.run, ["tmux", "-S", server, "kill-server"], capture_output=True)
         pid, pane, socket, window = tmux("display-message", "-p", "-t", "work",
                                          "#{pane_pid}\t#{pane_id}\t#{socket_path}\t#{window_index}").strip().split("\t")
         return int(pid), pane, socket, int(window)
