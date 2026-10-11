@@ -252,3 +252,24 @@ func FuzzTranscriptsReadTheSameWholeAndFromTheEnd(f *testing.F) {
 		}
 	})
 }
+
+func TestLinesAroundLongOnesArriveWhole(t *testing.T) {
+	want := []string{strings.Repeat("a", 3<<20), "short", strings.Repeat("b", 2<<20), "after the dropped one"}
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	text := want[0] + "\n" + want[1] + "\n" + want[2] + "\n" + strings.Repeat("c", longestLine+(2<<20)) + "\n" + strings.Repeat("d", longestLine) + "\n" + want[3] + "\n"
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	if err := eachLine(path, func(raw []byte) bool { got = append(got, strings.TrimSuffix(string(raw), "\n")); return true }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("line %d: got %d bytes starting %.10q, want %d bytes starting %.10q", i, len(got[i]), got[i], len(want[i]), want[i])
+		}
+	}
+}

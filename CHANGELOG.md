@@ -6,6 +6,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
 - `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
 - `llms.txt` and `llms-full.txt` at the repo root describe superfind's install, commands, JSON fields, and exit codes for AI assistants and agents. `llms-full.txt` is generated from `llms.txt`, the help, and real output, and a test fails when it falls out of date.
@@ -21,6 +22,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - The index is rebuilt once after upgrading, to record how each session ended.
+- That rebuild starts the search index afresh instead of deleting every row from it, so it ends up the size of a new index (about 17% smaller on a 10,000-session test corpus) and stays searchable from other windows while it runs.
 - A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.
 - Building the index from scratch takes time in line with the number of sessions, where it grew with their square. Refreshing it after sessions change reads the search index once, not once per changed session.
 - `search --json` takes about as long as plain `search`, even for a word in nearly every session. On 600 generated sessions, `search --json the` took 13 seconds and now takes under a quarter of a second. `ask` also prepares its question faster, and the preview finds the passage that matched sooner in long sessions.
@@ -44,6 +46,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The picker waits for the terminal to report its colors before it first draws, instead of drawing after 300 ms whether or not they have arrived. A slow machine or a remote terminal no longer shows a frame without colors first. A terminal that doesn't report its colors gets the picker as soon as it answers, and one that answers nothing gets it after a second.
 - A transcript line just over the 16 MiB limit is now skipped everywhere. Before, search and titles read it, while `show` and the preview left it out. A session already in the index picks this up the next time it changes.
 - `show` masks a key whole even when part of it looks like another kind of key. Before, a bearer token, Slack token, or Google API key with an AWS-key-shaped piece inside kept the rest of its characters visible. A key used as the user name in a URL with a password is masked along with the password.
+- Indexing a session that holds an enormous line uses less memory, and about the same amount every time.
 
 ## [0.10.0] - 2026-10-10
 
