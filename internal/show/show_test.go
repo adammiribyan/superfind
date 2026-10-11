@@ -1,8 +1,11 @@
 package show
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
 )
@@ -44,6 +47,25 @@ func TestMaskReplacesEachKindOfSecret(t *testing.T) {
 		{"user=a&password=pa55word&next=1", "user=a&password=[masked secret]&next=1"},
 		{"password: hunter2", "password: [masked secret]"},
 		{"passphrase: correcthorsebatterystaple", "passphrase: [masked secret]"},
+	}
+	for _, c := range cases {
+		if got := Mask(c.in); got != c.want {
+			t.Errorf("Mask(%q)\n got %q\nwant %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestMaskHidesAKeyWholeEvenWhenPartOfItLooksLikeAnotherKey(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"xoxb-AKIABBBBBBBBBBBBBBBB-abcdefghij", "[masked Slack token]"},
+		{"AIza-AKIABBBBBBBBBBBBBBBB-abcdefghijklm", "[masked Google API key]"},
+		{"Authorization: Bearer abc1-AKIABBBBBBBBBBBBBBBB-tokenrest", "Authorization: Bearer [masked bearer token]"},
+		{"Authorization: Bearer sk-ant-" + strings.Repeat("a", 30), "Authorization: Bearer [masked Anthropic key]"},
+		{"AKIABBBBBBBBBBBBBBBB then xoxb-1234567890-abcdefghij", "[masked AWS access key] then [masked Slack token]"},
+		{"password=-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "password=[masked private key]"},
+		{"xoxb-abcdefghij-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", "[masked Slack token][masked private key]"},
+		{"sk-proj-" + strings.Repeat("B", 40) + "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Blbn", "[masked OpenAI key][masked private key]"},
+		{"https://ghp_" + strings.Repeat("A", 36) + ":hunter22@example.com", "https://[masked GitHub token]:[masked password in a URL]@example.com"},
 	}
 	for _, c := range cases {
 		if got := Mask(c.in); got != c.want {
@@ -97,6 +119,14 @@ func turns(texts ...string) []agent.Turn {
 	return out
 }
 
+func pick(turns []agent.Turn, opt Options) Conversation {
+	k := &keeper{opt: opt, every: 1}
+	for _, t := range turns {
+		k.say(t.Role, t.Text)
+	}
+	return k.conversation()
+}
+
 func texts(c Conversation) []string {
 	out := make([]string, len(c.Turns))
 	for i, t := range c.Turns {
@@ -105,15 +135,15 @@ func texts(c Conversation) []string {
 	return out
 }
 
-func TestSelectKeepsEverythingWithinTheLimit(t *testing.T) {
-	c := Select(turns("one", "two", "three"), Options{MaxBytes: 100})
+func TestShowKeepsEverythingWithinTheLimit(t *testing.T) {
+	c := pick(turns("one", "two", "three"), Options{MaxBytes: 100})
 	if strings.Join(texts(c), ",") != "one,two,three" || c.Total != 3 || c.Omitted != 0 || c.Truncated {
 		t.Fatalf("got %+v", c)
 	}
 }
 
-func TestSelectTailKeepsTheLastTurnsWithoutCallingItTruncated(t *testing.T) {
-	c := Select(turns("one", "two", "three", "four"), Options{Tail: 2})
+func TestShowTailKeepsTheLastTurnsWithoutCallingItTruncated(t *testing.T) {
+	c := pick(turns("one", "two", "three", "four"), Options{Tail: 2})
 	if strings.Join(texts(c), ",") != "three,four" || c.Omitted != 2 || c.Truncated {
 		t.Fatalf("got %+v", c)
 	}
@@ -122,27 +152,27 @@ func TestSelectTailKeepsTheLastTurnsWithoutCallingItTruncated(t *testing.T) {
 	}
 }
 
-func TestSelectTailLongerThanTheSessionKeepsItAll(t *testing.T) {
-	if c := Select(turns("one", "two"), Options{Tail: 5}); len(c.Turns) != 2 || c.Omitted != 0 {
+func TestShowTailLongerThanTheSessionKeepsItAll(t *testing.T) {
+	if c := pick(turns("one", "two"), Options{Tail: 5}); len(c.Turns) != 2 || c.Omitted != 0 {
 		t.Fatalf("got %+v", c)
 	}
 }
 
-func TestSelectByteLimitDropsTheEarliestWholeTurns(t *testing.T) {
-	c := Select(turns("aaaa", "bbbb", "cccc"), Options{MaxBytes: 8})
+func TestShowByteLimitDropsTheEarliestWholeTurns(t *testing.T) {
+	c := pick(turns("aaaa", "bbbb", "cccc"), Options{MaxBytes: 8})
 	if strings.Join(texts(c), ",") != "bbbb,cccc" || c.Omitted != 1 || !c.Truncated {
 		t.Fatalf("got %+v", c)
 	}
 }
 
-func TestSelectByteLimitExactlyFullIsNotTruncated(t *testing.T) {
-	if c := Select(turns("aaaa", "bbbb"), Options{MaxBytes: 8}); c.Truncated || c.Omitted != 0 {
+func TestShowByteLimitExactlyFullIsNotTruncated(t *testing.T) {
+	if c := pick(turns("aaaa", "bbbb"), Options{MaxBytes: 8}); c.Truncated || c.Omitted != 0 {
 		t.Fatalf("got %+v", c)
 	}
 }
 
-func TestSelectCutsAnOversizedLastTurnFromItsStartOnARuneBoundary(t *testing.T) {
-	c := Select(turns("earlier", "héllo wörld"), Options{MaxBytes: 4})
+func TestShowCutsAnOversizedLastTurnFromItsStartOnARuneBoundary(t *testing.T) {
+	c := pick(turns("earlier", "héllo wörld"), Options{MaxBytes: 4})
 	if len(c.Turns) != 1 || !c.Truncated || c.Omitted != 1 {
 		t.Fatalf("got %+v", c)
 	}
@@ -151,31 +181,110 @@ func TestSelectCutsAnOversizedLastTurnFromItsStartOnARuneBoundary(t *testing.T) 
 	}
 }
 
-func TestSelectWholeTurnsAreNeverMarkedCut(t *testing.T) {
-	for _, turn := range Select(turns("aaaa", "bbbb", "cccc"), Options{MaxBytes: 8}).Turns {
+func TestShowWholeTurnsAreNeverMarkedCut(t *testing.T) {
+	for _, turn := range pick(turns("aaaa", "bbbb", "cccc"), Options{MaxBytes: 8}).Turns {
 		if turn.Cut {
 			t.Fatalf("%+v is marked cut", turn)
 		}
 	}
 }
 
-func TestSelectAppliesTailThenTheByteLimit(t *testing.T) {
-	c := Select(turns("aaaa", "bbbb", "cccc", "dddd"), Options{Tail: 3, MaxBytes: 8})
+func TestShowAppliesTailThenTheByteLimit(t *testing.T) {
+	c := pick(turns("aaaa", "bbbb", "cccc", "dddd"), Options{Tail: 3, MaxBytes: 8})
 	if strings.Join(texts(c), ",") != "cccc,dddd" || c.Omitted != 2 || !c.Truncated {
 		t.Fatalf("got %+v", c)
 	}
 }
 
-func TestSelectZeroMaxBytesMeansNoLimit(t *testing.T) {
+func TestShowZeroMaxBytesMeansNoLimit(t *testing.T) {
 	long := strings.Repeat("x", DefaultMaxBytes*2)
-	if c := Select(turns(long), Options{}); c.Truncated || c.Turns[0].Text != long {
+	if c := pick(turns(long), Options{}); c.Truncated || c.Turns[0].Text != long {
 		t.Fatal("a zero limit cut the text")
 	}
 }
 
-func TestSelectMasksAndStripsControlCharactersBeforeMeasuring(t *testing.T) {
-	c := Select(turns("token ghp_"+strings.Repeat("z", 36)+"\x1b[31m red"), Options{MaxBytes: 1000})
+func TestShowMasksAndStripsControlCharactersBeforeMeasuring(t *testing.T) {
+	c := pick(turns("token ghp_"+strings.Repeat("z", 36)+"\x1b[31m red"), Options{MaxBytes: 1000})
 	if got := c.Turns[0].Text; got != "token [masked GitHub token] red" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+type keyFormat struct {
+	prefix, alphabet string
+	least, exact     int
+	endsAtWord       bool
+}
+
+const (
+	alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	urlSafe      = alphanumeric + "_-"
+)
+
+var keyFormats = []keyFormat{
+	{prefix: "sk-ant-api03-", alphabet: urlSafe, least: 20},
+	{prefix: "sk-proj-", alphabet: urlSafe, least: 32},
+	{prefix: "sk-", alphabet: urlSafe, least: 32},
+	{prefix: "xai-", alphabet: alphanumeric, least: 32},
+	{prefix: "ghp_", alphabet: alphanumeric, least: 36},
+	{prefix: "github_pat_", alphabet: alphanumeric + "_", least: 40},
+	{prefix: "AKIA", alphabet: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", exact: 16, endsAtWord: true},
+	{prefix: "xoxb-", alphabet: alphanumeric + "-", least: 10},
+	{prefix: "sk_live_", alphabet: alphanumeric, least: 16},
+	{prefix: "AIza", alphabet: urlSafe, exact: 35},
+	{prefix: "phc_", alphabet: alphanumeric, least: 30},
+}
+
+func FuzzMaskHidesEveryKeyWrittenAnywhere(f *testing.F) {
+	var every []byte
+	for _, format := range keyFormats {
+		every = append(every, byte(len(format.alphabet)-1))
+	}
+	for i := range 256 {
+		every = append(every, byte(i))
+	}
+	for _, before := range []string{"key ", "export TOKEN=", `"api_key": "`, "Authorization: Bearer ", "password=", "(", "\n", "", "https://"} {
+		for _, after := range []string{" done", "_x", "-", "", "\"", "x", ":hunter22@example.com"} {
+			for kind := range keyFormats {
+				f.Add(before, after, uint8(kind), uint8(len(after)), every)
+			}
+		}
+	}
+	f.Fuzz(func(t *testing.T, before, after string, kind, extra uint8, body []byte) {
+		format := keyFormats[int(kind)%len(keyFormats)]
+		length := format.exact
+		if length == 0 {
+			length = format.least + int(extra)%40
+		}
+		key := []byte(format.prefix)
+		for i := range length {
+			b := byte(i)
+			if len(body) > 0 {
+				b = body[i%len(body)] + byte(i/len(body))
+			}
+			key = append(key, format.alphabet[int(b)%len(format.alphabet)])
+		}
+		if word(lastRune(before)) || format.endsAtWord && word(firstRune(after)) || strings.Contains(before+after, "\x00") {
+			t.Skip()
+		}
+		out, last, tail := maskLabel.ReplaceAllString(Mask(before+string(key)+after), "\x00"), string(key[len(key)-1:]), string(key[len(key)-6:])
+		if after == "" && strings.HasSuffix(out, last) || after != "" && strings.Contains(out, last+after) && !strings.Contains(before+after, last+after) ||
+			strings.Contains(out, tail) && !strings.Contains(before+after, tail) {
+			t.Fatalf("Mask(%q) = %q still shows the end of the key", before+string(key)+after, out)
+		}
+	})
+}
+
+var maskLabel = regexp.MustCompile(`\[masked [^\]]*\]`)
+
+func word(r rune) bool { return r == '_' || r < 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r)) }
+
+func lastRune(s string) rune {
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return r
+}
+
+func firstRune(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
 }

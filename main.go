@@ -294,6 +294,16 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 	if noticed {
 		fmt.Fprint(stderr, "\r\033[K")
 	}
+	var readOnly session.ReadOnly
+	if errors.As(err, &readOnly) {
+		switch {
+		case command == "index" || command == "label":
+			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
+		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
+		}
+		err = nil
+	}
 	if err != nil {
 		fail("superfind " + command + ": " + err.Error())
 	}
@@ -404,12 +414,11 @@ func runShow(args []string) {
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
-	t, err := agent.ReadTranscript(r.Agent, r.Path)
+	conversation, err := show.Read(r.Agent, r.Path, opt)
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
 	record := session.RecordOf(r, show.Clean)
-	conversation := show.Select(t.Turns, opt)
 	if asJSON {
 		err = show.WriteJSON(stdout, record, conversation)
 	} else {
