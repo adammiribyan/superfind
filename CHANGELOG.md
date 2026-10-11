@@ -6,6 +6,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- In a terminal that supports the Program Status Protocol (OSC 7501), the picker's tab or pane shows that superfind is working while the first index runs and while ask works. The status is cleared before superfind exits or the agent starts. Other terminals ignore it.
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 
 ### Fixed

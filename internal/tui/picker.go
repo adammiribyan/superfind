@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -183,9 +184,11 @@ type picker struct {
 	message     string
 
 	asks     *asks
+	reported *atomic.Bool
 	chosen   *session.Row
 	quitting bool
 	reindex  bool
+	indexing bool
 }
 
 type phase int
@@ -229,12 +232,12 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows)), db: db,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{},
+		asks: &asks{}, reported: &atomic.Bool{},
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
-		m.problem = "Indexing your sessions…"
+		m.problem, m.indexing = "Indexing your sessions…", true
 	}
 	m.filter()
 	if info, err := os.Stat(session.CachePath("status.json")); err == nil {
@@ -519,7 +522,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if r := m.focused(); r != nil {
 			focused = r.Path
 		}
-		m.rows = session.RecentFirst(session.Annotate(msg.rows))
+		m.rows, m.indexing = session.RecentFirst(session.Annotate(msg.rows)), false
 		m.populate()
 		if msg.err == nil {
 			if db, err := session.OpenSearch(); err == nil {
@@ -861,12 +864,26 @@ func (m picker) View() tea.View {
 	}
 	view := tea.NewView(strings.Join(screen, "\n"))
 	view.AltScreen = true
+	view.ProgramStatus = m.status()
+	if view.ProgramStatus != nil {
+		m.reported.Store(true)
+	}
 	if c := m.input.Cursor(); c != nil && !m.asking && m.height > 1 {
 		c.Position.X += 2 + marginSide
 		c.Position.Y += 1 + marginTop
 		view.Cursor = c
 	}
 	return view
+}
+
+func (m picker) status() *tea.ProgramStatus {
+	switch {
+	case m.asking:
+		return &tea.ProgramStatus{State: tea.ProgramStateWorking, App: "superfind", Title: "Asking"}
+	case m.indexing:
+		return &tea.ProgramStatus{State: tea.ProgramStateWorking, App: "superfind", Title: "Indexing"}
+	}
+	return nil
 }
 
 func pathsOf(rows []session.Row) []string {
@@ -903,6 +920,9 @@ func Pick() (*session.Row, error) {
 	select {
 	case <-stopped:
 	case <-time.After(3 * time.Second):
+	}
+	if start.reported.Load() {
+		tty.WriteString(ansi.ClearProgramStatus)
 	}
 	if err != nil {
 		return nil, err

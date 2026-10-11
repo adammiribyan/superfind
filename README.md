@@ -94,6 +94,8 @@ A session written in the last two minutes shows **active now**, because it's pro
 
 superfind takes its colors from your terminal. If your terminal doesn't report them, the selected row is shown in reverse video instead of tinted. Set [`NO_COLOR`](https://no-color.org) to any non-empty value to turn color off: superfind then uses only bold, dim, and reverse video.
 
+While the first index runs and while ask works, the picker reports that it is working through the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status), so a terminal that supports it can show this on the tab or pane. It clears the report before it exits or hands the terminal to the agent. Other terminals ignore it.
+
 ## Ask for the session you remember
 
 Often you remember what a session was about but not the words it used. Type a description in the search box and press **Ctrl-R**; ask uses whatever the box holds, including any `agent:` or `is:` filter. While you type, the list may show no keyword matches; that doesn't matter. While it asks, the search box is titled "Asking…". Then the box is titled "Sessions by description", and the list holds only the sessions that fit, best match first, so it may hold just one. Typing again or pressing Esc goes back to search.
