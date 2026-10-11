@@ -427,15 +427,16 @@ func (rp *repo) judge(e entry) Outcome {
 	if !o.dangling {
 		return o
 	}
-	refs, err := git(rp.top, "for-each-ref", "--contains", e.SHA, "--format=%(refname)")
+	unreached, err := git(rp.top, "rev-list", "-n1", e.SHA, "--not", "--all")
 	switch {
 	case err != nil:
-	case refs == "":
+	case strings.TrimSpace(unreached) == e.SHA:
 		o.Stage = Dangling
-	case strings.Contains("\n"+refs, "\nrefs/remotes/"):
-		o.Stage, o.dangling = Pushed, false
 	default:
 		o.dangling = false
+		if remote, _ := git(rp.top, "for-each-ref", "--contains", e.SHA, "--count=1", "refs/remotes"); remote != "" {
+			o.Stage = Pushed
+		}
 	}
 	return o
 }

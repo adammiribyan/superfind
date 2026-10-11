@@ -83,7 +83,7 @@ superfind blame src/billing/retry.go --json | jq -c '{id, agent, title, match}'
 superfind blame HEAD --json | jq -c '{id, agent, title, match}'
 ```
 
-The other way around, `superfind show SESSION --json --tail 1 | jq -c '.outcomes[]'` lists the commits a session made and the pull requests it opened, each with its `stage`: `dangling` (on no branch any more), `committed`, `pushed`, `opened`, `merged`, or `reverted`, from local git as of the last fetch. Merged means the change was accepted, not that it was right.
+The other way around, `superfind show SESSION --json --tail 1 | jq -c '.outcomes[]'` lists the commits a session made and the pull requests it opened, each with its `stage`: `dangling` (nothing in the repository holds it any more), `committed`, `pushed`, `opened`, `merged`, or `reverted`, from local git as of the last fetch. Merged means the change was accepted, not that it was right.
 
 Give the user the command that resumes a session:
 

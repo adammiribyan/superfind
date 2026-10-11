@@ -7,7 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
-- `superfind show` says "committed, on no branch" for a commit that no branch holds any more, because its branch was deleted or reset before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
+- `superfind show` says "committed, on no branch" for a commit that no branch, tag, or checkout holds any more, such as one whose branch was deleted before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
 
 ## [0.11.0] - 2026-10-11
 

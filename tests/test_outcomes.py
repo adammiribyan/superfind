@@ -465,6 +465,13 @@ class Outcomes(Blame):
                        claude_result(t + 1, "b1", f"[kept {made[:7]}] feat: refund a charge in full"), title="Refunds")
         self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
         self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · committed, not pushed"])
+        checkout = self.home / "work" / "checkout"
+        self.git("worktree", "add", "-q", "--detach", str(checkout), made)
+        self.git("branch", "-q", "-D", "kept")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.git("worktree", "remove", "--force", str(checkout))
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "dangling")])
+        self.git("branch", "-q", "kept", made)
         self.origin()
         self.git("push", "-q", "origin", "kept")
         self.git("branch", "-q", "-D", "kept")
