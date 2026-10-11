@@ -1465,7 +1465,7 @@ class SuperfindBehavior(unittest.TestCase):
         path = self.projects / "a1.jsonl"
         with open(path, "w") as f:
             f.write(user("rotate the signing keys") + "\n")
-            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "x" * 40_000_000}) + "\n")
+            f.write(line(type="user", cwd="/tmp", message={"role": "user", "content": "needle " + "x" * 40_000_000}) + "\n")
             f.write(claude("Rotated.") + "\n")
         measure = ("import resource, subprocess, sys; subprocess.run(sys.argv[1:], capture_output=True); "
                    "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)")
@@ -1474,6 +1474,7 @@ class SuperfindBehavior(unittest.TestCase):
         megabytes = peak / (1 << 20) if sys.platform == "darwin" else peak / 1024
         self.assertLess(megabytes, 250)
         self.assertEqual(self.titles(), ["rotate the signing keys"])
+        self.assertEqual(self.titles("needle"), [])
 
     def test_a_null_label_cache_is_treated_as_empty(self):
         path = self.session("a1", user("deploy the ledger migration"), tool("Bash"),

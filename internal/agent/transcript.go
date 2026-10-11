@@ -158,7 +158,7 @@ func scanLines(r io.Reader, fn func(raw []byte) bool) error {
 		raw, err := lines.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
 			if tooLong = tooLong || len(long)+len(raw) > longestLine; !tooLong {
-				long = append(long, raw...)
+				long = append(grow(long, len(raw)), raw...)
 			}
 			continue
 		}
@@ -180,6 +180,15 @@ func scanLines(r io.Reader, fn func(raw []byte) bool) error {
 			return err
 		}
 	}
+}
+
+func grow(b []byte, n int) []byte {
+	if cap(b)-len(b) >= n {
+		return b
+	}
+	bigger := make([]byte, len(b), min(max(2*cap(b), len(b)+n), longestLine))
+	copy(bigger, b)
+	return bigger
 }
 
 func (t *Transcript) say(role, text string) {
