@@ -29,7 +29,7 @@ func Lookup(pid int) (Process, bool) {
 	if !ok || !booted {
 		return Process{}, false
 	}
-	return Process{PID: pid, Name: s.name, Start: startedAt(boot, s.ticks), TTY: s.tty}, true
+	return Process{PID: pid, PPID: s.ppid, Name: s.name, Start: startedAt(boot, s.ticks), TTY: s.tty}, true
 }
 
 var bootTime = sync.OnceValues(func() (time.Time, bool) {

@@ -12,6 +12,7 @@ type TTY struct{ Major, Minor uint32 }
 
 type Process struct {
 	PID   int
+	PPID  int
 	Name  string
 	Start time.Time
 	TTY   TTY
@@ -45,6 +46,7 @@ func fromTdev(dev int32) TTY {
 
 type stat struct {
 	name  string
+	ppid  int
 	tty   TTY
 	ticks uint64
 }
@@ -58,12 +60,13 @@ func parseStat(line string) (stat, bool) {
 	if len(fields) < 20 || fields[0] == "Z" || fields[0] == "X" {
 		return stat{}, false
 	}
-	nr, err1 := strconv.ParseInt(fields[4], 10, 64)
-	ticks, err2 := strconv.ParseUint(fields[19], 10, 64)
-	if err1 != nil || err2 != nil {
+	ppid, err1 := strconv.Atoi(fields[1])
+	nr, err2 := strconv.ParseInt(fields[4], 10, 64)
+	ticks, err3 := strconv.ParseUint(fields[19], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil {
 		return stat{}, false
 	}
-	return stat{line[open+1 : end], fromTTYNr(nr), ticks}, true
+	return stat{line[open+1 : end], ppid, fromTTYNr(nr), ticks}, true
 }
 
 func fromTTYNr(n int64) TTY {
