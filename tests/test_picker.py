@@ -1131,6 +1131,15 @@ class EnterOnAnOpenSession(unittest.TestCase):
             time.sleep(0.1)
         return int(Path(f"{self.out}.code").read_text()), Path(f"{self.out}.stdout").read_text()
 
+    @staticmethod
+    def drain(terminal):
+        try:
+            while os.read(terminal, 4096):
+                pass
+        except OSError:
+            pass
+        os.close(terminal)
+
     def test_pick_inside_tmux_hands_the_shell_a_switch_to_the_agents_pane(self):
         pane, inside = self.open_elsewhere()
         self.pick(inside)
@@ -1140,6 +1149,35 @@ class EnterOnAnOpenSession(unittest.TestCase):
         self.assertEqual((code, command), (0, f"tmux switch-client -t {pane}"))
         self.assertTrue(title.startswith("Ledger migration"), title)
         self.assertIn(" · in tmux session work, window 1", title)
+
+    @unittest.skipUnless(shutil.which("bash"), "the shell setup runs the switch")
+    def test_enter_through_the_shell_setup_moves_an_attached_client_to_the_agents_pane(self):
+        pane, inside = self.open_elsewhere()
+        env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "TYPESAFE_API_KEY": "", "NO_COLOR": "1",
+               "PATH": os.path.dirname(shutil.which("tmux")) + ":/usr/bin:/bin", "TERM": "xterm-256color",
+               "TMUX_TMPDIR": self.sockets, "TMUX": inside}
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        assignments = " ".join(f"{k}='{v}'" for k, v in env.items())
+        shell = f"eval \"$({SUPERFIND} init bash)\"; superfind; sleep 60"
+        self.tmux("respawn-pane", "-k", "-t", "work:0", f"env -i {assignments} {shutil.which('bash')} --norc --noprofile -c '{shell}'")
+        client, terminal = pty.fork()
+        if client == 0:
+            os.execvpe("tmux", ["tmux", "attach-session", "-t", "work:0"], {**self.tmux_env, "TERM": "xterm-256color"})
+        threading.Thread(target=self.drain, args=(terminal,), daemon=True).start()
+        self.addCleanup(os.waitpid, client, 0)
+        self.addCleanup(subprocess.run, ["tmux", "kill-server"], capture_output=True, env=self.tmux_env)
+        deadline = time.time() + 5
+        while time.time() < deadline and not self.tmux("list-clients", "-F", "#{pane_id}").strip():
+            time.sleep(0.1)
+        self.wait_for("Claude sessions")
+        self.keys("Ledger migration")
+        self.wait_for("Migrated.")
+        self.keys("Enter")
+        deadline = time.time() + 5
+        while time.time() < deadline and self.tmux("list-clients", "-F", "#{pane_id}").strip() != pane:
+            time.sleep(0.1)
+        self.assertEqual(self.tmux("list-clients", "-F", "#{session_name} #{window_index} #{pane_id}").strip(),
+                         f"work 1 {pane}")
 
     def test_enter_outside_tmux_says_where_the_session_is_open_and_keeps_the_picker_open(self):
         self.open_elsewhere()
