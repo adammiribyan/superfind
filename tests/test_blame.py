@@ -253,6 +253,30 @@ class Blame(SuperfindBehavior):
         self.assertEqual(self.found("charge.go"), [(uid(2), f"made {sha[:7]}: fix: round charges to the cent"),
                                                    (uid(1), "edited it 2 times")])
 
+    def test_blame_finds_edits_made_in_a_claude_worktree_that_was_removed_since(self):
+        t = self.now - 3600
+        gone = self.work / ".claude" / "worktrees" / "refunds"
+        self.claude_at(1, *edited(t, "e1", str(gone / "charge.go")), *edited(t + 5, "e2", str(gone / "nested" / "charge.go")),
+                       title="Edited in a worktree")
+        self.claude_at(2, *edited(t + 9, "e1", str(self.home / "elsewhere" / ".claude" / "worktrees" / "x" / "charge.go")),
+                       title="Another repository")
+        sha = self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertFalse(gone.exists())
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        self.assertEqual(self.found(sha[:7]), [(uid(1), "edited 1 of the commit's 1 files")])
+
+    def test_blame_answers_from_the_index_without_reading_transcripts_again(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        stat = os.stat(path)
+        os.chmod(path, 0)
+        try:
+            self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        finally:
+            os.chmod(path, stat.st_mode)
+
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'), title="Cents")

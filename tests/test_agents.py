@@ -117,6 +117,14 @@ class ScriptsAndAgents(SuperfindBehavior):
                 self.assertNotIn("d1sc0rd_", out)
                 self.assertIn("https://[masked Slack webhook] and https://[masked Discord webhook]", out)
             self.assertIn("post deploys to https://[masked Slack webhook] and https://[masked Discord webhook] please", self.show(uid(n)))
+    def test_a_secret_that_the_title_clip_cuts_through_is_masked_whole(self):
+        lead = "please rotate the staging database " + "credential " * 13
+        said = lead[:170] + 'password="correct horse battery staple" now and ' + "redeploy " * 10
+        self.session(uid(10), user(said, cwd="/work/ops"), claude("ok"))
+        found = [r for r in map(json.loads, self.superfind("search", "--json").splitlines()) if r["id"] == uid(10)]
+        self.assertNotIn("correct", found[0]["title"])
+        self.assertIn('password="[masked secret]"', found[0]["title"])
+        self.assertTrue(found[0]["title"].endswith("…"))
 
     def test_show_leaves_text_that_only_looks_like_a_secret(self):
         said = "we tried sk-learn, the password field, and AKIAEXAMPLE as a name; see https://example.com/a@b"

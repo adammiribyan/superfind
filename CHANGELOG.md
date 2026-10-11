@@ -5,6 +5,13 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- `superfind blame FILE` answers from the index instead of reading every transcript again. On about 950 sessions it went from about 9.4 to 0.18 seconds of CPU time.
+- `superfind blame` finds edits a session made in a Claude Code worktree (`.claude/worktrees/…`) after that worktree was removed.
+- Titles and last requests are masked before the index cuts them to length, so a secret that the cut would split, such as a quoted password, is masked whole. The picker and `ask` see the masked text too.
+- The index also records the files each session edited or read and the commits it ran. The first run after upgrading rebuilds the index, which took about 4.5 seconds for 950 sessions.
+
 ### Fixed
 
 - `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.

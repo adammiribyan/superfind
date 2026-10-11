@@ -24,6 +24,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/mask"
 )
 
 const cacheVersion = 15
@@ -49,31 +50,80 @@ func clip(s string, n int) string {
 	return s
 }
 
-func parse(f found) (*Session, string, bool, error) {
-	t, err := agent.ReadTranscript(f.Agent, f.path)
+func parse(f found) (parsed, bool, error) {
+	t, trail, err := agent.ReadSession(f.Agent, f.path)
 	if err != nil {
-		return nil, "", false, err
+		return parsed{}, false, err
 	}
+	seen := map[agent.PR]bool{}
+	trail.PRs = slices.DeleteFunc(trail.PRs, func(pr agent.PR) bool {
+		repeated := seen[pr]
+		seen[pr] = true
+		return repeated
+	})
+	p := parsed{entry: cacheEntry{FileID: f.id, Name: f.name, Parent: t.Parent, Commits: len(trail.Commits)}, trail: trail}
 	firstPrompt, latestPrompt := "", ""
 	if len(t.Prompts) > 0 {
 		firstPrompt, latestPrompt = t.Prompts[0], t.Prompts[len(t.Prompts)-1]
 	}
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
-		return nil, "", t.Incomplete, nil
+		return p, t.Incomplete, nil
 	}
-	body := agent.Searchable(strings.Join(t.Messages, "\n"))
-	return &Session{
+	p.body = agent.Searchable(strings.Join(t.Messages, "\n"))
+	p.entry.Session = &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
-		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
-		LastPrompt: clip(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
-	}, body, t.Incomplete, nil
+		Title:      clip(mask.Secrets(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt)), titleRunes),
+		LastPrompt: clip(mask.Secrets(cmp.Or(t.LastPrompt, latestPrompt)), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
+		Words: len(strings.Fields(p.body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
+	}
+	return p, t.Incomplete, nil
 }
 
 type cacheEntry struct {
 	agent.FileID
 	Name    string   `json:"name,omitempty"`
 	Session *Session `json:"session"`
+	Parent  string   `json:"parent,omitempty"`
+	Commits int      `json:"commits,omitempty"`
+}
+
+func (e cacheEntry) row(p agent.Place, path string) Row {
+	return Row{Session: *e.Session, Agent: p.Agent, Home: p.Home, Path: path, Commits: e.Commits}
+}
+
+func withThreads(rows []Row, entries map[string]cacheEntry, places []agent.Place) []Row {
+	at := map[string]int{}
+	for i, r := range rows {
+		at[r.Agent.ID+":"+r.Session.ID] = i
+	}
+	parentOf, pathOf := map[string]string{}, map[string]string{}
+	for path, e := range entries {
+		if e.Parent == "" || e.Session != nil {
+			continue
+		}
+		if p, ok := agent.Locate(path, places); ok {
+			id := p.Agent.ID + ":" + p.Agent.IDOf(path)
+			parentOf[id], pathOf[id] = p.Agent.ID+":"+e.Parent, path
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(pathOf)) {
+		root := parentOf[id]
+		for hops := 0; hops < 8 && parentOf[root] != ""; hops++ {
+			if _, ok := at[root]; ok {
+				break
+			}
+			root = parentOf[root]
+		}
+		i, ok := at[root]
+		if !ok {
+			continue
+		}
+		thread := entries[pathOf[id]]
+		r := &rows[i]
+		r.Threads = append(r.Threads, pathOf[id])
+		r.Commits += thread.Commits
+	}
+	return rows
 }
 
 type cacheFile struct {
@@ -164,15 +214,33 @@ func saveCache(files map[string]cacheEntry) error {
 func CachedRows() []Row {
 	in := agent.Places()
 	var rows []Row
-	for path, e := range loadCache() {
+	entries := loadCache()
+	for path, e := range entries {
 		if p, ok := agent.Locate(path, in); ok && e.Session != nil {
-			rows = append(rows, Row{Session: *e.Session, Agent: p.Agent, Home: p.Home, Path: path})
+			rows = append(rows, e.row(p, path))
 		}
 	}
-	return rows
+	return withThreads(rows, entries, in)
 }
 
-const docsModule = "fts5(path UNINDEXED, title, body, tokenize='porter unicode61')"
+var (
+	tables = []string{"docs", "trails", "files"}
+	schema = []string{
+		"CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')",
+		"CREATE TABLE IF NOT EXISTS trails (path TEXT PRIMARY KEY, trail TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS files (session TEXT NOT NULL, path TEXT NOT NULL, name TEXT NOT NULL, how TEXT NOT NULL, " +
+			"kind TEXT NOT NULL, failed INTEGER NOT NULL, at REAL NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS files_by_name ON files (name)",
+		"CREATE INDEX IF NOT EXISTS files_by_path ON files (path)",
+		"CREATE INDEX IF NOT EXISTS files_by_session ON files (session)",
+	}
+)
+
+const (
+	Edited  = "edited"
+	Read    = "read"
+	ByATool = "tool"
+)
 
 func OpenSearch() (*sql.DB, error) {
 	if err := makeCacheDir(); err != nil {
@@ -211,11 +279,54 @@ func OpenSearch() (*sql.DB, error) {
 	if readOnly {
 		return db, nil
 	}
-	if _, err := db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS docs USING " + docsModule); err != nil {
-		db.Close()
-		return nil, err
+	for _, statement := range schema {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return db, nil
+}
+
+func Trails(names []string) (map[string]agent.Trail, error) {
+	db, err := OpenSearch()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	trails := map[string]agent.Trail{}
+	pairs, err := QueryPairs(db, "SELECT path, trail FROM trails")
+	if err != nil {
+		return nil, err
+	}
+	for _, pair := range pairs {
+		var t agent.Trail
+		if err := json.Unmarshal([]byte(pair[1]), &t); err != nil {
+			return nil, err
+		}
+		trails[pair[0]] = t
+	}
+	named, err := json.Marshal(names)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query("SELECT session, path, at FROM files WHERE how = ? AND NOT failed AND name IN (SELECT value FROM json_each(?)) ORDER BY rowid",
+		Edited, string(named))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var session string
+		var e agent.Edit
+		if err := rows.Scan(&session, &e.Path, &e.At); err != nil {
+			return nil, err
+		}
+		t := trails[session]
+		t.Edits = append(t.Edits, e)
+		trails[session] = t
+	}
+	return trails, rows.Err()
 }
 
 func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
@@ -283,8 +394,9 @@ type found struct {
 }
 
 type parsed struct {
-	session *Session
-	body    string
+	entry cacheEntry
+	body  string
+	trail agent.Trail
 }
 
 func Unreadable(problems []error) string {
@@ -364,7 +476,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		announce(len(stale))
 	}
 	results := make(map[string]parsed, len(stale))
-	partial := map[string]*Session{}
+	partial := map[string]cacheEntry{}
 	var mu sync.Mutex
 	work := make(chan found)
 	var wg sync.WaitGroup
@@ -373,7 +485,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		go func() {
 			defer wg.Done()
 			for f := range work {
-				s, body, incomplete, err := parse(f)
+				p, incomplete, err := parse(f)
 				mu.Lock()
 				if err != nil {
 					problems = append(problems, err)
@@ -381,9 +493,9 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 					continue
 				}
 				if incomplete {
-					partial[f.path] = s
+					partial[f.path] = p.entry
 				} else {
-					results[f.path] = parsed{s, body}
+					results[f.path] = p
 				}
 				mu.Unlock()
 			}
@@ -400,17 +512,17 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	for _, f := range all {
 		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
-			entry, known = cacheEntry{f.id, f.name, p.session}, true
+			entry, known = p.entry, true
 		}
 		if known {
 			fresh[f.path] = entry
 		}
-		s, listed := partial[f.path]
+		shown, listed := partial[f.path]
 		if !listed || (known && entry.Session == nil) {
-			s = entry.Session
+			shown = entry
 		}
-		if s != nil {
-			rows = append(rows, Row{Session: *s, Agent: f.Agent, Home: f.Home, Path: f.path})
+		if shown.Session != nil {
+			rows = append(rows, shown.row(f.Place, f.path))
 		}
 	}
 	for path, entry := range old {
@@ -419,10 +531,11 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		if p, ok := agent.Locate(path, places); !seen && under && ok {
 			fresh[path] = entry
 			if entry.Session != nil {
-				rows = append(rows, Row{Session: *entry.Session, Agent: p.Agent, Home: p.Home, Path: path})
+				rows = append(rows, entry.row(p, path))
 			}
 		}
 	}
+	rows = withThreads(rows, fresh, places)
 	var gone []string
 	for p := range old {
 		if _, ok := fresh[p]; !ok {
@@ -462,7 +575,11 @@ func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarde
 	}
 	defer tx.Rollback()
 	if discarded {
-		for _, statement := range []string{"DROP TABLE docs", "CREATE VIRTUAL TABLE docs USING " + docsModule} {
+		var statements []string
+		for _, table := range tables {
+			statements = append(statements, "DROP TABLE IF EXISTS "+table)
+		}
+		for _, statement := range append(statements, schema...) {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
@@ -476,17 +593,39 @@ func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarde
 				return err
 			}
 		}
-		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
+		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)",
+			"DELETE FROM trails WHERE path IN (SELECT path FROM replaced)",
+			"DELETE FROM files WHERE session IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
 		}
 	}
+	file, err := tx.Prepare("INSERT INTO files (session, path, name, how, kind, failed, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 	for p, r := range results {
-		if r.session != nil {
-			s := r.session
+		if s := r.entry.Session; s != nil {
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
 				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
+				return err
+			}
+		}
+		for how, files := range map[string][]agent.Edit{Edited: r.trail.Edits, Read: r.trail.Reads} {
+			for _, f := range files {
+				if _, err := file.Exec(p, f.Path, filepath.Base(f.Path), how, ByATool, f.Failed, f.At); err != nil {
+					return err
+				}
+			}
+		}
+		if len(r.trail.Commits)+len(r.trail.PRs) > 0 {
+			trail, err := json.Marshal(agent.Trail{Commits: r.trail.Commits, PRs: r.trail.PRs})
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec("INSERT INTO trails (path, trail) VALUES (?, ?)", p, trail); err != nil {
 				return err
 			}
 		}

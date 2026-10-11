@@ -24,7 +24,6 @@ type Agent struct {
 	reader   func(path string, start Transcript) (reader, error)
 	trail    func(t *Trail) func(raw []byte) bool
 	parts    func(path string) []string
-	parent   func(path string) string
 }
 
 var Agents = []*Agent{
@@ -33,7 +32,7 @@ var Agents = []*Agent{
 		reader: func(_ string, start Transcript) (reader, error) { return &parser{t: start}, nil }, trail: claudeTrail, parts: claudeParts},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
-		reader: newCodexReader, trail: codexTrail, parent: codexParent},
+		reader: newCodexReader, trail: codexTrail},
 	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "SUPERFIND_GROK_DIRS",
 		glob: "sessions/*/*/chat_history.jsonl", sidecar: "summary.json", resume: "grok --resume", IDOf: grokID,
 		reader: newGrokReader, trail: grokTrail},

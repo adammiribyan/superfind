@@ -8,13 +8,15 @@ import (
 	"testing"
 
 	"modernc.org/sqlite"
+
+	"github.com/adammiribyan/superfind/internal/agent"
 )
 
 func sessionsSaying(from, to int, said string) map[string]parsed {
 	results := map[string]parsed{}
 	for i := from; i < to; i++ {
 		body := fmt.Sprintf("session %d %s ", i, said) + strings.Repeat("words people said ", 100)
-		results[fmt.Sprintf("/sessions/%d.jsonl", i)] = parsed{&Session{Title: "work", Cwd: "/work"}, body}
+		results[fmt.Sprintf("/sessions/%d.jsonl", i)] = parsed{entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: body}
 	}
 	return results
 }
@@ -107,11 +109,11 @@ func TestARefreshReplacesChangedSessionsAndDropsRemovedOnes(t *testing.T) {
 
 func TestARefreshReplacesASessionWhosePathIsNotUTF8(t *testing.T) {
 	db := freshSearch(t)
-	odd := map[string]parsed{"/sessions/caf\xe9.jsonl": {&Session{Title: "work", Cwd: "/work"}, "first"}}
+	odd := map[string]parsed{"/sessions/caf\xe9.jsonl": {entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "first"}}
 	if err := updateSearch(db, odd, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	odd["/sessions/caf\xe9.jsonl"] = parsed{&Session{Title: "work", Cwd: "/work"}, "second"}
+	odd["/sessions/caf\xe9.jsonl"] = parsed{entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "second"}
 	if err := updateSearch(db, odd, nil, false); err != nil {
 		t.Fatal(err)
 	}
@@ -121,5 +123,46 @@ func TestARefreshReplacesASessionWhosePathIsNotUTF8(t *testing.T) {
 	}
 	if want := [][2]string{{"/sessions/caf\xe9.jsonl", "second"}}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("index holds %q, want %q", got, want)
+	}
+}
+
+func TestTheIndexKeepsReadsAndFailedEditsApartFromEditsAndReplacesThemOnRefresh(t *testing.T) {
+	db := freshSearch(t)
+	trail := agent.Trail{Edits: []agent.Edit{{Path: "/w/a.go", At: 10}, {Path: "/w/b.go", At: 20, Failed: true}},
+		Reads: []agent.Edit{{Path: "/w/README.md", At: 5}}}
+	results := map[string]parsed{"/sessions/1.jsonl": {entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "x", trail: trail}}
+	if err := updateSearch(db, results, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	stored := func() string {
+		rows, err := db.Query("SELECT session, path, name, how, kind, failed, at FROM files ORDER BY path")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var session, path, name, how, kind string
+			var failed bool
+			var at float64
+			if err := rows.Scan(&session, &path, &name, &how, &kind, &failed, &at); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, fmt.Sprint(session, " ", path, " ", name, " ", how, " ", kind, " ", failed, " ", at))
+		}
+		return strings.Join(out, "\n")
+	}
+	want := "/sessions/1.jsonl /w/README.md README.md read tool false 5\n" +
+		"/sessions/1.jsonl /w/a.go a.go edited tool false 10\n" +
+		"/sessions/1.jsonl /w/b.go b.go edited tool true 20"
+	if got := stored(); got != want {
+		t.Fatalf("files holds\n%s\nwant\n%s", got, want)
+	}
+	results["/sessions/1.jsonl"] = parsed{entry: cacheEntry{Session: &Session{Title: "work", Cwd: "/work"}}, body: "x"}
+	if err := updateSearch(db, results, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got != "" {
+		t.Fatalf("a refreshed session with no files still holds\n%s", got)
 	}
 }
