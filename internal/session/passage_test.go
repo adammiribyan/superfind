@@ -241,7 +241,7 @@ func TestTokensAreCountedWhereFts5CountsThem(t *testing.T) {
 	}{
 		{"Ünïcode", true}, {" ", false}, {"café", true}, {"_", false}, {"naïve", true}, {" ́ ", false},
 		{"́abc", true}, {" ", false}, {"東京", true}, {" ", false}, {"ﬁx", true}, {" ", false}, {"x²", true},
-		{" ✅ ", false}, {"🙂", true}, {" ᦰ ", false}, {"q̀q", true}, {"​", false}, {"ab١٢", true}, {" ", false},
+		{" ✅ ", false}, {"🙂", true}, {" ᦰ ", false}, {"q̀q", true}, {"\u200b", false}, {"ab١٢", true}, {" ", false},
 	}
 	var text strings.Builder
 	var want []int
