@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTheCacheStaysPutWithoutHOME(t *testing.T) {
@@ -95,6 +97,59 @@ func TestSearchBandsIgnoreHitsTheFiltersLeftOut(t *testing.T) {
 	if got := banded(hits, mtime); !slices.Equal(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
+}
+
+func clusters(s string) []string {
+	var out []string
+	for s != "" {
+		cluster, _ := ansi.FirstGraphemeCluster(s, ansi.GraphemeWidth)
+		out = append(out, cluster)
+		s = s[len(cluster):]
+	}
+	return out
+}
+
+func FuzzClipKeepsTheStartWithinTheLimit(f *testing.F) {
+	for _, seed := range []struct {
+		s string
+		n int
+	}{{"", 1}, {"fix the login bug", 10}, {"fix", 3}, {"fixed", 4}, {"  spaced\tout\n\ntext  ", 8}, {"e\u0301ab", 2},
+		{"👍🏽👨‍👩‍👧🇫🇷 emoji", 3}, {"🇫🇷🇩🇪", 1}, {strings.Repeat("漢", 300), 200}} {
+		f.Add(seed.s, seed.n)
+	}
+	f.Fuzz(func(t *testing.T, s string, n int) {
+		if n < 1 || n > 500 || !utf8.ValidString(s) {
+			t.Skip()
+		}
+		flat := strings.Join(strings.Fields(s), " ")
+		want := flat
+		if all := clusters(flat); len(all) > n {
+			want = strings.Join(all[:n-1], "") + "…"
+		}
+		if got := clip(s, n); got != want {
+			t.Fatalf("clip(%q, %d) = %q, want %q", s, n, got, want)
+		}
+	})
+}
+
+func FuzzAnySearchTextIsAQueryTheIndexAccepts(f *testing.F) {
+	for _, seed := range []string{"login bug", `"quoted" AND (x OR y) NEAR*`, "title:x", "a b c", "ﬁx straße", "١٢٣ 漢字", "x^y -z +w", "_"} {
+		f.Add(seed)
+	}
+	f.Setenv("XDG_CACHE_HOME", f.TempDir())
+	db, err := OpenSearch()
+	if err != nil {
+		f.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("INSERT INTO docs (path, title, body) VALUES ('/a', 'fix the login bug', 'we changed the session cookie')"); err != nil {
+		f.Fatal(err)
+	}
+	f.Fuzz(func(t *testing.T, query string) {
+		if _, _, err := matches(db, query); err != nil {
+			t.Fatalf("searching for %q (%s) failed: %v", query, joined(phrasesOf(query), " "), err)
+		}
+	})
 }
 
 func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
