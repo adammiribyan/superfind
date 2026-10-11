@@ -263,12 +263,28 @@ func fileTarget(path, note string) (Target, error) {
 		return t, fmt.Errorf("%s is outside its repository", path)
 	}
 	t.File, t.Note = filepath.ToSlash(rel), note
-	out, err := git(top, "log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e", "--", ":(literal)"+t.File)
-	if _, noHead := git(top, "rev-parse", "--verify", "--quiet", "HEAD"); err != nil && noHead == nil {
+	spec := ":(literal)" + t.File
+	out, err := git(top, "log", "-n", strconv.Itoa(fileCommits), "--format=%H%x00%s%x00%b%x00%at%x1e", "--", spec)
+	_, noHead := git(top, "rev-parse", "--verify", "--quiet", "HEAD")
+	if err != nil && noHead == nil {
 		return t, err
 	}
 	for _, entry := range strings.Split(out, "\x1e") {
 		if parts := strings.SplitN(strings.TrimLeft(entry, "\n"), "\x00", 4); len(parts) == 4 {
+			t.Commits = append(t.Commits, parsed(parts[0], parts[1], parts[2], parts[3]))
+		}
+	}
+	refs := []string{"--branches", "--remotes", "--tags"}
+	if noHead == nil {
+		refs = append(refs, "--not", "HEAD")
+	}
+	args := append([]string{"log", "-n", strconv.Itoa(fileCommits), "--cc", "-U0", "--format=%x1e%H%x00%s%x00%b%x00%at%x00"}, refs...)
+	elsewhere, err := git(top, append(args, "--", spec)...)
+	if err != nil {
+		t.Note = strings.TrimPrefix(t.Note+"; ", "; ") + "couldn't read " + t.File + "'s commits on other branches: " + err.Error()
+	}
+	for _, entry := range strings.Split(elsewhere, "\x1e") {
+		if parts := strings.SplitN(entry, "\x00", 5); len(parts) == 5 && strings.Contains(parts[4], "\ndiff --") {
 			t.Commits = append(t.Commits, parsed(parts[0], parts[1], parts[2], parts[3]))
 		}
 	}
