@@ -75,8 +75,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  verify:
+  sign:
     needs: build
+    runs-on: ubuntu-latest
+    environment: release-signing
+    timeout-minutes: 10
+    steps:
+      - name: The signing key is set
+        env:
+          SUPERFIND_SIGNING_KEY: ${{ secrets.SUPERFIND_SIGNING_KEY }}
+        run: '[ -n "$SUPERFIND_SIGNING_KEY" ] || { echo "::error::missing SUPERFIND_SIGNING_KEY in the release-signing environment"; exit 1; }'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Download every asset of the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh .github/workflows/download-draft.sh "$GITHUB_REF_NAME" draft
+      - name: Sign checksums.txt after checking it against the draft's own files
+        env:
+          SUPERFIND_SIGNING_KEY: ${{ secrets.SUPERFIND_SIGNING_KEY }}
+        run: go run ./internal/release/cmd/sign "${GITHUB_REF_NAME#v}" draft
+      - name: Attach checksums.txt.minisig to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .id")
+          [ "$(echo "$id" | wc -w)" -eq 1 ] || { echo "::error::expected one draft release for $GITHUB_REF_NAME, found: $id"; exit 1; }
+          for old in $(gh api "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" --jq '.[] | select(.name == "checksums.txt.minisig") | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"
+          done
+          gh api -X POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$id/assets?name=checksums.txt.minisig" \
+            -H "Content-Type: application/octet-stream" --input draft/checksums.txt.minisig --jq .browser_download_url
+
+  verify:
+    needs: sign
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +131,15 @@ jobs:
           asset=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$GITHUB_REF_NAME\") | .assets[] | select(.name | endswith(\"_darwin_${{ matrix.arch }}.tar.gz\")) | .id")
           [ "$(echo "$asset" | wc -w)" -eq 1 ] || { echo "::error::expected one darwin ${{ matrix.arch }} archive in the $GITHUB_REF_NAME draft, found: $asset"; exit 1; }
           gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset" > archive.tar.gz
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: The draft's checksums.txt.minisig is a release key's signature for this version, and every asset matches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sh .github/workflows/download-draft.sh "$GITHUB_REF_NAME" draft
+          go run ./internal/release/cmd/verify "${GITHUB_REF_NAME#v}" draft
       - name: The ${{ matrix.arch }} binary in the draft is signed, notarized, and runs under quarantine
         run: |
           mkdir unpacked
