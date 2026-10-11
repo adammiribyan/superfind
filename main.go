@@ -39,7 +39,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/upgrade"
 )
 
-var version = "0.11.0"
+var version = "0.12.0"
 
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
