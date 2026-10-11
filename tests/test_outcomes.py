@@ -354,6 +354,20 @@ class Outcomes(Blame):
                           line(type="tool_result", tool_call_id="g1", content=f"[main {made[:7]}] feat: refund a charge in full"), title="Refunds")
         self.assertEqual(self.outcomes(1, "commit", "stage", "landed"), [(made, "merged", made)])
 
+    def test_a_part_of_the_session_that_cannot_be_read_is_a_note_not_a_failure(self):
+        t = self.now - 3600
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        path = self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
+        part = path.with_suffix("") / "subagents" / "agent-a1.jsonl"
+        part.parent.mkdir(parents=True)
+        part.write_text("{}\n")
+        part.chmod(0)
+        self.addCleanup(part.chmod, 0o644)
+        result = self.run_superfind("show", uid(1), "--json")
+        self.assertEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r"^superfind show: couldn't read all of this session, so its outcomes may be missing: .*agent-a1\.jsonl.*\n$")
+        self.assertEqual([o["commit"] for o in json.loads(result.stdout)["outcomes"]], [made])
+
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)
         self.claude_at(1, title="Just talk")
