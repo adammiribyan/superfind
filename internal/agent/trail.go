@@ -54,9 +54,9 @@ type pending struct {
 
 func unquoted(s string) string {
 	b, open := []byte(s), byte(0)
-	for i, c := range b {
+	for i, c := range []byte(s) {
 		switch {
-		case open != 0 && c == open && (open == '\'' || b[i-1] != '\\'):
+		case open != 0 && c == open && (open == '\'' || s[i-1] != '\\'):
 			open = 0
 		case open != 0:
 			b[i] = ' '
@@ -72,8 +72,8 @@ func commits(command string) bool {
 	if at == nil {
 		return false
 	}
-	rest := command[at[1]:]
-	if end := strings.IndexAny(unquoted(rest), ";|&\n"); end >= 0 {
+	rest := unquoted(command[at[1]:])
+	if end := strings.IndexAny(rest, ";|&\n"); end >= 0 {
 		rest = rest[:end]
 	}
 	return !strings.Contains(rest, "--dry-run")

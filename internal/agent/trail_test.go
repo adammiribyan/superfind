@@ -109,6 +109,7 @@ func TestOnlyCommandsThatRunGitCommitAreCommits(t *testing.T) {
 		"git -C /w commit --amend --no-edit",
 		`cd /w && GIT_EDITOR=true git commit -m "fix: retry a charge once"`,
 		`bash -lc 'git commit -qm "fix: retry a charge once"'`,
+		`git commit -qm "fix: refund; document --dry-run"`,
 	} {
 		quoted, _ := json.Marshal(command)
 		lines = append(lines, fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b%d","name":"Bash","input":{"command":%s}}]}}`, i, quoted))
@@ -119,7 +120,7 @@ func TestOnlyCommandsThatRunGitCommitAreCommits(t *testing.T) {
 		got = append(got, c.Command)
 	}
 	want := []string{"git -C /w commit --amend --no-edit", `cd /w && GIT_EDITOR=true git commit -m "fix: retry a charge once"`,
-		`bash -lc 'git commit -qm "fix: retry a charge once"'`}
+		`bash -lc 'git commit -qm "fix: retry a charge once"'`, `git commit -qm "fix: refund; document --dry-run"`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q", got)
 	}
@@ -148,7 +149,7 @@ func TestATrailIsReadOnlyWhenItsFileMentionsANeedleEvenAcrossChunks(t *testing.T
 }
 
 func TestAFailedCommitWhoseMessageHoldsSeparatorsIsDropped(t *testing.T) {
-	command := "git commit -m \"$(cat <<'EOF'\nfix: retry & refund\n\nBody.\nEOF\n)\""
+	command := "git commit -m \"$(cat <<'EOF'\nfix: retry \\\" & refund\n\nBody.\nEOF\n)\""
 	quoted, _ := json.Marshal(command)
 	tr := trailOf(t, Named("claude"), filepath.Join(t.TempDir(), "s.jsonl"),
 		fmt.Sprintf(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":%s}}]}}`, quoted),
