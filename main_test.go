@@ -69,7 +69,8 @@ func TestLastHandsOffSwitchesTabsAsksOrSaysWhereBySessionAndTerminal(t *testing.
 	}{
 		{"closed", nil, false, true, false, handItOff},
 		{"in a pane of this tmux", &open.State{PID: 4242, Tmux: pane}, true, true, false, handItOff},
-		{"in a Ghostty tab", &open.State{PID: 4242}, false, true, false, switchedTab},
+		{"in a Ghostty tab, at a terminal", &open.State{PID: 4242}, false, true, true, switchedTab},
+		{"in a Ghostty tab, in a script", &open.State{PID: 4242}, false, true, false, sayWhereItIs},
 		{"in a pane, superfind outside tmux, in Ghostty", &open.State{PID: 4242, Tmux: pane}, false, true, true, switchedTab},
 		{"elsewhere, at a terminal", &open.State{PID: 4242}, true, false, true, askFirst},
 		{"elsewhere, in a script", &open.State{PID: 4242}, false, false, false, sayWhereItIs},

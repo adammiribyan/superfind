@@ -132,10 +132,10 @@ know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any se
 
 When an agent already has the newest session open, superfind last doesn't start a second copy.
 If the agent runs in a pane of the tmux server you're in, the second line is tmux switch-client
-to that pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab
-uses, superfind last switches to that tab, prints nothing, and exits 0. Otherwise, at a
-terminal, it asks first: Enter resumes a copy, any other key cancels (exit 1). Without a
-terminal it says where the session is open and exits 1.
+to that pane. Otherwise, without a terminal, it says where the session is open and exits 1.
+At a terminal, if the agent runs in a Ghostty tab and your Ghostty can say which terminal each
+tab uses, superfind last switches to that tab, prints nothing, and exits 0; if not, it asks
+first: Enter resumes a copy, any other key cancels (exit 1).
 
   agent:codex     only Codex sessions; every search filter works, such as branch:main or
                   after:yesterday
@@ -487,7 +487,7 @@ const (
 )
 
 func lastStep(s *open.State, inTmux bool, focus func(open.State) bool, terminal bool) lastAction {
-	switch open.Reaching(s, inTmux, focus) {
+	switch open.Reaching(s, inTmux, func(s open.State) bool { return terminal && focus(s) }) {
 	case open.NotOpen, open.InPane:
 		return handItOff
 	case open.Focused:

@@ -1283,6 +1283,7 @@ class EnterOnAnOpenSession(unittest.TestCase):
         self.stub = self.home / "stub"
         self.stub.mkdir()
         (self.stub / "osascript").write_text(f"""#!/bin/sh
+printf '%s\\n' "$2" >> {self.stub}/told
 case "$2" in
 *"get tty of every terminal"*)
     case "$(/bin/cat {self.stub}/mode)" in
@@ -1311,6 +1312,10 @@ esac
 
     def focused(self):
         log = self.stub / "focused"
+        return log.read_text() if log.exists() else ""
+
+    def told(self):
+        log = self.stub / "told"
         return log.read_text() if log.exists() else ""
 
     def env(self, inside=None):
@@ -1552,10 +1557,19 @@ esac
                 else:
                     self.assertEqual(out, "")
 
-    def test_last_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_prints_nothing(self):
+    def test_last_without_a_terminal_leaves_ghostty_alone_even_when_a_tab_has_the_session(self):
         tty, other = self.in_a_ghostty_tab()
         self.osascript("match", f"{tty}, {other}")
-        self.assertEqual(self.last(), (0, "", "superfind last: Ledger migration is open in another Ghostty tab; switched to it.\n"))
+        self.assertEqual(self.last(), (1, "", "superfind last: Ledger migration is already open in another window. "
+                                              "superfind last doesn't start a second copy.\n"))
+        self.assertEqual(self.told(), "")
+
+    def test_last_at_a_terminal_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_prints_nothing(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("match", f"{tty}, {other}")
+        code, screen = self.at_a_terminal(f"{SUPERFIND} last > {self.out}.stdout", None)
+        self.assertEqual((code, Path(f"{self.out}.stdout").read_text()), (0, ""), screen)
+        self.assertIn("Ledger migration is open in another Ghostty tab; switched to it.", screen)
         self.assertEqual(self.focused(), f'tell application "Ghostty" to focus (first terminal whose tty is "{tty}")\n')
 
     @unittest.skipUnless(shutil.which("bash"), "runs the bash shell setup")
