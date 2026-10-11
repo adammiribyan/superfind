@@ -8,6 +8,8 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/signing.yml
       - .github/workflows/verify-darwin.sh
+      - .github/workflows/download-draft.sh
+      - internal/release/**
 
 permissions:
   contents: read
@@ -46,6 +48,17 @@ jobs:
         with:
           version: v2.18.3
           args: release --snapshot --clean
+      - name: The snapshot's checksums.txt signs and verifies with a throwaway key, by our verifier and by minisign
+        run: |
+          version=$(go run . --version)
+          version=${version#superfind }
+          key=$(mktemp -d)
+          go run ./internal/release/cmd/keygen "$key/throwaway.key" > "$key/throwaway.pub"
+          cp install.sh llms-full.txt dist/
+          SUPERFIND_SIGNING_KEY=$(base64 -w0 < "$key/throwaway.key") go run ./internal/release/cmd/sign -pubkey "$key/throwaway.pub" "$version" dist
+          go run ./internal/release/cmd/verify -pubkey "$key/throwaway.pub" "$version" dist
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          minisign -V -m dist/checksums.txt -p "$key/throwaway.pub"
       - uses: actions/upload-artifact@v4
         with:
           name: darwin-archives

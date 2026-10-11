@@ -41,6 +41,7 @@ type Outcome struct {
 	Commit     string `json:"commit"`
 	PR         int    `json:"pr"`
 	Subject    string `json:"subject"`
+	Body       string `json:"body"`
 	Repo       string `json:"repo"`
 	Stage      Stage  `json:"stage"`
 	Branch     string `json:"branch"`
@@ -410,7 +411,7 @@ func (rp *repo) squash(after float64, carries func(string) bool) (entry, string,
 }
 
 func (rp *repo) judge(e entry) Outcome {
-	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At, dangling: !rp.onRef[e.SHA]}
+	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Body: e.body, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At, dangling: !rp.onRef[e.SHA]}
 	if rp.onDefault[e.SHA] {
 		return rp.reverted(rp.landedAs(o, e))
 	}

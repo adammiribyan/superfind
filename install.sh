@@ -60,6 +60,30 @@ download() {
   binary="$tmp/superfind"
 }
 
+receipt() {
+  real="$(cd "$(dirname "$2")" && pwd -P)/superfind"
+  clone=""
+  [ "$1" = checkout ] && clone=$(cd "$here" && pwd -P)
+  case "$real$clone" in
+    *[[:cntrl:]]*)
+      echo "note: $real has a control character in its path, so no install receipt was written; superfind upgrade will print the install command instead of upgrading in place"
+      return ;;
+  esac
+  path=$(printf '%s' "$real" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  if [ -n "$clone" ]; then
+    clone=$(printf '%s' "$clone" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    body="{\"method\":\"checkout\",\"path\":\"$path\",\"clone\":\"$clone\"}"
+  else
+    body="{\"method\":\"script\",\"path\":\"$path\"}"
+  fi
+  if { mkdir -p "$state" && chmod 700 "$state" && printf '%s\n' "$body" > "$state/install.json.$$" &&
+       mv -f "$state/install.json.$$" "$state/install.json"; } 2>/dev/null; then
+    return
+  fi
+  rm -f "$state/install.json.$$" 2>/dev/null
+  echo "note: couldn't write $state/install.json, so superfind upgrade will print the install command instead of upgrading in place"
+}
+
 main() {
   here=$(dirname "$0")
   if [ -f "$0" ] && grep -qx 'module github.com/adammiribyan/superfind' "$here/go.mod" 2>/dev/null; then
@@ -69,8 +93,9 @@ main() {
   fi
 
   bin="$HOME/.local/bin"
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/superfind"
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp" "$bin/.superfind.$$"' EXIT
+  trap 'rm -rf "$tmp" "$bin/.superfind.$$" "$state/install.json.$$"' EXIT
   case "$from" in
     checkout) build "$(cd "$here" && pwd)" ;;
     release) download ;;
@@ -81,6 +106,7 @@ main() {
   cp "$binary" "$bin/.superfind.$$"
   mv -f "$bin/.superfind.$$" "$bin/superfind"
   echo "installed $bin/superfind ($installed)"
+  receipt "$from" "$bin/superfind"
   if [ -n "$other" ] && [ "$other" != "$bin/superfind" ]; then
     echo "note: another superfind is installed at $other"
   fi

@@ -52,8 +52,10 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 
 - Keep each pull request to one change, and add a test that fails without it.
 - If users will notice the change, update the README and add a line under the top version in [CHANGELOG.md](CHANGELOG.md).
+- Each version in CHANGELOG.md, and `[Unreleased]`, starts with a one-line `> headline`. The picker shows it once after an update as what's new, so keep it plain text of 64 characters or fewer, with no period at the end. `go test` checks it.
 - Write commit messages that say what changed for the user, such as `fix: keep the selection when the list refreshes`.
 - If you change the picker's look, re-record the demo (below) so the README stays true.
+- Behavior tests set `SUPERFIND_TELEMETRY=off` and point `SUPERFIND_CHECKIN_URL` at a closed loopback port, so no test reaches superfind.dev. Copy both into any new test environment; only `tests/test_telemetry.py` turns telemetry on, against a loopback server.
 - `llms-full.txt` isn't committed. `python3 scripts/llms.py` writes it from `llms.txt`, every command's help, and real JSON output, and a behavior test fails if it can't. A new JSON field needs a line in the script's `FIELDS`.
 
 ## Demo
@@ -78,6 +80,8 @@ For maintainers:
    git push origin v0.9.0
    ```
 
-Pushing the tag starts the release workflow. It first runs every check on macOS and Linux, and stops if any fails. Then it checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release, along with `install.sh` and an `llms-full.txt` that `scripts/llms.py` writes from that build. Next it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac. Only when both pass does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
+Pushing the tag starts the release workflow. It first runs every check on macOS and Linux, and stops if any fails. Then it checks that every release secret is set and that the tag matches `superfind --version`. Then it builds the macOS and Linux binaries, signs and notarizes the macOS ones, and uploads everything to a draft release, along with `install.sh` and an `llms-full.txt` that `scripts/llms.py` writes from that build. Next a separate job signs the release: it downloads every file of the draft, checks each against `checksums.txt`, signs `checksums.txt` with the release key, and attaches `checksums.txt.minisig`. Then it checks the draft's macOS binaries on an Apple Silicon Mac and on an Intel Mac, and checks the signature and every file's checksum the way superfind will. Only when all of that passes does it publish the release and update the Homebrew cask in `adammiribyan/homebrew-tap`.
 
-The workflow needs these repository secrets: `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`, and `HOMEBREW_TAP_TOKEN`.
+The workflow needs these repository secrets: `MACOS_SIGN_P12`, `MACOS_SIGN_PASSWORD`, `MACOS_NOTARY_KEY`, `MACOS_NOTARY_KEY_ID`, `MACOS_NOTARY_ISSUER_ID`, and `HOMEBREW_TAP_TOKEN`. The release key lives apart from them, as the secret `SUPERFIND_SIGNING_KEY` of the GitHub environment `release-signing`, which only `v*` tags can use. Only the signing job runs in that environment, so the build, and the tools it runs, never see the key. `SUPERFIND_SIGNING_KEY` is an unencrypted minisign secret key file, base64 encoded once more: `base64 < superfind.key`.
+
+Every `.pub` file in [internal/release/keys](internal/release/keys) is a key superfind trusts, and the signing job refuses a key that isn't there. To change keys, make a new one with `minisign -G -W -p NEW.pub -s NEW.key` (or `go run ./internal/release/cmd/keygen NEW.key > NEW.pub`), name the public key after its key id, add it to `internal/release/keys`, and release. Only after that release, put the new secret key in `SUPERFIND_SIGNING_KEY`: copies of superfind from before the release don't know the new key. A pull request that changes the signing code or the release workflow signs and verifies a snapshot build with a throwaway key, in the `signing` workflow.

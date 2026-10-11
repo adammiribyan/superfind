@@ -96,6 +96,8 @@ jobs:
         run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
       - name: Unit tests under the race detector
         run: go test -race ./...
+      - name: Release signing tests in the build that trusts only the test key
+        run: go test -tags testkeys ./internal/release/...
       - name: Build
         run: go build -o bin/superfind .
       - name: Behavior tests
@@ -164,8 +166,23 @@ jobs:
           if [ "$RUNNER_OS" = macOS ]; then rc=.bash_profile; fi
           grep -F '/.local/bin/superfind" init bash)"' "$HOME/$rc"
 
+  worker:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check-in Worker tests
+        working-directory: worker
+        run: npm test
+
   test:
-    needs: [changes, checks, race, install]
+    needs: [changes, checks, race, install, worker]
     if: always()
     strategy:
       fail-fast: false
@@ -183,10 +200,11 @@ jobs:
       - name: Every job passed
         if: needs.changes.outputs.code != 'false'
         run: |
-          echo "checks=${{ needs.checks.result }} race=${{ needs.race.result }} install=${{ needs.install.result }}"
+          echo "checks=${{ needs.checks.result }} race=${{ needs.race.result }} install=${{ needs.install.result }} worker=${{ needs.worker.result }}"
           test "${{ needs.checks.result }}" = success
           test "${{ needs.race.result }}" = success
           test "${{ needs.install.result }}" = success
+          test "${{ needs.worker.result }}" = success
       - uses: actions/checkout@v4
         if: needs.changes.outputs.code != 'false'
       - uses: actions/download-artifact@v4

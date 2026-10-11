@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import platform
 import shutil
@@ -22,7 +23,7 @@ class Installer(unittest.TestCase):
         shutil.copytree(REPO, self.clone, ignore=shutil.ignore_patterns(".git", "bin", "dist", "__pycache__", ".env", "demo"))
 
     def install(self, shell, **extra):
-        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES, **extra}
+        env = {"HOME": str(self.home), "PATH": os.environ["PATH"], "SHELL": f"/bin/{shell}", **GO_CACHES, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **extra}
         return subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True, text=True)
 
     def omarchy(self, bindings, text="o.bind(\"SUPER + SHIFT + CTRL + A\", \"Agent\", \"omarchy-launch-tui claude\")\n"):
@@ -127,6 +128,11 @@ class Installer(unittest.TestCase):
         installed = (self.home / ".local" / "bin" / "superfind").read_bytes()
         self.assertEqual(installed, (self.clone / "bin" / "superfind").read_bytes())
 
+    def test_in_a_clone_it_writes_a_receipt_that_names_the_clone(self):
+        self.assertEqual(self.install("zsh").returncode, 0)
+        receipt = self.home / ".local" / "state" / "superfind" / "install.json"
+        self.assertEqual(receipt.read_text(), f'{{"method":"checkout","path":"{self.home}/.local/bin/superfind","clone":"{self.clone}"}}\n')
+
     def test_installing_for_bash_sets_up_bash(self):
         self.assertEqual(self.install("bash").returncode, 0)
         self.assertEqual(self.startup_file("bash").read_text(), '\neval "$("$HOME/.local/bin/superfind" init bash)"\n')
@@ -144,7 +150,7 @@ class Installer(unittest.TestCase):
         stub.mkdir()
         (stub / "cp").write_text('#!/bin/sh\n: > "$2"\nexit 1\n')
         (stub / "cp").chmod(0o755)
-        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES}
+        env = {"HOME": str(self.home), "PATH": f"{stub}:{os.environ['PATH']}", "SHELL": "/bin/zsh", **GO_CACHES, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         self.assertNotEqual(subprocess.run(["sh", str(self.clone / "install.sh")], env=env, capture_output=True).returncode, 0)
         installed = self.home / ".local" / "bin"
         self.assertEqual(sorted(p.name for p in installed.iterdir()), ["superfind"])
@@ -226,7 +232,7 @@ class ReleaseInstaller(unittest.TestCase):
     def install(self, *, stdin=False, cwd=None, machine="x86_64", **env):
         env = {"HOME": str(self.home), "PATH": f"{self.stubs}:/usr/bin:/bin", "SHELL": "/bin/zsh",
                "RELEASES_DIR": str(self.releases), "LATEST_TAG": "v0.10.0",
-               "FAKE_SYSTEM": "Linux", "FAKE_MACHINE": machine, **env}
+               "FAKE_SYSTEM": "Linux", "FAKE_MACHINE": machine, "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **env}
         if stdin:
             with open(self.script) as script:
                 return subprocess.run(["sh"], stdin=script, cwd=cwd or self.root, env=env, capture_output=True, text=True)
@@ -242,6 +248,46 @@ class ReleaseInstaller(unittest.TestCase):
         self.assertEqual(self.installed_version(), "superfind 0.10.0")
         self.assertEqual((self.home / ".zshrc").read_text(), '\neval "$("$HOME/.local/bin/superfind" init zsh)"\n')
         self.assertEqual(sorted(p.name for p in (self.home / ".local" / "bin").iterdir()), ["superfind"])
+
+    def test_a_release_install_writes_a_receipt_for_superfind_upgrade(self):
+        result = self.install(SHELL="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.home / ".local" / "state" / "superfind"
+        self.assertEqual((state / "install.json").read_text(), f'{{"method":"script","path":"{self.home}/.local/bin/superfind"}}\n')
+        self.assertEqual(oct(state.stat().st_mode & 0o777), "0o700")
+        self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".local"])
+        self.assertNotIn("note:", result.stdout)
+
+    def test_a_home_with_quotes_and_backslashes_gets_a_receipt_that_parses(self):
+        self.home = self.root / 'ada "the" builder\\co'
+        self.home.mkdir()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.home / ".local" / "state" / "superfind" / "install.json").read_text())
+        self.assertEqual(receipt, {"method": "script", "path": f"{self.home}/.local/bin/superfind"})
+
+    def test_a_home_with_a_control_character_gets_no_receipt_and_a_note(self):
+        self.home = self.root / "ada\tb"
+        self.home.mkdir()
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed_version(), "superfind 0.10.0")
+        self.assertFalse((self.home / ".local" / "state").exists())
+        self.assertIn(f"note: {self.home}/.local/bin/superfind has a control character in its path, so no install receipt was written; "
+                      "superfind upgrade will print the install command instead of upgrading in place\n", result.stdout)
+
+    def test_an_unwritable_state_folder_still_installs_and_prints_one_note(self):
+        state = self.home / ".local" / "state"
+        state.mkdir(parents=True)
+        state.chmod(0o500)
+        self.addCleanup(state.chmod, 0o700)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.installed_version(), "superfind 0.10.0")
+        self.assertEqual(result.stdout.count("note:"), 1)
+        self.assertIn(f"note: couldn't write {state}/superfind/install.json, so superfind upgrade will print the install command "
+                      "instead of upgrading in place\n", result.stdout)
+        self.assertEqual(sorted(p.name for p in state.iterdir()), [])
 
     def test_superfind_version_installs_that_release_instead_of_the_latest(self):
         self.publish("0.9.1", platform="linux_arm64")
