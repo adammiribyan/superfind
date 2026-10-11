@@ -112,7 +112,7 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 	switch {
 	case reply != "" && (lastAsk < 0 || turns[len(turns)-1].Role == "assistant"):
 		body = append(body, "", speaker("assistant", req.Agent))
-		body = append(body, excerpt(render(reply, width), 18, true, "earlier in this reply", req.Secondary)...)
+		body = append(body, excerpt(renderEnd(reply, width, 18), 18, true, "earlier in this reply", req.Secondary)...)
 	case lastAsk >= 0:
 		body = append(body, "", req.Secondary+"  No reply yet. "+req.Agent.Label+" stopped before answering."+Reset)
 	}
