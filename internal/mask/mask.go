@@ -26,6 +26,7 @@ var secretPatterns = []secretPattern{
 	{"GitHub token", regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,})`), 0, nil},
 	{"AWS access key", regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), 0, nil},
 	{"Slack token", regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`), 0, nil},
+	{"Tailscale key", regexp.MustCompile(`\btskey-[a-z]+-[A-Za-z0-9]{6,}-[A-Za-z0-9]{16,}`), 0, nil},
 	{"Stripe key", regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}`), 0, nil},
 	{"Google API key", regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), 0, nil},
 	{"PostHog key", regexp.MustCompile(`\bph[cx]_[A-Za-z0-9]{30,}`), 0, nil},

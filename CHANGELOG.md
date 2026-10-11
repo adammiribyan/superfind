@@ -22,7 +22,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Fixed
 
-- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
+- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, Tailscale keys (`tskey-auth-…`, `tskey-client-…`, `tskey-api-…`), and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
 
 ## [0.12.0] - 2026-10-11
 
