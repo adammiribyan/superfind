@@ -62,7 +62,7 @@ func Checkin(ctx context.Context, b Build) {
 		return
 	}
 	defer unlock()
-	now := time.Now()
+	now := time.Now().UTC()
 	c, _ := LastCheck()
 	if !Due(c, now) {
 		return

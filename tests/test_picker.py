@@ -46,7 +46,8 @@ class PickerBehavior(unittest.TestCase):
         (no_ghostty / "osascript").write_text("#!/bin/sh\nexit 1\n")
         (no_ghostty / "osascript").chmod(0o755)
         self.env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "PWD": "/elsewhere",
-                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color"}
+                    "TYPESAFE_API_KEY": "", "NO_COLOR": "1", "PATH": f"{no_ghostty}:/usr/bin:/bin", "TERM": "xterm-256color",
+                    "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
 
     def tearDown(self):
         tmux("kill-session", "-t", self.session_name)
@@ -1187,7 +1188,7 @@ class PtyPicker(unittest.TestCase):
         (projects / "a1.jsonl").write_text(user("migrate the ledger") + "\n" + tool("Bash") + "\n" +
                                           claude("Migrated.") + "\n" + line(type="ai-title", aiTitle="Ledger") + "\n")
         env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": "/usr/bin:/bin",
-               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", **self.EXTRA_ENV}
+               "TERM": "xterm-256color", "COLORTERM": "truecolor", "TYPESAFE_API_KEY": "", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin", **self.EXTRA_ENV}
         if self.INDEX:
             subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
         else:
@@ -1410,7 +1411,7 @@ esac
     def env(self, inside=None):
         env = {"HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"), "TYPESAFE_API_KEY": "", "NO_COLOR": "1",
                "PATH": f"{self.stub}:" + os.path.dirname(shutil.which("tmux")) + ":/usr/bin:/bin", "TERM": "xterm-256color",
-               "TMUX_TMPDIR": self.sockets, "PWD": "/tmp"}
+               "TMUX_TMPDIR": self.sockets, "PWD": "/tmp", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         if inside:
             env["TMUX"] = inside
         return env

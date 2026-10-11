@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
@@ -32,6 +33,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
 	"github.com/adammiribyan/superfind/internal/store"
+	"github.com/adammiribyan/superfind/internal/telemetry"
 	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 	"github.com/adammiribyan/superfind/internal/upgrade"
@@ -79,6 +81,9 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
   superfind upgrade [--check] [--version X] [--rollback]
                           install the newest release in place of this one; a copy from
                           Homebrew, go install, or a clone is left alone, with its command
+  superfind telemetry [off|on]
+                          show whether superfind checks for updates and sends anonymous
+                          usage once a day, and exactly what it sends; off stops it
   superfind help COMMAND  explain one command
   superfind --version
 
@@ -317,13 +322,39 @@ command that updates it instead, and changes nothing.
 The three options are separate: use one at a time. Exit 0 when there was nothing to do; exit 1
 when a check failed, and then nothing was installed.
 `,
+	"telemetry": `superfind telemetry [off|on] [--json]
+
+Once a day, when you open the picker, superfind asks superfind.dev for the newest release and
+sends one anonymous check-in: a random install id, superfind's version, your OS and CPU type,
+how superfind was installed, and the outcome of any superfind upgrade you ran. It never sends
+a search, a path, a project name, or session text, and superfind.dev passes the check-in to
+PostHog without your IP address. The picker then says when a newer release is out. Scripted
+commands such as search, show, and last never check in.
+
+With no option, print whether telemetry is on, or why it is off, the install id, and the exact
+body of the next check-in. The picker tells you once that telemetry is on; running this counts
+as having been told.
+
+  off             turn it off: write SUPERFIND_TELEMETRY=off to ~/.config/superfind/env and
+                  delete the install id, the queued events, and the last check. superfind
+                  then sends nothing and stops checking for updates; superfind upgrade --check
+                  still works when you run it.
+  on              remove that line, so telemetry is on again unless the environment says off
+  --json          print the next check-in's body as superfind would send it, byte for byte,
+                  and nothing when telemetry is off
+
+Telemetry is also off whenever SUPERFIND_TELEMETRY is set to anything but on, 1, or true, when
+DO_NOT_TRACK is set, in CI (CI, GITHUB_ACTIONS, GITLAB_CI, BUILDKITE, CIRCLECI, JENKINS_URL,
+TF_BUILD, or TEAMCITY_VERSION), or when superfind can't write its state folder. Nothing turns
+it on against those.
+`,
 	"version": `superfind --version
 
 Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -954,6 +985,9 @@ func runUpgrade(args []string) {
 		message, err = u.Rollback(ctx)
 	default:
 		message, err = u.To(ctx, pinned)
+		if ctx.Err() == nil {
+			telemetry.Record(telemetry.Upgraded{Method: telemetry.ParseMethod(string(u.Install.Method)), Outcome: upgradeOutcome(message, err)})
+		}
 	}
 	interrupted := ctx.Err() != nil
 	stop()
@@ -966,9 +1000,94 @@ func runUpgrade(args []string) {
 	fmt.Fprintln(stdout, message)
 }
 
+func upgradeOutcome(message string, err error) telemetry.Outcome {
+	switch {
+	case err != nil:
+		return telemetry.Failed
+	case strings.HasPrefix(message, "installed superfind "):
+		return telemetry.Installed
+	}
+	return telemetry.Unchanged
+}
+
+func telemetryBuild() telemetry.Build {
+	method := telemetry.Unknown
+	if facts, err := upgrade.Gather(); err == nil {
+		method = telemetry.ParseMethod(string(upgrade.Detect(facts).Method))
+	}
+	return telemetry.Build{Version: version, Method: method}
+}
+
+const telemetryOffAdvice = "superfind sends nothing and doesn't check for updates; superfind upgrade --check still works when you run it."
+
+func runTelemetry(args []string) {
+	asJSON, action := false, ""
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			asJSON = true
+		case (arg == "off" || arg == "on") && action == "":
+			action = arg
+		case arg == "off" || arg == "on":
+			usageError("superfind telemetry: off or on, not both. See superfind help telemetry.")
+		default:
+			usageError("superfind telemetry: there is no " + arg + " option. See superfind help telemetry.")
+		}
+	}
+	if asJSON && action != "" {
+		usageError("superfind telemetry: --json goes with neither off nor on. See superfind help telemetry.")
+	}
+	switch action {
+	case "off":
+		if err := telemetry.TurnOff(); err != nil {
+			fail("superfind telemetry: couldn't turn it off: " + err.Error())
+		}
+		fmt.Fprintln(stdout, "Telemetry is off: SUPERFIND_TELEMETRY=off is now in ~/.config/superfind/env, and the install id, queued events, and last check were deleted. "+telemetryOffAdvice)
+		if setting := telemetry.Current(); setting.On() {
+			fmt.Fprintln(stdout, "Until you unset it, the environment overrides that file, and telemetry stays on: "+telemetry.Variable+" is set to on there.")
+		}
+		return
+	case "on":
+		if err := telemetry.TurnOn(); err != nil {
+			fail("superfind telemetry: couldn't turn it on: " + err.Error())
+		}
+	}
+	setting := telemetry.Current()
+	if !setting.On() {
+		if asJSON {
+			fmt.Fprintln(stderr, "superfind telemetry: off because "+setting.Why()+", so no check-in is sent.")
+			return
+		}
+		fmt.Fprintln(stdout, "Telemetry is off because "+setting.Why()+". "+telemetryOffAdvice)
+		return
+	}
+	ping := telemetry.NextPing(telemetryBuild(), time.Now())
+	if asJSON {
+		stdout.Write(ping.JSON())
+		return
+	}
+	news.Tell()
+	fmt.Fprintln(stdout, "Telemetry is on. Once a day, when you open the picker, superfind sends this to superfind.dev and gets back the newest release's version:")
+	stdout.Write(ping.JSON())
+	if ping.ID == "" {
+		fmt.Fprintln(stdout, "Install id: none yet; a random one is made at the first check-in.")
+	} else {
+		fmt.Fprintln(stdout, "Install id: "+ping.ID+", a random id made on this machine that names nothing but this install.")
+	}
+	check, _ := telemetry.LastCheck()
+	if telemetry.Due(check, time.Now()) {
+		fmt.Fprintln(stdout, "Next check-in: the next time you open the picker.")
+	} else {
+		fmt.Fprintln(stdout, "Next check-in: the first time you open the picker after "+check.Next.Local().Format("Jan 2 at 15:04")+".")
+	}
+	fmt.Fprintln(stdout, "It never sends a search, a path, a project name, or session text, and superfind.dev passes the check-in to PostHog without your IP address.")
+	fmt.Fprintln(stdout, "superfind telemetry off turns it off and deletes the install id; SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1 in your environment do the same.")
+}
+
 var output *bufio.Writer
 
 func exit(code int) {
+	telemetry.Flush()
 	if err := output.Flush(); err != nil && code == 0 {
 		fmt.Fprintln(stderr, "superfind: couldn't write the output: "+err.Error())
 		code = 1
@@ -1224,6 +1343,12 @@ func run(args []string) {
 		runBlame(args[1:])
 	case "upgrade":
 		runUpgrade(args[1:])
+	case "telemetry":
+		runTelemetry(args[1:])
+	case "checkin":
+		if news.Told() {
+			telemetry.Checkin(context.Background(), telemetryBuild())
+		}
 	case "pick":
 		resume := false
 		for _, arg := range args[1:] {
