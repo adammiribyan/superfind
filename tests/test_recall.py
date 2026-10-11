@@ -223,6 +223,18 @@ class Recall(SuperfindBehavior):
         self.worked(uid(3), self.app)
         self.assertEqual(self.json_ids("has:commit"), [uid(1)])
         self.assertEqual(self.json_ids("HAS:Commit", "ledger"), [uid(1)])
+        path = self.session(uid(4), user("commit through a helper", cwd=str(self.app)), claude("Asked a helper."))
+        folder = path.parent / path.stem / "subagents"
+        folder.mkdir(parents=True)
+        (folder / "agent-a1.jsonl").write_text("\n".join([
+            claude_tool(now - 500, "b1", "Bash", command='git commit -qam "fix: the helper"'),
+            claude_result(now - 499, "b1", "[main 5e6f7a8] fix: the helper")]) + "\n")
+        os.utime(path)
+        self.assertEqual(self.json_ids("has:commit"), sorted([uid(1), uid(4)]))
+        folder.chmod(0)
+        self.addCleanup(folder.chmod, 0o755)
+        os.utime(path)
+        self.assertEqual(self.json_ids("has:commit"), sorted([uid(1), uid(4)]))
 
     def test_a_filter_that_cannot_be_read_is_a_usage_mistake_before_any_work(self):
         log = self.logging_claude()
