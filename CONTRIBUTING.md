@@ -52,6 +52,7 @@ go build -race -o bin/superfind-race . && SUPERFIND_BIN=$PWD/bin/superfind-race 
 
 - Keep each pull request to one change, and add a test that fails without it.
 - If users will notice the change, update the README and add a line under the top version in [CHANGELOG.md](CHANGELOG.md).
+- Each version in CHANGELOG.md, and `[Unreleased]`, starts with a one-line `> headline`. The picker shows it once after an update as what's new, so keep it plain text of 64 characters or fewer, with no period at the end. `go test` checks it.
 - Write commit messages that say what changed for the user, such as `fix: keep the selection when the list refreshes`.
 - If you change the picker's look, re-record the demo (below) so the README stays true.
 - `llms-full.txt` isn't committed. `python3 scripts/llms.py` writes it from `llms.txt`, every command's help, and real JSON output, and a behavior test fails if it can't. A new JSON field needs a line in the script's `FIELDS`.

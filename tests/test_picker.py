@@ -557,6 +557,30 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Down", "Enter")
         self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
 
+    def test_the_first_picker_after_an_update_says_whats_new_once_and_prints_what_it_always_did(self):
+        version = subprocess.run([str(SUPERFIND), "--version"], capture_output=True, text=True).stdout.split()[1]
+        changelog = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text().splitlines()
+        section = changelog.index(next(l for l in changelog if l.startswith(f"## [{version}]")))
+        headline = next(l for l in changelog[section + 1:] if l.strip())[2:]
+        notice = f"New in {version} · {headline}"
+        self.three_sessions()
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        marker = self.home / ".local" / "state" / "superfind" / "shown" / "version"
+        self.assertEqual(marker.read_text(), f"{version}\n")
+        marker.write_text("0.10.0\n")
+        last = subprocess.run([str(SUPERFIND), "last"], env=self.env, cwd="/tmp", stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
+        self.assertEqual((last.returncode, last.stdout), (0, "Checkout double charge\ncd /tmp && claude --resume new\n"))
+        self.open_picker()
+        self.wait_for(notice)
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+        tmux("kill-session", "-t", self.session_name)
+        Path(f"{self.out}.code").unlink()
+        self.open_picker()
+        self.assertNotIn("New in", self.settled_screen())
+        self.assertEqual(marker.read_text(), f"{version}\n")
+
     def test_escape_cancels_without_printing_anything(self):
         self.three_sessions()
         self.open_picker()

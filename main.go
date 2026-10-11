@@ -25,6 +25,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/blame"
 	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
+	"github.com/adammiribyan/superfind/internal/news"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/release"
 	"github.com/adammiribyan/superfind/internal/render"
@@ -1054,6 +1055,9 @@ func main() {
 	}
 	output = bufio.NewWriter(stdout)
 	stdout = output
+	if v, err := release.ParseVersion(version); err == nil {
+		news.Arrive(v)
+	}
 	run(os.Args[1:])
 	exit(0)
 }
@@ -1228,7 +1232,7 @@ func run(args []string) {
 			}
 			resume = true
 		}
-		chosen, err := tui.Pick()
+		chosen, err := tui.Pick(build())
 		if err != nil {
 			fail(err.Error())
 		}

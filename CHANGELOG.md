@@ -5,12 +5,17 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+> superfind upgrade installs new versions in place
+
 ### Added
 
 - `superfind upgrade` installs the newest release in place of a copy that the install script put in `~/.local/bin`, after checking that the release's `checksums.txt` is signed with the superfind release key and that the archive matches it. It keeps the copy it replaced, and `superfind upgrade --rollback` swaps back to it; a second `--rollback` swaps forward again. `--check` says whether a newer release is out and changes nothing, and `--version X` installs that release, also to go back to an older one. A copy from Homebrew, `go install`, or a clone is left alone: upgrade prints the command that updates it. The install script now writes a receipt, `~/.local/state/superfind/install.json`, so upgrade knows which copy it may replace.
+- The first time you open the picker after superfind updates, the line under the search box says what's new in that version, in one line. It stays while the picker is open, gives way to search messages while they apply, and doesn't show again. A new install doesn't show it.
 - Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
 
 ## [0.11.0] - 2026-10-11
+
+> Handoff, last, filters, fish, and a skill for agents
 
 ### Added
 
