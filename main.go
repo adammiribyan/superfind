@@ -232,7 +232,8 @@ superfind search prints first.
 
   --json          print one JSON object: the session's fields, its outcomes, and its turns.
                   Each commit's body is its message after the subject, masked and cut to
-                  2,000 bytes.
+                  2,000 bytes. The bodies share 12,000 bytes, newest first, unless
+                  --max-bytes is 0.
   --tail N        print only the last N turns
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
@@ -752,9 +753,14 @@ func runShow(args []string) {
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
 	}
+	bodies := make([]string, len(outcomes))
 	for i := range outcomes {
 		o := &outcomes[i]
-		o.Subject, o.Body, o.Repo, o.Branch = show.Clean(o.Subject), show.Body(o.Body), show.Clean(o.Repo), show.Clean(o.Branch)
+		o.Subject, o.Repo, o.Branch = show.Clean(o.Subject), show.Clean(o.Repo), show.Clean(o.Branch)
+		bodies[i] = o.Body
+	}
+	for i, b := range show.Bodies(bodies, opt.MaxBytes > 0) {
+		outcomes[i].Body = b
 	}
 	record := session.RecordOf(r, show.Clean)
 	if asJSON {

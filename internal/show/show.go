@@ -47,18 +47,37 @@ func oneLine(s string) string {
 	}, agent.Printable(s))
 }
 
-const BodyBytes = 2000
+const (
+	bodyBytes   = 2000
+	bodiesBytes = 12000
+)
 
-func Body(s string) string {
-	s = strings.TrimSpace(Clean(s))
-	if len(s) <= BodyBytes {
+func Bodies(bodies []string, limited bool) []string {
+	out, left := make([]string, len(bodies)), bodiesBytes
+	for i := len(bodies) - 1; i >= 0; i-- {
+		most := bodyBytes
+		if limited {
+			most = max(min(most, left), 0)
+		}
+		out[i] = body(bodies[i], most)
+		left -= len(out[i])
+	}
+	return out
+}
+
+func body(s string, most int) string {
+	s = strings.TrimSpace(Clean(strings.ToValidUTF8(s, "\uFFFD")))
+	if len(s) <= most {
 		return s
 	}
-	cut := BodyBytes
+	cut := most
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + "…"
+	if open := strings.LastIndex(s[:cut], "[masked "); open >= 0 && !strings.Contains(s[open:cut], "]") {
+		cut = open
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }
 
 func lastBytes(s string, n int) string {

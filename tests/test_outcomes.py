@@ -235,8 +235,25 @@ class Outcomes(Blame):
         self.assertEqual(len(head.encode()), 1990)
         self.assertNotIn("sk-ant-", result.stdout)
         [got] = self.outcomes(1, "body")[0]
-        self.assertEqual(got, head + "[masked An…")
+        self.assertEqual(got, head.rstrip() + "…")
         self.assertNotIn("Why: the old key", self.superfind("show", uid(1)))
+
+    def test_commit_bodies_share_a_budget_newest_first(self):
+        t = self.now - 3600
+        commands, made = [], []
+        for i in range(8):
+            subject = f"feat: add step {i} of the charge pipeline"
+            made.append(self.commit(subject, {f"s{i}.go": "x\n"}, t + i * 60, body=f"Step {i}. " + "why " * 500))
+            commands += [claude_tool(t + i * 60, f"b{i}", "Bash", command=f'git commit -qm "{subject}"'),
+                         claude_result(t + i * 60 + 1, f"b{i}", f"[main {made[-1][:7]}] {subject}")]
+        self.claude_at(1, *commands, title="Pipeline")
+        bodies = [b for (b,) in self.outcomes(1, "body")]
+        self.assertEqual(len(bodies), 8)
+        self.assertTrue(bodies[-1].startswith("Step 7. why") and bodies[-1].endswith("…") and len(bodies[-1].encode()) <= 2003)
+        self.assertEqual(bodies[0], "…")
+        self.assertLessEqual(sum(len(b.encode()) for b in bodies), 12000 + 8 * 3)
+        whole = json.loads(self.run_superfind("show", uid(1), "--json", "--max-bytes", "0").stdout)["outcomes"]
+        self.assertTrue(all(o["body"].startswith(f"Step {i}. why") and len(o["body"].encode()) <= 2003 for i, o in enumerate(whole)))
 
     def test_a_signed_commit_is_read_without_running_the_signature_program(self):
         t = self.now - 3600
