@@ -24,9 +24,7 @@ func Focus(s open.State) bool {
 	if err != nil {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), deadline)
-	defer cancel()
-	out, err := tell(ctx, osascript, `get tty of every terminal`)
+	out, err := tell(osascript, `get tty of every terminal`)
 	if err != nil {
 		return false
 	}
@@ -34,11 +32,13 @@ func Focus(s open.State) bool {
 	if !ok {
 		return false
 	}
-	_, err = tell(ctx, osascript, `focus (first terminal whose tty is "`+path+`")`)
+	_, err = tell(osascript, `focus (first terminal whose tty is "`+path+`")`)
 	return err == nil
 }
 
-func tell(ctx context.Context, osascript, command string) ([]byte, error) {
+func tell(osascript, command string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, osascript, "-e", `tell application "Ghostty" to `+command)
 	cmd.WaitDelay = deadline / 10
 	return cmd.Output()

@@ -1284,6 +1284,7 @@ class EnterOnAnOpenSession(unittest.TestCase):
         self.stub.mkdir()
         (self.stub / "osascript").write_text(f"""#!/bin/sh
 printf '%s\\n' "$2" >> {self.stub}/told
+[ "$(/bin/cat {self.stub}/mode)" = sluggish ] && /bin/sleep 0.6
 case "$2" in
 *"get tty of every terminal"*)
     case "$(/bin/cat {self.stub}/mode)" in
@@ -1460,6 +1461,15 @@ esac
     def test_enter_on_a_session_in_a_ghostty_tab_switches_to_that_tab_and_hands_the_shell_nothing(self):
         tty, other = self.in_a_ghostty_tab()
         self.osascript("match", f"{other}, {tty}")
+        self.host()
+        self.pick(None)
+        self.keys("Enter")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.focused(), f'tell application "Ghostty" to focus (first terminal whose tty is "{tty}")\n')
+
+    def test_enter_switches_tabs_when_ghostty_answers_each_question_within_a_second(self):
+        tty, other = self.in_a_ghostty_tab()
+        self.osascript("sluggish", f"{other}, {tty}")
         self.host()
         self.pick(None)
         self.keys("Enter")
