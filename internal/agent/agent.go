@@ -67,10 +67,11 @@ func (a *Agent) homes() []string {
 	var dirs []string
 	for _, c := range candidates {
 		d := Resolve(c)
-		info, err := os.Stat(filepath.Join(d, marker))
+		sessions := filepath.Join(d, marker)
+		info, err := os.Stat(sessions)
 		exists := (err == nil && info.IsDir()) || (err != nil && !errors.Is(err, fs.ErrNotExist) && dirExists(d))
-		if exists && !seen[d] {
-			seen[d] = true
+		if key := Resolve(sessions); exists && !seen[key] {
+			seen[key] = true
 			dirs = append(dirs, d)
 		}
 	}
