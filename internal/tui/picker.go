@@ -123,10 +123,10 @@ type bodyLoaded struct {
 }
 
 type askDone struct {
-	seq   int
-	query string
-	paths []string
-	err   error
+	seq    int
+	query  string
+	answer ask.Answer
+	err    error
 }
 
 type explainDone struct {
@@ -178,6 +178,7 @@ type picker struct {
 	askSeq      int
 	asking      bool
 	askedFor    string
+	byWords     bool
 	explained   map[string]string
 	message     string
 
@@ -325,7 +326,7 @@ func (a *asks) stop() {
 func (m *picker) forgetAsk() {
 	m.asks.stop()
 	m.askSeq++
-	m.asking, m.askedFor, m.explained = false, "", nil
+	m.asking, m.askedFor, m.byWords, m.explained = false, "", false, nil
 }
 
 func (m *picker) search() {
@@ -455,8 +456,8 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	running.Add(1)
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
 		defer running.Done()
-		paths, err := ask.Ask(ctx, db, query, rows)
-		return askDone{seq, query, paths, err}
+		answer, err := ask.Ask(ctx, db, query, rows)
+		return askDone{seq, query, answer, err}
 	})
 }
 
@@ -592,13 +593,18 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = msg.err.Error()
 			return m, nil
 		}
-		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
-		if len(m.shown) == 0 {
+		paths := msg.answer.Paths
+		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, paths), 0, 0, msg.query
+		m.byWords = msg.answer.Fallback != ""
+		switch {
+		case len(m.shown) == 0:
 			m.message = "Ask found nothing for “" + msg.query + "”"
+		case m.byWords:
+			m.message = msg.answer.Fallback
 		}
 		updated, load := m.loadPreview()
-		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
-		if key == "" || len(top) == 0 || updated.db == nil {
+		key, top := typesafe.Key(), paths[:min(ask.ExplainTop, len(paths))]
+		if key == "" || len(top) == 0 || updated.db == nil || updated.byWords {
 			return updated, load
 		}
 		seq, db, query, ctx := msg.seq, updated.db, msg.query, m.asks.ctx
@@ -742,6 +748,9 @@ func (m picker) inputBox(width int) []string {
 		label = " " + m.colors.accent.Render(m.spin.View()) + " " + bold.Render("Asking…") + " "
 	case asked:
 		label = " " + bold.Render("Sessions by description") + " "
+		if m.byWords {
+			label = " " + bold.Render("Sessions with your words") + " "
+		}
 	}
 	top := ansi.Truncate(border.Render("╭─")+label, max(width-1, 0), "")
 	top += border.Render(strings.Repeat("─", max(width-lipgloss.Width(top)-1, 0)) + "╮")

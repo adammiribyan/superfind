@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"image/color"
 	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -143,5 +145,15 @@ func TestAStatusFollowsTheTitleUntilTheTitleWouldGetUnderEightCells(t *testing.T
 		if got := ansi.Strip(m.rowLine(row, false, width, render.Columns{}, nil)); got != want {
 			t.Errorf("at width %d the row reads %q, want %q", width, got, want)
 		}
+	}
+}
+
+func TestAskResultsRankedByYourWordsSayWhyAndAreTitledThatWay(t *testing.T) {
+	m := testPicker(t)
+	m.width, m.height, m.screenHeight, m.started = 80, 23, 24, true
+	next, _ := m.Update(askDone{seq: m.askSeq, query: "ledger", answer: ask.Answer{Paths: []string{"a"}, Fallback: "Ask needs a TypeSafe key or Claude Code."}})
+	lines := strings.Split(ansi.Strip(next.(picker).View().Content), "\n")
+	if !strings.HasPrefix(lines[1], " ╭─ Sessions with your words ─") || strings.TrimSpace(lines[4]) != "Ask needs a TypeSafe key or Claude Code." {
+		t.Fatalf("after a keyword fallback the box reads %q and the message %q", lines[1], lines[4])
 	}
 }

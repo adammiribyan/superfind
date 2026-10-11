@@ -29,6 +29,7 @@ const (
 	claudeTimeout = 90 * time.Second
 	jevChunk      = 120
 	jevShortlist  = 15
+	wordShortlist = 15
 	ExplainTop    = 5
 )
 
@@ -37,17 +38,21 @@ const askPrompt = "You rank a developer's past coding sessions by how relevant t
 	"not shared words. Reply with only a JSON array of the numbers of up to 15 relevant sessions, best first, " +
 	"or [] if none are relevant."
 
-func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []string, error) {
+func candidates(rows []session.Row) []session.Row {
 	var kept []session.Row
 	for _, r := range session.RecentFirst(rows) {
 		if !r.Session.Throwaway() {
 			kept = append(kept, r)
 		}
 	}
+	return kept
+}
+
+func askCards(db *sql.DB, query string, kept []session.Row) ([]string, error) {
 	passages := map[string]string{}
 	openings, err := session.QueryPairs(db, "SELECT path, substr(body, 1, 240) FROM docs")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var anyWord []string
 	for _, w := range session.MeaningfulWords(query) {
@@ -58,7 +63,7 @@ func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []st
 		matched, err = session.QueryPairs(db, "SELECT path, snippet(docs, 2, '', '', '…', 40) FROM docs WHERE docs MATCH ?",
 			strings.Join(anyWord, " OR "))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	for _, pair := range append(openings, matched...) {
@@ -70,7 +75,7 @@ func askCards(db *sql.DB, query string, rows []session.Row) ([]session.Row, []st
 		cards[i] = fmt.Sprintf("%s | %s | %s | %s | %s", s.Title, s.Project(), render.Ago(s.Mtime),
 			render.OneLine(s.LastPrompt, 160), render.OneLine(passages[r.Path], 300))
 	}
-	return kept, cards, nil
+	return cards, nil
 }
 
 func jevRank(ctx context.Context, key, query string, rows []session.Row, cards []string) ([]string, error) {
@@ -233,26 +238,75 @@ type Failure struct{ reason string }
 
 func (a Failure) Error() string { return "Ask failed: " + a.reason + "." }
 
-func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) ([]string, error) {
-	kept, cards, err := askCards(db, query, rows)
-	if err != nil {
-		return nil, Failure{"the search index couldn't be read (" + err.Error() + ")"}
+type Answer struct {
+	Paths    []string
+	Fallback string
+}
+
+func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) (Answer, error) {
+	kept := candidates(rows)
+	key, fallback := typesafe.Key(), ""
+	if _, err := exec.LookPath("claude"); key == "" && err != nil {
+		fallback = "Ask needs a TypeSafe key or Claude Code."
 	}
-	if len(cards) == 0 {
+	var ranked []string
+	if fallback == "" {
+		cards, err := askCards(db, query, kept)
+		if err != nil {
+			return Answer{}, Failure{"the search index couldn't be read (" + err.Error() + ")"}
+		}
+		if len(cards) == 0 {
+			return Answer{}, nil
+		}
+		if key != "" {
+			ranked, err = jevRank(ctx, key, query, kept, cards)
+		} else {
+			ranked, err = claudeRank(ctx, query, kept, cards)
+		}
+		switch {
+		case err != nil && key != "":
+			fallback = Failure{err.Error()}.Error()
+		case err != nil:
+			fallback = Failure{"Claude Code didn't answer"}.Error()
+		}
+	}
+	if ctx.Err() != nil {
+		return Answer{}, ctx.Err()
+	}
+	if fallback == "" {
+		return Answer{Paths: ranked}, nil
+	}
+	paths, err := byWords(db, query, kept)
+	if err != nil {
+		return Answer{}, Failure{"the search index couldn't be read (" + err.Error() + ")"}
+	}
+	return Answer{Paths: paths, Fallback: fallback}, nil
+}
+
+func byWords(db *sql.DB, query string, kept []session.Row) ([]string, error) {
+	var anyWord []string
+	for _, w := range session.MeaningfulWords(query) {
+		anyWord = append(anyWord, `"`+w+`"*`)
+	}
+	if len(anyWord) == 0 {
 		return nil, nil
 	}
-	if key := typesafe.Key(); key != "" {
-		ranked, err := jevRank(ctx, key, query, kept, cards)
-		if err != nil && ctx.Err() == nil {
-			return nil, Failure{err.Error()}
+	hits, err := session.QueryPairs(db, "SELECT path, '' FROM docs WHERE docs MATCH ? ORDER BY bm25(docs, 0.0, 3.0, 1.0), path",
+		strings.Join(anyWord, " OR "))
+	if err != nil {
+		return nil, err
+	}
+	candidate := map[string]bool{}
+	for _, r := range kept {
+		candidate[r.Path] = true
+	}
+	var paths []string
+	for _, hit := range hits {
+		if candidate[hit[0]] && len(paths) < wordShortlist {
+			paths = append(paths, hit[0])
 		}
-		return ranked, ctx.Err()
 	}
-	paths, err := claudeRank(ctx, query, kept, cards)
-	if err != nil && ctx.Err() == nil {
-		return nil, Failure{"Claude Code didn't answer"}
-	}
-	return paths, ctx.Err()
+	return paths, nil
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)

@@ -100,7 +100,7 @@ Often you remember what a session was about but not the words it used. Type a de
 
 For example, "where did we stop charging people twice" finds "Double charge on slow checkouts", while typing the same words finds nothing. From the command line, `superfind ask where did we stop charging people twice` prints the same sessions as tab-separated lines (see [Commands](#commands)).
 
-Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so instead of trying Claude.
+Ask ranks sessions with [Jev](https://docs.typesafe.ai) when a TypeSafe API key is configured, and with Claude Haiku otherwise. Either way, asking sends some session text off your machine; [What leaves your machine](#what-leaves-your-machine) lists exactly what. With a key, if TypeSafe fails, asking says so and ranks by your words instead of trying Claude.
 
 Measured on 2026-10-10 on 21 test searches over the author's own sessions, each phrased differently from the session it should find, over three runs:
 
@@ -124,7 +124,7 @@ TYPESAFE_API_KEY=your-key
 
 Setting `TYPESAFE_API_KEY=` to an empty value turns Jev off even when a file has a key. `TYPESAFE_URL` sends requests to another endpoint, such as a proxy; it defaults to `https://api.typesafe.ai/v1/systemone`.
 
-If asking fails, the line under the search box says why, and typing goes back to search. For example, "Claude Code didn't answer" usually means Claude Code isn't installed or isn't logged in; run `claude` once to log in.
+When no ranker answers, ask ranks the sessions by your words instead. That happens when there's no TypeSafe key and Claude Code isn't installed, or when TypeSafe or Claude Code fails. It lists the sessions that contain any of your words, with title matches above conversation matches. The box is titled "Sessions with your words", and the line under it says why, for example "Ask needs a TypeSafe key or Claude Code." or "Ask failed: Claude Code didn't answer.". The second usually means Claude Code isn't logged in, so run `claude` once to log in. Nothing more leaves your machine: with a key, a TypeSafe failure still never tries Claude. On the same 21 searches, ranking by words put the right session first 9 times and in the top 3 11 times, in about 5 ms. `superfind ask` prints the same reason on stderr and exits 0.
 
 ## Waiting on you
 

@@ -309,13 +309,14 @@ class SuperfindBehavior(unittest.TestCase):
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), [])
 
-    def test_ask_says_why_it_failed_when_no_ranker_can_answer(self):
+    def test_without_a_ranker_ask_lists_sessions_with_your_words_and_says_why(self):
         self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.session("b2", user("fix the build"), tool("Bash"), claude("Done."), title="Build fix")
         self.superfind("index")
         self.env["PATH"] = "/usr/bin:/bin"
         result = self.run_superfind("ask", "where did we migrate the ledger")
-        self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
-                         (1, "", "Ask failed: Claude Code didn't answer."))
+        self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()], result.stderr.strip()),
+                         (0, ["Ledger migration"], "Ask needs a TypeSafe key or Claude Code. These sessions contain your words instead."))
 
     def test_a_hostile_transcript_name_cannot_inject_shell_commands(self):
         path = self.session("a;echo PWNED", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
@@ -639,7 +640,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.superfind("index")
         result = self.run_superfind("ask", "where did we migrate the ledger")
         self.assertEqual((result.returncode, result.stderr.strip()),
-                         (1, 'Ask failed: TypeSafe returned an unknown session "".'))
+                         (0, 'Ask failed: TypeSafe returned an unknown session "". These sessions contain your words instead.'))
         os.utime(self.projects / "a1.jsonl", (time.time() - 600, time.time() - 600))
         labeled = self.run_superfind("label")
         self.assertEqual((labeled.returncode, labeled.stderr.strip()),
@@ -1229,8 +1230,8 @@ class SuperfindBehavior(unittest.TestCase):
         requests = self.record_typesafe()
         log = self.logging_claude()
         result = self.run_superfind("ask", "where did we migrate the ledger")
-        self.assertEqual((result.returncode, result.stdout, result.stderr.strip()),
-                         (1, "", "Ask failed: TypeSafe answered 500."))
+        self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()], result.stderr.strip()),
+                         (0, ["Ledger migration"], "Ask failed: TypeSafe answered 500. These sessions contain your words instead."))
         self.assertEqual((len(requests), log.exists()), (1, False))
 
     def test_claude_ranks_from_an_empty_folder_without_loading_settings_or_memory(self):
