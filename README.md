@@ -224,7 +224,7 @@ The checkout button double-charges customers on slow networks.
 Each request now carries an idempotency key…
 ```
 
-By default `show` keeps the most recent turns that fit in 60,000 bytes of text, plus the 3-byte `…` that marks a cut, and says how many earlier turns it left out. If even the last turn is longer, it keeps that turn's end and starts it with `…`; in JSON that turn also has `"cut": true`. `--max-bytes N` changes the limit, and `--max-bytes 0` removes it. `--tail N` keeps only the last N turns.
+By default `show` keeps the most recent turns that fit in 60,000 bytes of text, plus the 3-byte `…` that marks a cut, and says how many earlier turns it left out. If even the last turn is longer, it keeps that turn's end and starts it with `…`; in JSON that turn also has `"cut": true`. `--max-bytes N` changes the limit, and `--max-bytes 0` removes it. `--tail N` keeps only the last N turns. `show` reads the whole session but holds only the turns it can print, so a long session doesn't have to fit in memory.
 
 `show --json` prints one JSON object, with the same fields as a search result plus the turns:
 
