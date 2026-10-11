@@ -511,3 +511,75 @@ func TestASubagentsEditIsMarkedAsOne(t *testing.T) {
 		t.Fatalf("got %q", p.Turns[1].Text)
 	}
 }
+
+func TestAKeySplitAcrossMessagesStaysMasked(t *testing.T) {
+	tr := run([]string{"rotate the deploy key"}, []string{"-----BEGIN PRIVATE KEY-----\nFIRSTCHUNKFIRSTCHUNK", "SECONDCHUNKSECONDCHUNK\n-----END PRIVATE KEY-----", "Rotated."})
+	for _, words := range [][]string{nil, {"rotated"}} {
+		out := markdown(t, Build(tr, Options{Words: words, MaxBytes: 2000}))
+		if strings.Contains(out, "CHUNK") {
+			t.Fatalf("the key leaked:\n%s", out)
+		}
+	}
+}
+
+func TestAnEditedPathIsMaskedEverywhereItIsShown(t *testing.T) {
+	key := "sk-ant-api03-" + strings.Repeat("Q", 40)
+	tr := run([]string{"fix the charge"}, []string{"Editing.", "Done."})
+	p := Build(tr, Options{Words: []string{"charge.go"}, Steps: []agent.Step{{Message: 2, Edit: "/work/billing/" + key + "/charge.go"}}})
+	var js bytes.Buffer
+	if err := WriteJSON(&js, claudeAgent, record(), p); err != nil {
+		t.Fatal(err)
+	}
+	if out := markdown(t, p) + js.String(); strings.Contains(out, key) || !strings.Contains(out, "[masked Anthropic key]/charge.go") {
+		t.Fatalf("got\n%s", out)
+	}
+}
+
+func TestBlankLinesNeverCarryAnExcerptPastTheLimit(t *testing.T) {
+	tr := transcript(agent.Replied, "fix it please", "start\n"+strings.Repeat("\n", 20000)+"finish")
+	p := Build(tr, Options{MaxBytes: 1000})
+	used := 0
+	for _, turn := range p.Turns {
+		used += len(turn.Text)
+	}
+	if used > 1000+len(gapMark) {
+		t.Fatalf("used %d bytes", used)
+	}
+}
+
+func TestAMessageShownAsContextStillGetsItsMatchInView(t *testing.T) {
+	tr := run([]string{"start"}, []string{"NEEDLE A " + strings.Repeat("x", 20000), "NEEDLE B " + strings.Repeat("x", 20000)}, []string{"end"}, []string{"done"})
+	p := Build(tr, Options{Words: []string{"needle"}, MaxBytes: DefaultMaxBytes})
+	if turn := p.Turns[slices.IndexFunc(p.Turns, func(t Turn) bool { return t.Number == 2 })]; !strings.Contains(turn.Text, "NEEDLE A") || !strings.Contains(turn.Text, "NEEDLE B") {
+		t.Fatalf("turn 2:\n%.300s", turn.Text)
+	}
+}
+
+func TestWithoutALimitEveryMessageOfAMatchingTurnIsShown(t *testing.T) {
+	tr := run([]string{"start"}, []string{"one", "two", "NEEDLE", "four", "five"}, []string{"end"}, []string{"done"})
+	p := Build(tr, Options{Words: []string{"needle"}})
+	if p.Turns[1].Text != "one\n\ntwo\n\nNEEDLE\n\nfour\n\nfive" || p.Truncated {
+		t.Fatalf("got %q", p.Turns[1].Text)
+	}
+}
+
+func TestAnAbsoluteOrDotPathFindsTheEditToo(t *testing.T) {
+	filler := strings.Repeat("later work ", 400)
+	tr := run([]string{"fix the charge"}, []string{"Editing the charge.", "Charge fixed."}, []string{"now the rest"}, []string{filler, filler}, []string{"ship"}, []string{filler})
+	steps := []agent.Step{{Message: 2, Edit: "/work/billing/app/charge.go"}}
+	for _, word := range []string{"/work/billing/app/charge.go", "./app/charge.go"} {
+		p := Build(tr, Options{Words: []string{word}, MaxBytes: 1500, Steps: steps})
+		i := slices.IndexFunc(p.Turns, func(t Turn) bool { return t.Number == 2 })
+		if i < 0 || !strings.Contains(p.Turns[i].Text, "[edited app/charge.go]") || !slices.Equal(p.Turns[i].Matches, []string{word}) || p.Matching != 1 {
+			t.Fatalf("%s: %+v", word, p.Turns)
+		}
+	}
+}
+
+func TestAnEditWithNoReplyAroundItStaysInTheRecord(t *testing.T) {
+	tr := run([]string{"fix the charge"})
+	p := Build(tr, Options{Words: []string{"charge.go"}, Steps: []agent.Step{{Message: 1, Edit: "/work/billing/charge.go"}}})
+	if p.Turns[0].Text != "fix the charge\n\n[edited charge.go]" || len(p.Edited) != 1 {
+		t.Fatalf("got %+v", p)
+	}
+}

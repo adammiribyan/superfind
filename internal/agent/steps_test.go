@@ -87,3 +87,42 @@ func TestGrokStepsHoldEditsWithoutErrors(t *testing.T) {
 		t.Fatalf("got %+v", steps)
 	}
 }
+
+func TestAResumedSubagentsEditsAreCountedOnceWhereTheyHappened(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s1.jsonl")
+	sub := filepath.Join(dir, "s1", "subagents", "agent-a1.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(id, file string) string {
+		return `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"Write","input":{"file_path":"` + file + `"}}]}}` + "\n" +
+			`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok"}]}}` + "\n"
+	}
+	if err := os.WriteFile(sub, []byte(edit("w1", "/w/charge.go")+edit("w2", "/w/refund.go")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result := `{"type":"user","toolUseResult":{"agentId":"a1"},"message":{"content":[{"type":"tool_result","tool_use_id":"g1","content":"done"}]}}`
+	_, steps := stepsOf(t, Named("claude"), path,
+		`{"type":"user","message":{"role":"user","content":"fix the charge"}}`, result,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Now the refund."}]}}`, result)
+	want := []Step{{Message: 1, Edit: "/w/charge.go", Subagent: true}, {Message: 1, Edit: "/w/refund.go", Subagent: true}}
+	if !reflect.DeepEqual(steps, want) {
+		t.Fatalf("got %+v", steps)
+	}
+}
+
+func TestAPeerDrivenSessionKeepsItsSteps(t *testing.T) {
+	tr, steps := stepsOf(t, Named("claude"), filepath.Join(t.TempDir(), "s.jsonl"),
+		`{"type":"user","origin":{"kind":"peer","body":"Fix the charge please"},"message":{"role":"user","content":"Another Claude session sent a message:\nFix the charge please"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Editing it."},{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/w/charge.go"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"e1","is_error": true,"content":"String to replace not found"}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"ok"}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Fixed it."}]}}`)
+	if !tr.PeerDriven || strings.Join(tr.Messages, "|") != "Fix the charge please|Editing it.|Fixed it." {
+		t.Fatalf("messages %q", tr.Messages)
+	}
+	if want := []Step{{Message: 2, Error: "String to replace not found"}}; !reflect.DeepEqual(steps, want) {
+		t.Fatalf("got %+v", steps)
+	}
+}

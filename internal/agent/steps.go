@@ -16,7 +16,13 @@ type Step struct {
 	Subagent bool
 }
 
-func (p *parser) said() int      { return len(p.t.Messages) }
+func (p *parser) said() int { return len(p.t.Messages) }
+func (p *parser) peerSaid() int {
+	if p.peers == nil {
+		return 0
+	}
+	return len(p.peers.Messages)
+}
 func (c *codexReader) said() int { return len(c.t.Messages) }
 func (g *grokReader) said() int  { return len(g.t.Messages) }
 
@@ -27,7 +33,16 @@ func ReadSteps(a *Agent, path string) (Transcript, []Step, error) {
 	}
 	var trail Trail
 	follow, failed := a.trail(&trail), failures[a.ID]
+	peers, _ := r.(interface{ peerSaid() int })
 	var steps []Step
+	var peerAt []int
+	read := map[string]int{}
+	step := func(s Step) {
+		steps = append(steps, s)
+		if peers != nil {
+			peerAt = append(peerAt, peers.peerSaid())
+		}
+	}
 	err = eachLine(path, func(raw []byte) bool {
 		if !r.feed(raw) {
 			return false
@@ -36,27 +51,30 @@ func ReadSteps(a *Agent, path string) (Transcript, []Step, error) {
 		follow(raw)
 		at := r.said()
 		for _, e := range trail.Edits[edits:] {
-			steps = append(steps, Step{Message: at, Edit: e.Path})
+			step(Step{Message: at, Edit: e.Path})
 		}
 		if failed != nil {
 			for _, output := range failed(raw) {
-				steps = append(steps, Step{Message: at, Error: output})
+				step(Step{Message: at, Error: output})
 			}
 		}
 		if a.ID == "claude" {
 			for _, sub := range claudeSubagent(raw, path) {
 				var t Trail
 				eachLine(sub, a.trail(&t))
-				for _, e := range t.Edits {
-					steps = append(steps, Step{Message: at, Edit: e.Path, Subagent: true})
+				for _, e := range t.Edits[min(read[sub], len(t.Edits)):] {
+					step(Step{Message: at, Edit: e.Path, Subagent: true})
 				}
+				read[sub] = len(t.Edits)
 			}
 		}
 		return true
 	})
 	t := r.done()
 	if t.PeerDriven {
-		steps = nil
+		for i := range steps {
+			steps[i].Message = peerAt[i]
+		}
 	}
 	return t, steps, err
 }
@@ -81,7 +99,7 @@ func claudeSubagent(raw []byte, path string) []string {
 var failures = map[string]func(raw []byte) []string{"claude": claudeFailures, "codex": codexFailures}
 
 func claudeFailures(raw []byte) []string {
-	if !bytes.Contains(raw, []byte(`"is_error":true`)) {
+	if !bytes.Contains(raw, []byte(`"is_error"`)) {
 		return nil
 	}
 	var l claudeTrailLine

@@ -190,7 +190,7 @@ func compose(text string, spans []span) (out string, kept []string, shortened bo
 	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
 	var merged []span
 	for _, s := range spans {
-		if last := len(merged) - 1; last >= 0 && (s.start <= merged[last].end || blank(text[merged[last].end:s.start])) {
+		if last := len(merged) - 1; last >= 0 && (s.start <= merged[last].end || s.start-merged[last].end <= len(gapMark) && blank(text[merged[last].end:s.start])) {
 			merged[last].end = max(merged[last].end, s.end)
 			continue
 		}
@@ -199,7 +199,7 @@ func compose(text string, spans []span) (out string, kept []string, shortened bo
 	if len(merged) == 0 {
 		return "", nil, len(text) > 0
 	}
-	if len(merged) == 1 && blank(text[:merged[0].start]) && blank(text[merged[0].end:]) {
+	if len(merged) == 1 && len(text)-(merged[0].end-merged[0].start) <= len(gapMark) && blank(text[:merged[0].start]) && blank(text[merged[0].end:]) {
 		return text, []string{text}, false
 	}
 	for _, s := range merged {
@@ -262,22 +262,42 @@ func flat(s string, most int) string {
 	return strings.TrimSpace(s[:head]) + " … " + strings.TrimSpace(s[tail:])
 }
 
-func notes(t agent.Transcript, steps []agent.Step, m *matcher) (map[int]string, map[int][]string) {
+type note struct {
+	text  string
+	paths []string
+	words []string
+}
+
+func notes(t agent.Transcript, steps []agent.Step, m *matcher) map[int]*note {
 	if m == nil {
-		return nil, nil
+		return nil
 	}
 	type edit struct {
 		at   int
 		path string
 	}
-	paths, errs, direct := map[int][]string{}, map[int][]string{}, map[edit]bool{}
+	found, errs, direct := map[int]*note{}, map[int][]string{}, map[edit]bool{}
 	for _, s := range steps {
 		switch {
-		case s.Edit != "" && anchored(s.Edit, m.words):
-			p := shown(s.Edit, t.Cwd)
+		case s.Edit != "":
+			words := slices.DeleteFunc(slices.Clone(m.words), func(w string) bool { return !anchored(s.Edit, []string{w}) })
+			if len(words) == 0 {
+				continue
+			}
+			n := found[s.Message]
+			if n == nil {
+				n = &note{}
+				found[s.Message] = n
+			}
+			p := oneLine(show.Clean(shown(s.Edit, t.Cwd)))
 			direct[edit{s.Message, p}] = direct[edit{s.Message, p}] || !s.Subagent
-			if !slices.Contains(paths[s.Message], p) {
-				paths[s.Message] = append(paths[s.Message], p)
+			if !slices.Contains(n.paths, p) {
+				n.paths = append(n.paths, p)
+			}
+			for _, w := range words {
+				if !slices.Contains(n.words, w) {
+					n.words = append(n.words, w)
+				}
 			}
 		case s.Error != "" && len(errs[s.Message]) < errorsPerEdit:
 			if e := flat(s.Error, errorBytes); !slices.Contains(errs[s.Message], e) {
@@ -285,71 +305,96 @@ func notes(t agent.Transcript, steps []agent.Step, m *matcher) (map[int]string, 
 			}
 		}
 	}
-	out := map[int]string{}
-	for at, ps := range paths {
+	for at, n := range found {
 		var lines []string
-		for _, p := range ps {
+		for _, p := range n.paths {
 			who := "[a subagent edited "
 			if direct[edit{at, p}] {
 				who = "[edited "
 			}
-			lines = append(lines, who+oneLine(show.Clean(p))+"]")
+			lines = append(lines, who+p+"]")
 		}
 		for _, e := range errs[at] {
 			lines = append(lines, "[error: "+e+"]")
 		}
-		out[at] = strings.Join(lines, "\n")
+		n.text = strings.Join(lines, "\n")
 	}
-	return out, paths
+	return found
 }
 
-func layout(t agent.Transcript, note map[int]string, paths map[int][]string) ([]string, [][]span, []Edited) {
+func layout(t agent.Transcript, found map[int]*note) ([]string, [][]span, map[int]map[int]*note, []Edited) {
 	n := len(t.Turns)
-	texts, pieces := make([]string, n), make([][]span, n)
+	texts, pieces, placed := make([]string, n), make([][]span, n), map[int]map[int]*note{}
 	where := ranges(t)
+	turnOf := make([]int, len(t.Messages))
+	for i, r := range where {
+		for k := r.start; k < r.end; k++ {
+			turnOf[k] = i
+		}
+	}
+	assistant := func(k int) bool { return k >= 0 && k < len(turnOf) && t.Turns[turnOf[k]].Role == "assistant" }
+	before, after := map[int]*note{}, map[int]*note{}
+	for at, nt := range found {
+		switch {
+		case at > len(t.Messages) || where == nil:
+		case assistant(at - 1), !assistant(at) && at > 0:
+			after[at-1] = nt
+		case at < len(t.Messages):
+			before[at] = nt
+		}
+	}
 	turnsOf := map[string][]int{}
 	var order []string
 	for i, turn := range t.Turns {
+		whole := lineBreaks.Replace(show.Clean(turn.Text))
+		texts[i], pieces[i] = whole, []span{{0, len(whole)}}
 		if where == nil {
-			texts[i] = lineBreaks.Replace(show.Clean(turn.Text))
-			pieces[i] = []span{{0, len(texts[i])}}
 			continue
 		}
 		var b strings.Builder
-		put := func(s string) {
+		var parts []span
+		here := map[int]*note{}
+		put := func(s string, nt *note) {
 			if b.Len() > 0 {
 				b.WriteString("\n\n")
 			}
-			pieces[i] = append(pieces[i], span{b.Len(), b.Len() + len(s)})
-			b.WriteString(s)
-		}
-		mark := func(at int) {
-			text, ok := note[at]
-			if !ok || turn.Role != "assistant" {
-				return
-			}
-			put(text)
-			for _, p := range paths[at] {
-				if !slices.Contains(turnsOf[p], i+1) {
-					if turnsOf[p] == nil {
-						order = append(order, p)
+			if nt != nil {
+				here[len(parts)] = nt
+				for _, p := range nt.paths {
+					if !slices.Contains(turnsOf[p], i+1) {
+						if turnsOf[p] == nil {
+							order = append(order, p)
+						}
+						turnsOf[p] = append(turnsOf[p], i+1)
 					}
-					turnsOf[p] = append(turnsOf[p], i+1)
 				}
 			}
+			parts = append(parts, span{b.Len(), b.Len() + len(s)})
+			b.WriteString(s)
+		}
+		var said []string
+		for k := where[i].start; k < where[i].end; k++ {
+			said = append(said, lineBreaks.Replace(show.Clean(t.Messages[k])))
+		}
+		if strings.Join(said, "\n\n") != whole {
+			continue
 		}
 		for k := where[i].start; k < where[i].end; k++ {
-			mark(k)
-			put(lineBreaks.Replace(show.Clean(t.Messages[k])))
+			if nt := before[k]; nt != nil {
+				put(nt.text, nt)
+			}
+			put(said[k-where[i].start], nil)
+			if nt := after[k]; nt != nil {
+				put(nt.text, nt)
+			}
 		}
-		mark(where[i].end)
-		texts[i] = b.String()
+		texts[i], pieces[i], placed[i] = b.String(), parts, here
 	}
 	var edited []Edited
 	for _, p := range order {
 		edited = append(edited, Edited{p, turnsOf[p]})
 	}
-	return texts, pieces, edited
+	return texts, pieces, placed, edited
 }
 
 type window struct {
@@ -366,9 +411,21 @@ func Build(t agent.Transcript, opt Options) Packet {
 	if m != nil {
 		p.Words = m.words
 	}
-	note, paths := notes(t, opt.Steps, m)
-	texts, pieces, edited := layout(t, note, paths)
+	texts, pieces, placed, edited := layout(t, notes(t, opt.Steps, m))
 	p.Edited = edited
+	matches := func(i int, text string) []string {
+		words := m.in(text)
+		for _, nt := range placed[i] {
+			if strings.Contains(text, nt.text) {
+				for _, w := range nt.words {
+					if !slices.Contains(words, w) {
+						words = append(words, w)
+					}
+				}
+			}
+		}
+		return words
+	}
 	limited := opt.MaxBytes > 0
 	budget, held := opt.MaxBytes, 0
 	floor := min(shortest, opt.MaxBytes)
@@ -401,26 +458,13 @@ func Build(t agent.Transcript, opt Options) Packet {
 		}
 		return Turn{Number: i + 1, Role: t.Turns[i].Role, Text: text, Cut: shortened, kept: strings.Join(kept, "\n")}
 	}
-	add := func(i int, w window) bool {
-		if i < 0 || i >= n {
-			return true
-		}
-		if w.part < 0 && len(sel[i]) > 0 || slices.ContainsFunc(sel[i], func(o window) bool { return o.part == w.part }) {
-			return true
-		}
-		size := region(i, w.part)
-		if limited {
-			w.limit = min(w.limit, budget-held)
-			if w.limit < min(floor, size.end-size.start) || w.limit <= 0 {
-				return false
-			}
-		}
+	try := func(i int, windows []window, strict bool) bool {
 		before, cost := sel[i], len(chosen[i].Text)
-		sel[i] = append(slices.Clip(before), w)
+		sel[i] = windows
 		turn := render(i)
-		if over := len(turn.Text) - cost - (budget - held); limited && len(before) > 0 && over > 0 {
-			sel[i][len(sel[i])-1].limit -= over
-			if turn = render(i); len(turn.Text)-cost > budget-held {
+		if last := len(windows) - 1; limited && strict && len(turn.Text)-cost > budget-held {
+			windows[last].limit -= len(turn.Text) - cost - (budget - held)
+			if turn = render(i); windows[last].limit <= 0 || len(turn.Text)-cost > budget-held {
 				sel[i] = before
 				return false
 			}
@@ -431,6 +475,31 @@ func Build(t agent.Transcript, opt Options) Packet {
 		chosen[i] = turn
 		budget -= len(turn.Text) - cost
 		return true
+	}
+	add := func(i int, w window) bool {
+		if i < 0 || i >= n {
+			return true
+		}
+		if !limited {
+			w.part = -1
+		}
+		same := slices.IndexFunc(sel[i], func(o window) bool { return o.part == w.part })
+		if w.part < 0 && len(sel[i]) > 0 || same >= 0 && (w.how != keepMatch || sel[i][same].how == keepMatch) {
+			return true
+		}
+		size := region(i, w.part)
+		if limited {
+			w.limit = min(w.limit, budget-held)
+			if w.limit < min(floor, size.end-size.start) || w.limit <= 0 {
+				return false
+			}
+		}
+		if same >= 0 {
+			windows := slices.Delete(slices.Clone(sel[i]), same, same+1)
+			w.limit = max(w.limit, sel[i][same].limit)
+			return try(i, append(windows, w), true)
+		}
+		return try(i, append(slices.Clone(sel[i]), w), len(sel[i]) > 0)
 	}
 	regrow := func(most int) {
 		for _, i := range picked {
@@ -467,7 +536,7 @@ func Build(t agent.Transcript, opt Options) Packet {
 	matching := map[int]bool{}
 	for i := range texts {
 		for k, s := range pieces[i] {
-			if words := m.in(texts[i][s.start:s.end]); len(words) > 0 {
+			if words := matches(i, texts[i][s.start:s.end]); len(words) > 0 {
 				units = append(units, unit{i, k, len(words)})
 				matching[i] = true
 			}
@@ -532,7 +601,7 @@ func Build(t agent.Transcript, opt Options) Packet {
 	p.MatchesLeft = p.Matching
 	for _, i := range slices.Sorted(maps.Keys(chosen)) {
 		turn := chosen[i]
-		turn.Matches = m.in(turn.kept)
+		turn.Matches = matches(i, turn.kept)
 		if len(turn.Matches) > 0 {
 			p.MatchesLeft--
 		}
