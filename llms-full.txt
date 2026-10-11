@@ -39,14 +39,14 @@ superfind: find a past AI coding session and resume it. It reads Claude Code, Co
                           resume the newest session from this folder (after shell setup);
                           without the shell setup, or in a script, print its title and the
                           command that resumes it
-  superfind search WORDS [--json]
+  superfind search WORDS [--json] [--limit N]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
                           is:agent shows sessions another program started, and in:here,
                           branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
                           and last activity
-  superfind ask WORDS [--json]
+  superfind ask WORDS [--json] [--limit N]
                           print the sessions that best fit what you describe, even in other words;
                           takes the same filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
@@ -64,6 +64,10 @@ superfind: find a past AI coding session and resume it. It reads Claude Code, Co
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
+
+search --json and ask --json print JSON Lines: one object per session, one per line, best
+first. Not an array: jq -r .id prints every id, --limit 1 keeps the first, and jq -s makes
+an array.
 
 Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cancelled;
 2 a usage mistake, or an id that matches more than one session; 130 interrupted.
@@ -125,10 +129,11 @@ know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any se
 ### superfind help search
 
 ```text
-superfind search WORDS [--json]
+superfind search WORDS [--json] [--limit N]
 
 Print the sessions whose title, project, branch, or conversation contains every word, titles
-that match first. With no words, print every session, newest first. Sessions that another
+that match first. With no words, print every session: the ones from this folder or a folder
+that holds it first, then newest first, and very short ones last. Sessions that another
 program started, such as codex exec, claude -p, or another Claude Code session, are left out
 unless you ask for them with is:agent.
 
@@ -143,27 +148,35 @@ unless you ask for them with is:agent.
                   date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
   before:DAY      only sessions last active before that day; after:2026-10-09
                   before:2026-10-10 is October 9
-  --json          print one JSON object per session instead, including the ones another
-                  program started, each with its kind and the passage that matched
+  --json          print one JSON object per session, each on its own line (JSON Lines, not
+                  an array), including the ones another program started, each with its kind
+                  and the passage that matched
+  --limit N       print only the first N sessions (default: all)
 
 Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
 different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
-its title, and the line the picker shows. To search for a word that starts with --, put --
+its title, and the line the picker shows. To search for a word that starts with -, put --
 before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
+
+  superfind search --json --limit 1 retry | jq -r .id   the best match's id
+  superfind search --json retry | jq -s 'map(.title)'   every match, as one array
+  superfind search --json retry | wc -l                 how many match (jq length counts
+                                                        each object's fields instead)
 ```
 
 ### superfind help ask
 
 ```text
-superfind ask WORDS [--json]
+superfind ask WORDS [--json] [--limit N]
 
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
 without one. Takes the same filters as search, such as agent:codex or in:here, and prints
 the same fields.
-With --json, it prints one JSON object per session, as search --json does.
+With --json, it prints one JSON object per line, as search --json does. --limit N prints
+only the first N sessions.
 ```
 
 ### superfind help preview

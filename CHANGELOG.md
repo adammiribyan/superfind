@@ -6,6 +6,8 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Added
 
+- `search` and `ask` take `--limit N`, or `--limit=N`, to print only the first N sessions, with or without `--json`.
+- `superfind help search` ends with examples for `jq`: the best match's id, every match as one array, and how many match.
 - `llms.txt` and `llms-full.txt` at the repo root describe superfind's install, commands, JSON fields, and exit codes for AI assistants and agents. `llms-full.txt` is generated from `llms.txt`, the help, and real output, and a test fails when it falls out of date.
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
 - fish support: `superfind init fish | source` in `~/.config/fish/config.fish` sets up the same `superfind` and `sfd` commands, `superfind last`, and Ctrl-X c binding as zsh and bash, and `install.sh` adds that line for fish users. It needs fish 3.1 or later. Before fish 4.0, the resume command doesn't land in your history.
@@ -14,6 +16,9 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 
 ### Changed
 
+- `search` and `ask` reject an option that starts with one dash, such as `-n 5`, and exit 2. They used to search for it as a word, so `-n 5` usually found nothing. To search for such a word, put `--` first.
+- `superfind --help` and `superfind help search` say that `--json` prints JSON Lines, one object per line rather than one array, and how to get the first result or one array with `jq`.
+- `superfind help search` says how sessions are ordered with no words: the ones from this folder or a folder that holds it first, then newest first, and very short ones last. It used to say newest first.
 - `install.sh` builds from source only when it runs from a superfind clone. Anywhere else, including piped to `sh`, it downloads a release.
 - The index is rebuilt once after upgrading, to record how each session ended.
 - A Claude Code session that ends on a command answered on your machine, such as `/compact`, now counts as ending where it was before that command, for both labels.

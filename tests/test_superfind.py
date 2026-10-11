@@ -694,6 +694,42 @@ class SuperfindBehavior(unittest.TestCase):
                                      "resume": self.superfind("command", str(path)).rstrip("\n")})
         self.assertEqual(ANSI.sub("", result.stdout), f"Resuming Fix\n{folder}|--resume a1", result.stderr)
 
+    def test_a_short_option_is_rejected_instead_of_searched_for(self):
+        self.session("a1", user("fix the build"), tool("Bash"), claude("Fixed."), title="Build fix")
+        self.superfind("index")
+        for command in ("search", "ask"):
+            for flag in ("-n", "-j", "-flaky build"):
+                short = self.run_superfind(command, "--json", flag, "1")
+                self.assertEqual((short.returncode, short.stdout, short.stderr), (
+                    2, "", f"superfind {command}: there is no {flag} option. To search for it, put -- first: "
+                           f"superfind {command} -- {flag}\n"), (command, flag))
+        self.assertEqual(self.titles("--", "-build"), ["Build fix"])
+        for flag in ("--limit", "-n"):
+            refused = self.run_superfind("last", flag, "1")
+            self.assertEqual((refused.returncode, refused.stdout, refused.stderr),
+                             (2, "", f"superfind last: there is no {flag} option. See superfind help last.\n"), flag)
+
+    def test_limit_keeps_the_first_sessions(self):
+        for n, word in enumerate(("cache", "deploy", "lint")):
+            self.session(f"a{n}", user(f"fix the build {word}"), tool("Bash"), claude("Fixed."), title=f"Build {word}")
+        self.superfind("index")
+        everything = self.titles("build")
+        self.assertEqual(len(everything), 3)
+        self.assertEqual(self.titles("build", "--limit", "2"), everything[:2])
+        first = self.superfind("search", "--json", "--limit=1", "build").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in first], everything[:1])
+        listed = self.superfind("ask", "--limit", "1", "--json").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in listed], ["Build lint"])
+        self.logging_claude(reply="[2, 0, 1]")
+        self.assertEqual([r.split("\t")[4] for r in self.superfind("ask", "--limit", "2", "which", "build").splitlines()],
+                         ["Build cache", "Build lint"])
+        ranked = self.superfind("ask", "--json", "--limit", "2", "which", "build").splitlines()
+        self.assertEqual([json.loads(r)["title"] for r in ranked], ["Build cache", "Build lint"])
+        for bad in ("0", "two", "-h", "99999999999999999999", None):
+            result = self.run_superfind("search", "build", *(["--limit", bad] if bad else ["--limit"]))
+            self.assertEqual((result.returncode, result.stdout, result.stderr),
+                             (2, "", "superfind search: --limit needs a number of sessions, like --limit 5.\n"), bad)
+
     def test_shell_setup_calls_superfind_by_its_full_path(self):
         for shell in ("zsh", "bash"):
             self.assertIn(f"    {Path(SUPERFIND).resolve()} \"$@\"", self.superfind("init", shell))
