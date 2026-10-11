@@ -510,8 +510,8 @@ func resumeLast(r session.Row) {
 		fmt.Fprintln(stderr, "superfind last: "+title+" is open in another Ghostty tab; switched to it.")
 		return
 	case askFirst:
-		if !confirmed(tty, title+" is open in another window. Enter resumes a copy; Esc cancels.") {
-			exit(1)
+		if code := answer(tty, title+" is open in another window. Enter resumes a copy; Esc cancels."); code != 0 {
+			exit(code)
 		}
 	case sayWhereItIs:
 		fail("superfind last: " + title + " is already open " + openWhere(*r.Open) + ". superfind last doesn't start a second copy.")
@@ -530,17 +530,34 @@ func terminal() *os.File {
 	return tty
 }
 
-func confirmed(tty *os.File, question string) bool {
+func answer(tty *os.File, question string) int {
 	fmt.Fprint(tty, question+" ")
 	defer fmt.Fprintln(tty)
 	state, err := term.MakeRaw(tty.Fd())
 	if err != nil {
-		return false
+		return 1
 	}
 	defer term.Restore(tty.Fd(), state)
-	key := make([]byte, 64)
-	n, _ := tty.Read(key)
-	return string(key[:n]) == "\r" || string(key[:n]) == "\n"
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	keys := make(chan string, 1)
+	go func() {
+		key := make([]byte, 64)
+		n, _ := tty.Read(key)
+		keys <- string(key[:n])
+	}()
+	select {
+	case key := <-keys:
+		if key == "\r" || key == "\n" {
+			return 0
+		}
+	case sig := <-signals:
+		if sig == os.Interrupt {
+			return 130
+		}
+	}
+	return 1
 }
 
 func openWhere(o open.State) string {

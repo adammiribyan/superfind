@@ -1403,6 +1403,14 @@ esac
         return int(Path(f"{self.out}.code").read_text()), Path(f"{self.out}.stdout").read_text()
 
     @staticmethod
+    def read_until_closed(terminal):
+        try:
+            while os.read(terminal, 4096):
+                pass
+        except OSError:
+            pass
+
+    @staticmethod
     def drain(terminal):
         try:
             while os.read(terminal, 4096):
@@ -1594,6 +1602,31 @@ esac
                     self.assertTrue(command.endswith(f"claude --resume {uid(1)}"), command)
                 else:
                     self.assertEqual(out, "")
+
+    def test_a_signal_while_last_asks_first_gives_the_terminal_back_as_it_was(self):
+        self.in_a_ghostty_tab()
+        env = self.env()
+        subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
+        for sig, want in ((signal.SIGTERM, 1), (signal.SIGINT, 130), (signal.SIGHUP, 1)):
+            with self.subTest(signal=sig.name):
+                terminal, follower = os.openpty()
+                self.addCleanup(os.close, terminal)
+                self.addCleanup(os.close, follower)
+                last = subprocess.Popen([str(SUPERFIND), "last"], env=env, cwd="/tmp", stdin=follower, stdout=subprocess.DEVNULL,
+                                        stderr=follower, start_new_session=True,
+                                        preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
+                self.addCleanup(last.wait)
+                screen, deadline = b"", time.time() + 5
+                while time.time() < deadline and b"Esc cancels." not in screen:
+                    if select.select([terminal], [], [], 0.1)[0]:
+                        screen += os.read(terminal, 4096)
+                self.assertIn(b"Esc cancels.", screen)
+                time.sleep(0.2)
+                threading.Thread(target=self.read_until_closed, args=(terminal,), daemon=True).start()
+                last.send_signal(sig)
+                self.assertEqual(last.wait(timeout=5), want)
+                lflag = termios.tcgetattr(terminal)[3]
+                self.assertEqual(lflag & (termios.ECHO | termios.ICANON), termios.ECHO | termios.ICANON)
 
     def test_last_without_a_terminal_leaves_ghostty_alone_even_when_a_tab_has_the_session(self):
         tty, other = self.in_a_ghostty_tab()
