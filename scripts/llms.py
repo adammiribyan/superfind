@@ -77,8 +77,9 @@ OUTCOME_FIELDS = {
     "pr": "The pull request that carried the commit, or that the session opened, or `0` when none is known.",
     "subject": "The commit's subject from git. For a pull request, the subject it landed with, or empty.",
     "repo": "The repository's top folder.",
-    "stage": "How far it got. A commit is `dangling` (committed, but no branch, tag, remote, stash, or checkout holds it "
-             "any more; while git's reflog keeps it, `git branch NAME HASH` brings it back), "
+    "stage": "How far it got. A commit is `dangling` (committed, but no ref, such as a branch, tag, remote branch, or "
+             "stash, and no worktree's checkout reaches it any more; while git's reflog keeps it, "
+             "`git branch NAME HASH` brings it back), "
              "`committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
              "directly or in a squash), or `reverted` (merged, then a later commit on the default branch reverts it). "
              "A pull request is `opened`, `merged`, or `reverted`.",
