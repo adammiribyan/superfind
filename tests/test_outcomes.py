@@ -298,6 +298,43 @@ class Outcomes(Blame):
                        title="Refunds")
         self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "merged")])
 
+    def test_a_commit_with_the_same_subject_made_later_on_main_is_not_a_copy(self):
+        t = self.now - 7200
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "refunds")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.git("checkout", "-q", "main")
+        self.commit("feat: refund a charge in full", {"receipt.go": "other\n"}, t + 600)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'),
+                       claude_result(t + 1, "b1", f"[refunds {made[:7]}] feat: refund a charge in full"), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+
+    def test_a_commit_only_the_reflog_keeps_beats_a_later_one_on_main_with_its_subject(self):
+        t = self.now - 7200
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "refunds")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "refunds")
+        self.commit("feat: refund a charge in full", {"receipt.go": "other\n"}, t + 900)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+
+    def test_two_commits_with_one_subject_squashed_together_stay_two(self):
+        t = self.now - 7200
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "refunds")
+        first = self.commit("fix: refund only settled charges", {"refund.go": "1\n"}, t)
+        second = self.commit("fix: refund only settled charges", {"refund.go": "2\n"}, t + 300)
+        self.git("checkout", "-q", "main")
+        squash = self.commit("fix: settled refunds (#7)", {"refund.go": "2\n"}, t + 3600,
+                             body="* fix: refund only settled charges\n\n* fix: refund only settled charges")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qam "fix: refund only settled charges"'),
+                       claude_result(t + 1, "b1", f"[refunds {first[:7]}] fix: refund only settled charges"),
+                       claude_tool(t + 300, "b2", "Bash", command='git commit -qam "fix: refund only settled charges"'),
+                       claude_result(t + 301, "b2", f"[refunds {second[:7]}] fix: refund only settled charges"), title="Settled")
+        self.assertEqual(self.outcomes(1, "commit", "landed"), [(first, squash), (second, squash)])
+
     def test_a_commit_made_after_cd_lands_on_that_folder_s_repository(self):
         t = self.now - 3600
         made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)

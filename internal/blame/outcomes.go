@@ -47,10 +47,12 @@ type Outcome struct {
 	LandedAt   string `json:"landed_at"`
 	RevertedBy string `json:"reverted_by"`
 	at         float64
+	authored   float64
 }
 
 const (
 	matchBefore  = 5 * 60
+	closeEnough  = 2 * 60
 	matchAfter   = 30 * 60
 	logSlack     = 86400
 	undatedSlack = 30 * 86400
@@ -171,7 +173,8 @@ func same(a, b Outcome) bool {
 	if a.Repo != b.Repo || plain(a.Subject) != plain(b.Subject) {
 		return false
 	}
-	return a.Commit == b.Commit && a.Landed == b.Landed || a.Landed != "" && a.Landed == b.Landed
+	copies := a.Commit == "" || b.Commit == "" || a.authored == b.authored
+	return a.Commit == b.Commit && a.Landed == b.Landed || a.Landed != "" && a.Landed == b.Landed && copies
 }
 
 const folderArg = `("[^"]*"|'[^']*'|[^\s;&|)]+)`
@@ -283,10 +286,11 @@ func (rp *repo) outcome(c agent.Commit) (Outcome, bool) {
 	}
 	messages := messageLines(c.Command, 0)
 	for {
-		if e, ok := rp.byMessage(c.At, messages); ok {
-			return rp.judge(e), true
-		}
-		if !rp.dig() {
+		e, ok := rp.byMessage(c.At, messages)
+		if ok && (c.At == 0 || distance(e, c.At) <= closeEnough) || !rp.dig() {
+			if ok {
+				return rp.judge(e), true
+			}
 			break
 		}
 	}
@@ -383,7 +387,7 @@ func (rp *repo) squash(after float64, carries func(string) bool) (entry, string,
 }
 
 func (rp *repo) judge(e entry) Outcome {
-	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed}
+	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At}
 	if rp.onDefault[e.SHA] {
 		return rp.reverted(rp.landedAs(o, e))
 	}
@@ -403,7 +407,7 @@ func (rp *repo) copyOf(e entry, on map[string]bool) (entry, bool) {
 	p := plain(e.Subject)
 	var found []entry
 	for _, c := range rp.log {
-		if on[c.SHA] && len(p) >= shortestSubject && plain(c.Subject) == p && c.At >= e.At-matchBefore && c.At <= e.At+matchAfter && c.landed >= e.landed {
+		if on[c.SHA] && len(p) >= shortestSubject && plain(c.Subject) == p && c.At == e.At && c.landed >= e.landed {
 			found = append(found, c)
 		}
 	}
