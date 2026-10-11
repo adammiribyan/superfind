@@ -33,14 +33,20 @@ superfind: find a past AI coding session and resume it. It reads Claude Code, Co
                           or  eval "$(superfind init bash)"  to ~/.bashrc
   superfind pick          open the picker; prints the chosen session's title, then the command
                           that resumes it
+  superfind last [FILTERS] [--json]
+                          resume the newest session from this folder (after shell setup);
+                          without the shell setup, or in a script, print its title and the
+                          command that resumes it
   superfind search WORDS [--json]
                           print sessions whose title or conversation contains every word;
                           is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent, and
-                          is:agent shows sessions another program started
+                          agent:claude, agent:codex, and agent:grok by the agent,
+                          is:agent shows sessions another program started, and in:here,
+                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
+                          and last activity
   superfind ask WORDS [--json]
                           print the sessions that best fit what you describe, even in other words;
-                          takes the same is: and agent: filters
+                          takes the same filters
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           print where a session left off, or its recent conversation
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
@@ -84,6 +90,32 @@ superfind pick
 Open the picker full screen. When you choose a session, print its title on the first line and
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
+
+Type filters in the search box to narrow the list, such as in:here, branch:main,
+after:yesterday, or agent:codex; superfind help search lists them all.
+```
+
+### superfind help last
+
+```text
+superfind last [FILTERS] [--json]
+
+Resume the newest session started in this folder or in a folder that holds it, with no keys to
+press. Sessions started in a folder inside this one don't count. Your home folder and / count
+only for sessions started right there.
+Very short sessions count only when nothing else fits, and sessions another program started
+are left out unless you add is:agent.
+
+With the shell setup from superfind init, when its input and output are a terminal and no
+option starting with - is given, superfind last cds into the session's folder and resumes it,
+as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
+it prints the session's title on the first line and the command that resumes it on the second,
+as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
+know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
+
+  agent:codex     only Codex sessions; every search filter works, such as branch:main or
+                  after:yesterday
+  --json          print the session as one JSON object, as search --json does
 ```
 
 ### superfind help search
@@ -99,12 +131,23 @@ unless you ask for them with is:agent.
   is:waiting      only sessions waiting on you; is:unfinished works the same way
   is:agent        only sessions another program started
   agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
+  in:here         only sessions from this folder or a folder that holds it, not from folders
+                  inside it; your home folder and / count only for sessions started right there
+  branch:main     only sessions that ended on that branch, in any letter case; several
+                  branch: filters mean any of them
+  after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
+                  date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
+  before:DAY      only sessions last active before that day; after:2026-10-09
+                  before:2026-10-10 is October 9
   --json          print one JSON object per session instead, including the ones another
                   program started, each with its kind and the passage that matched
 
+Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
+different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
+
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with --, put --
-before it.
+before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
 ```
 
 ### superfind help ask
@@ -114,7 +157,8 @@ superfind ask WORDS [--json]
 
 Print the sessions that best fit what you describe, even when they used other words, best
 first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
-without one. Takes the same is: and agent: filters as search, and prints the same fields.
+without one. Takes the same filters as search, such as agent:codex or in:here, and prints
+the same fields.
 With --json, it prints one JSON object per session, as search --json does.
 ```
 
