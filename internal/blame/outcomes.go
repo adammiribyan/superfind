@@ -1,6 +1,7 @@
 package blame
 
 import (
+	"cmp"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -49,7 +50,7 @@ type Outcome struct {
 }
 
 const (
-	matchBefore  = 60
+	matchBefore  = 5 * 60
 	matchAfter   = 30 * 60
 	logSlack     = 86400
 	undatedSlack = 30 * 86400
@@ -114,13 +115,14 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 		}
 	}
 	for i, c := range trail.Commits {
-		if where[i] = topOf(folderOf(c.Command, r.Session.Cwd)); where[i] != "" {
+		where[i] = cmp.Or(topOf(agent.SurvivingDir(folderOf(c.Command, r.Session.Cwd))), topOf(agent.SurvivingDir(r.Session.Cwd)))
+		if where[i] != "" {
 			earliest(where[i], c.At)
 		}
 	}
 	home := ""
 	if len(trail.PRs) > 0 {
-		if home = topOf(r.Session.Cwd); home != "" {
+		if home = topOf(agent.SurvivingDir(r.Session.Cwd)); home != "" {
 			earliest(home, 0)
 		}
 	}
@@ -214,7 +216,7 @@ func load(top string, since float64) *repo {
 	for _, sha := range strings.Fields(remote) {
 		rp.onRemote[sha] = true
 	}
-	out, _ := git(top, "log", "--all", bound, "--format="+logFormat+"%x1e")
+	out, _ := git(top, "log", "--all", "--reflog", bound, "--format="+logFormat+"%x1e")
 	for _, raw := range strings.Split(out, "\x1e") {
 		if e, ok := parseEntry(strings.TrimLeft(raw, "\n")); ok {
 			rp.log = append(rp.log, e)
@@ -268,21 +270,35 @@ func (rp *repo) bySHA(sha string) (entry, bool) {
 }
 
 func (rp *repo) byMessage(at float64, messages []string) (entry, bool) {
-	var best entry
-	found := false
+	var near []entry
 	for _, e := range rp.log {
-		if !slices.Contains(messages, bare(e.Subject)) {
-			continue
-		}
-		if at > 0 && (e.At < at-matchBefore || e.At > at+matchAfter) {
-			continue
-		}
-		closer := at > 0 && abs(e.At-at) < abs(best.At-at)
-		if !found || closer || (at == 0 && e.At > best.At) {
-			best, found = e, true
+		if slices.Contains(messages, plain(e.Subject)) && (at == 0 || (e.At >= at-matchBefore && e.At <= at+matchAfter)) {
+			near = append(near, e)
 		}
 	}
-	return best, found
+	if len(near) == 0 {
+		return entry{}, false
+	}
+	return slices.MinFunc(near, func(a, b entry) int {
+		return cmp.Or(cmp.Compare(distance(a, at), distance(b, at)), cmp.Compare(rp.reach(b), rp.reach(a)), cmp.Compare(b.landed, a.landed))
+	}), true
+}
+
+func distance(e entry, at float64) float64 {
+	if at == 0 {
+		return -e.At
+	}
+	return abs(e.At - at)
+}
+
+func (rp *repo) reach(e entry) int {
+	switch {
+	case rp.onDefault[e.SHA]:
+		return 2
+	case rp.onRemote[e.SHA]:
+		return 1
+	}
+	return 0
 }
 
 func abs(f float64) float64 { return max(f, -f) }

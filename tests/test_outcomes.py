@@ -64,6 +64,7 @@ class Outcomes(Blame):
         squash = self.commit("feat: refunds (#7)", {"refund.go": "settled\n"}, t + 3600,
                              body="* feat: refund a charge in full\n\n* fix: refund only settled charges")
         self.git("branch", "-q", "-D", "kept")
+        self.git("reflog", "expire", "--expire=now", "--all")
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
         keys = ("kind", "commit", "pr", "subject", "stage", "landed")
         self.assertEqual(self.outcomes(1, *keys), [("commit", "", 7, "feat: refund a charge in full", "merged", squash)])
@@ -72,6 +73,27 @@ class Outcomes(Blame):
                        claude_result(t + 61, "b1", f"[refunds {kept[:7]}] fix: refund only settled charges"), title="Settled")
         self.assertEqual(self.outcomes(2, *keys), [("commit", kept, 7, "fix: refund only settled charges", "merged", squash)])
         self.assertRegex(self.text(2)[0], rf"^made {kept[:7]} fix: refund only settled charges · squashed into main as {squash[:7]} \(#7\) \S+ ago$")
+
+    def test_a_commit_whose_branch_was_squashed_and_deleted_keeps_its_own_hash(self):
+        t = self.now - 7200
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "refunds")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "refunds")
+        squash = self.commit("feat: refund a charge in full (#12)", {"refund.go": "refund\n"}, t + 600)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
+        keys = ("commit", "pr", "stage", "landed")
+        self.assertEqual(self.outcomes(1, *keys), [(made, 12, "merged", squash)])
+
+    def test_a_commit_made_in_a_folder_since_deleted_is_found_in_the_repository_around_it(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        gone = self.work / ".claude" / "worktrees" / "refunds"
+        self.session(uid(1), user("refunds", cwd=str(gone)),
+                     claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), claude("Done."))
+        self.assertEqual(self.outcomes(1, "commit", "repo", "stage"), [(made, str(self.work), "merged")])
 
     def test_a_pull_request_the_session_opened_is_one_entry_merged_or_opened(self):
         t = self.now - 7200
@@ -111,6 +133,25 @@ class Outcomes(Blame):
         self.commit("fix: retry a charge only once", {"charge.go": "2\n"}, t + 7200)
         self.claude_at(1, claude_tool(t - 5, "b1", "Bash", command='git commit -qam "fix: retry a charge only once"'), title="Retry")
         self.assertEqual(self.outcomes(1, "commit", "stage"), [(near, "merged")])
+
+    def test_of_two_copies_of_a_commit_the_one_on_main_counts(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t)
+        self.git("checkout", "-q", "-b", "scratch")
+        self.git("commit", "-q", "--amend", "--no-edit", at=t + 900)
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "scratch")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "merged")])
+
+    def test_a_commit_made_in_a_clone_since_deleted_is_found_in_the_session_s_repository(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t - 200)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command=f'cd {self.home}/gone/clone && git commit -qm "feat: refund a charge in full" && git push'),
+                       title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "merged")])
 
     def test_a_commit_made_after_cd_lands_on_that_folder_s_repository(self):
         t = self.now - 3600
