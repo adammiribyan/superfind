@@ -2,7 +2,7 @@
 
 > superfind is a session picker for coding agents. It finds and resumes past Claude Code, Codex, and Grok sessions by keyword or by description, on macOS and Linux, from an interactive picker or from scripts and agents.
 
-Install with `curl -fsSL https://superfind.dev/install | sh`, or `brew install --cask adammiribyan/tap/superfind`, or `go install github.com/adammiribyan/superfind@latest`. The curl script sets up your shell. With Homebrew or Go, add `eval "$(superfind init zsh)"` to `~/.zshrc`, or `eval "$(superfind init bash)"` to `~/.bashrc` (`~/.bash_profile` on macOS). Resuming a session needs that agent's CLI installed.
+Install with `curl -fsSL https://superfind.dev/install | sh`, or `brew install --cask adammiribyan/tap/superfind`, or `go install github.com/adammiribyan/superfind@latest`. The curl script sets up your shell. With Homebrew or Go, add `eval "$(superfind init zsh)"` to `~/.zshrc`, or `eval "$(superfind init bash)"` to `~/.bashrc` (`~/.bash_profile` on macOS), or `superfind init fish | source` to `~/.config/fish/config.fish`. Resuming a session needs that agent's CLI installed.
 
 In a shell set up with `superfind init`, `superfind`, `sfd`, or Ctrl-X then c opens the picker. Type to search, then press Enter. superfind moves to the session's folder and runs the agent's own resume command, such as `claude --resume <id>` or `codex resume <id>`. Ctrl-R searches by description.
 
