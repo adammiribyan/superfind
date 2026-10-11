@@ -105,9 +105,10 @@ Open the picker full screen. When you choose a session, print its title on the f
 the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
 The shell setup from superfind init runs that command for you.
 
-  --run           run the command instead of printing it, for a terminal with no shell to hand
-                  it to, such as one a desktop keybinding opens. A session an agent already has
-                  open is refused, as superfind last does.
+  --run           run the command in place of superfind instead of printing it, for a terminal
+                  with no shell to hand it to, such as one a desktop keybinding opens. The exit
+                  status is then the agent's. A session an agent already has open is refused,
+                  as superfind last does.
 
 Type filters in the search box to narrow the list, such as in:here, branch:main,
 after:yesterday, or agent:codex; superfind help search lists them all.
@@ -471,10 +472,16 @@ func refuseOpen(command string, r session.Row) {
 }
 
 func resumeHere(r session.Row) {
+	r.Open = nil
+	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
+		r.Open = &state
+	}
 	refuseOpen("pick --run", r)
 	command := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID)
 	fmt.Fprintln(stdout, "Resuming "+render.Bold+handoffTitle(r)+render.Reset)
-	output.Flush()
+	if err := output.Flush(); err != nil {
+		fail("superfind pick: couldn't write the output: " + err.Error())
+	}
 	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
 	fail("superfind pick: couldn't run " + command + ": " + err.Error())
 }

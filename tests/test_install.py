@@ -62,7 +62,17 @@ class Installer(unittest.TestCase):
         path = self.omarchy("bindings.lua", "")
         result = self.install("bash")
         self.assertEqual(path.read_text(), "")
-        self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: ", result.stdout)
+        self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: "
+                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui \'{self.home}/.local/bin/superfind\' pick --run")\n',
+                      result.stdout)
+
+    def test_on_omarchy_a_home_with_a_quote_is_told_what_to_bind(self):
+        self.home = self.home / "Adam's"
+        path = self.omarchy("bindings.lua", "")
+        result = self.install("bash")
+        self.assertEqual(path.read_text(), "")
+        self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, bind that key in {path} to run "
+                      f"{self.home}/.local/bin/superfind pick --run through omarchy-launch-tui\n", result.stdout)
 
     def test_on_omarchy_ghostty_gets_no_super_keybind(self):
         self.omarchy("bindings.lua")

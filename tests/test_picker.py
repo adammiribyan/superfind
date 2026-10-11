@@ -153,6 +153,19 @@ class PickerBehavior(unittest.TestCase):
                          "superfind pick --run doesn't start a second copy.\n")
         self.assertFalse(Path(f"{self.out}.resumed").exists())
 
+    def test_run_checks_again_for_a_session_opened_while_the_picker_was_up(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.open_picker(pick="pick --run")
+        sessions = self.home / ".claude" / "sessions"
+        sessions.mkdir()
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": "mid", "cwd": "/tmp",
+                                                                 "startedAt": int(time.time() * 1000), "status": "idle"}))
+        self.keys("Down", "Enter")
+        self.assertEqual(self.result()[0], 1)
+        self.assertIn("doesn't start a second copy", Path(f"{self.out}.stderr").read_text())
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+
     def three_sessions(self):
         self.session("old", "Ledger migration", user("migrate the ledger tables to the new schema"), tool("Bash"),
                      claude("Migrated every ledger row and kept the history."))

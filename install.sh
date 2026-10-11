@@ -89,13 +89,19 @@ main() {
   if [ -d "$omarchy" ]; then
     hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
     launch="omarchy-launch-tui $bin/superfind pick --run"
+    case "$bin" in
+      *[\"\'\\\$\`]*) launch="" ;;
+      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' pick --run" ;;
+    esac
     if [ -f "$hypr/bindings.conf" ] && [ ! -f "$hypr/bindings.lua" ]; then
       bindings="$hypr/bindings.conf" chord='SUPER SHIFT CTRL, F,' binding="bindd = SUPER SHIFT CTRL, F, Superfind, exec, $launch"
     else
       bindings="$hypr/bindings.lua" chord='"SUPER + SHIFT + CTRL + F"' binding="o.bind(\"SUPER + SHIFT + CTRL + F\", \"Superfind\", \"$launch\")"
     fi
     case "$bin" in *[!A-Za-z0-9/._-]*) unsafe=1 ;; *) unsafe="" ;; esac
-    if grep -qF "$binding" "$bindings" 2>/dev/null; then
+    if [ -z "$launch" ]; then
+      echo "to open superfind with Super-Shift-Ctrl-F, bind that key in $bindings to run $bin/superfind pick --run through omarchy-launch-tui"
+    elif grep -qF "$binding" "$bindings" 2>/dev/null; then
       :
     elif [ -n "$unsafe" ] || [ ! -f "$bindings" ] || grep -qF "$chord" "$bindings"; then
       echo "to open superfind with Super-Shift-Ctrl-F, add this line to $bindings: $binding"
