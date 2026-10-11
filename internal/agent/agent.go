@@ -22,18 +22,20 @@ type Agent struct {
 	IDOf     func(path string) string
 	Names    func(home string) map[string]string
 	reader   func(path string) (reader, error)
+	trail    func(t *Trail) func(raw []byte) bool
+	parts    func(path string) []string
 }
 
 var Agents = []*Agent{
 	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "SUPERFIND_CLAUDE_DIRS",
 		glob: "projects/*/*.jsonl", resume: "claude --resume", IDOf: stem,
-		reader: func(string) (reader, error) { return newParser(), nil }},
+		reader: func(string) (reader, error) { return newParser(), nil }, trail: claudeTrail, parts: claudeParts},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
-		reader: newCodexReader},
+		reader: newCodexReader, trail: codexTrail},
 	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "SUPERFIND_GROK_DIRS",
 		glob: "sessions/*/*/chat_history.jsonl", sidecar: "summary.json", resume: "grok --resume", IDOf: grokID,
-		reader: newGrokReader},
+		reader: newGrokReader, trail: grokTrail},
 }
 
 func stem(path string) string { return strings.TrimSuffix(filepath.Base(path), ".jsonl") }

@@ -132,6 +132,22 @@ With a TypeSafe key, superfind marks sessions that need you. **waiting on you** 
 
 [Jev](https://docs.typesafe.ai) reads how each session ended: the last six turns, clipped, and whether the agent was mid-reply, mid-command, or interrupted. A label appears only when Jev is at least 85% sure. It disappears as soon as the session changes, and after two weeks away, since a session you haven't returned to in that long isn't really waiting. On 21 hand-labeled Claude Code sessions, 13 of the 15 labels shown were right, and 1 of the 14 sessions that needed a label got none. On 42 hand-labeled Codex and Grok sessions, all 3 labels shown were right, and all 3 sessions that needed a label got one. Treat labels as a hint. Labeling runs in the background when the picker opens and only reads recent sessions that changed, so opening never waits on it.
 
+## The session behind a commit
+
+Run `superfind blame` inside a git repository to find the session that wrote some code, then resume it.
+
+```sh
+superfind blame HEAD~3                   # the session that made a commit
+superfind blame internal/agent/codex.go  # the sessions that edited a file, newest first
+superfind blame main.go:120              # the session behind the commit that last changed line 120
+```
+
+For a commit, it lists the session that ran its `git commit`, then any that opened its pull request, named by a `(#N)` suffix or a "Merge pull request #N" subject. A squash merge whose message lists the commits it squashed, as GitHub's does, leads to the sessions that made those commits. When no session left a record of either, it says so, then lists the sessions that edited the commit's files in the three days before it. For a file, it lists the sessions that edited the file or made one of its last 30 commits. Each line's summary starts with what the session did, such as `made this commit`, `opened #19`, or `edited 2 of the commit's 5 files`, and `--json` puts it in `match`.
+
+It reads the commands and edits each agent recorded on this machine, so it misses a commit made by hand in a terminal or on another machine, and one whose message and hash the session never recorded. A session counts as making a commit when the output of its `git commit` showed that commit's hash, or when it ran `git commit` with that message, ignoring case and punctuation, from a folder in the repository or one that no longer exists. Grok records no times, so its edits count as recent whenever its session is.
+
+On the maintainer's machine, with hash evidence switched off, blame named the right session first for 485 of 505 commits from 10 repositories whose sessions printed the commit's hash (Claude Code, Codex, and 7 Grok commits), and a wrong one first for 6. It named the sessions behind all 21 squash merges on this repository's main branch. For 200 commits that teammates made on other machines, it named no session as the maker. For 63 of those it listed sessions that had edited the same files, and said that no session made the commit.
+
 ## What leaves your machine
 
 Asking sends the ranker your description and, for each session except very short ones (two prompts or fewer, under 150 words, and no tool calls), its title, project, age, last request, and one short passage: to TypeSafe with a key, or to Anthropic through Claude Code without one. If TypeSafe fails, asking says so instead of trying Anthropic. With a key, explanations also send your description and up to 120 short passages from each of the top five results to TypeSafe. Labeling sends the ending of each session that changed in the last two weeks (its last six turns, clipped, and how it stopped) to TypeSafe once, and again whenever it changes; older sessions, very short ones, and ones another program started are never sent, and a session active now waits until it goes quiet. Without a key nothing is labeled. Typing never sends anything; search runs locally.
@@ -158,6 +174,7 @@ superfind ask <words>        # print the sessions that best fit your description
 superfind preview <session>  # print where a session left off (--recent, --width N, --query Q)
 superfind show <session>     # print a session's conversation (--json, --tail N, --max-bytes N)
 superfind command <session>  # print the command that resumes a session
+superfind blame <commit>     # print the session that made a commit, or edited a file (--json)
 superfind pick               # open the picker, then print the chosen session's title and resume command
 superfind index              # build or refresh the index
 superfind label              # mark sessions waiting on you (needs a TypeSafe key)
@@ -165,7 +182,7 @@ superfind help <command>     # explain one command; --help works too
 superfind --version
 ```
 
-`search` and `ask` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and a one-line summary of the session, such as its label, age, project, and agent. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it, or the session's id, to `show`, `preview`, or `command`. For JSON instead, and for everything else scripts and agents need, see [Use from scripts and agents](#use-from-scripts-and-agents).
+`search`, `ask`, and `blame` print one tab-separated line per session, meant for scripts: the session, its folder, its id, the agent's home folder, its title, and a one-line summary of the session, such as its label, age, project, and agent. A session is that first field: a Claude Code or Codex transcript, or a Grok session's `chat_history.jsonl`. Pass it, or the session's id, to `show`, `preview`, or `command`. For JSON instead, and for everything else scripts and agents need, see [Use from scripts and agents](#use-from-scripts-and-agents).
 
 The index lives in `~/.cache/superfind/`, or `$XDG_CACHE_HOME/superfind/` when that is set, and only your account can read it. Each run re-reads only the sessions that changed, and the picker opens from the index while it refreshes in the background. The first run reads every session in parallel: about four seconds for 540 sessions and 1.6 GB of transcripts here, with a short "Indexing…" line while it works.
 
@@ -195,7 +212,7 @@ superfind command "$id"               # the command that resumes it
 The fields are described under [What `show` prints](#what-show-prints), which prints the same ones. Two more matter here:
 
 - `kind` is `agent` when another program started the session, and `interactive` otherwise.
-- `match` is the passage that holds your words, about ten words long, or empty when you gave no words or no passage holds them all. `ask` finds sessions by meaning, so its results often have an empty `match`.
+- `match` is the passage that holds your words, about ten words long, or empty when you gave no words or no passage holds them all. `ask` finds sessions by meaning, so its results often have an empty `match`. For `blame --json`, `match` says what the session did instead.
 
 ### Naming a session
 

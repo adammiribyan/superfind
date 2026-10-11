@@ -7,6 +7,7 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `curl -fsSL https://superfind.dev/install | sh` installs superfind without Go. It downloads the latest release for macOS or Linux on arm64 or amd64, checks it against the release's `checksums.txt`, installs it to `~/.local/bin`, and does the same setup as `install.sh`. A file that doesn't match its checksum installs nothing. `SUPERFIND_VERSION=0.10.0` installs that release instead of the latest.
+- `superfind blame <commit>` prints the session that made a commit, from any agent: the one that ran its `git commit`, then any that opened its pull request. A squash merge leads to the sessions that made the commits it squashed. `blame <file>` lists the sessions that edited a file or made one of its recent commits, and `blame <file>:<line>` blames the commit that last changed that line. Each line starts with what the session did, such as `made this commit` or `opened #19`, and `--json` puts it in `match`.
 
 ### Changed
 
