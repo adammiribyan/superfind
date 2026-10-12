@@ -1,14 +1,32 @@
-# Skills
+# Let your agent find past sessions
 
-`superfind/SKILL.md` teaches a coding agent to use superfind: when you ask "where did we fix the webhook retry last week?" or "continue my Codex session here", the agent searches your sessions, reads a handoff, and gives you the command that resumes one. It needs superfind installed and `jq`.
+Install the superfind skill, then ask your agent "where did we fix the webhook retry last week?" or "continue my Codex session here". It finds the session, reads a briefing, and gives you the resume command.
 
-Install it in your agent:
+You need `superfind` and `jq` installed.
 
-- Most agents, through [skills.sh](https://skills.sh): `npx skills add adammiribyan/superfind`. Add `-g` to install it for your user instead of this project.
-- Claude Code: `/plugin marketplace add adammiribyan/superfind`, then `/plugin install superfind@superfind`. Update with `claude plugin marketplace update superfind`, then `claude plugin update superfind@superfind`, or turn on auto-update for it under `/plugin` > Marketplaces.
-- Codex: `codex plugin marketplace add adammiribyan/superfind`, then `codex plugin add superfind@superfind`. Update with `codex plugin marketplace upgrade`.
-- Grok: `grok plugin install adammiribyan/superfind#plugins/superfind --trust`. Update with `grok plugin update superfind`.
-- Cursor: import `https://github.com/adammiribyan/superfind` as a team marketplace under Dashboard > Plugins & MCPs.
-- By hand: copy the `superfind` folder into your agent's skills folder, such as `~/.agents/skills/`.
+## Install
 
-The plugins install `plugins/superfind`, which holds a copy of `superfind/SKILL.md`, so Claude Code and Codex install three small files instead of the whole repository. `tests/test_skill.py` checks that the two copies match, and runs each recipe in the skill against fake sessions.
+For most agents, use [skills.sh](https://skills.sh):
+
+```sh
+npx skills add adammiribyan/superfind
+```
+
+Add `-g` to install for your user instead of the current project.
+
+To install as a plugin, choose your agent:
+
+| Agent | Install |
+| --- | --- |
+| Claude Code | Run `/plugin marketplace add adammiribyan/superfind`, then `/plugin install superfind@superfind` |
+| Codex | Run `codex plugin marketplace add adammiribyan/superfind`, then `codex plugin add superfind@superfind` |
+| Grok | Run `grok plugin install adammiribyan/superfind#plugins/superfind --trust` |
+| Cursor | Import `https://github.com/adammiribyan/superfind` under Dashboard > Plugins & MCPs |
+
+For a manual install, copy the [superfind folder](superfind) into your agent's skills folder, such as `~/.agents/skills/`.
+
+## Update a plugin
+
+- Claude Code: run `claude plugin marketplace update superfind`, then `claude plugin update superfind@superfind`. You can enable auto-update under `/plugin` > Marketplaces.
+- Codex: run `codex plugin marketplace upgrade`.
+- Grok: run `grok plugin update superfind`.

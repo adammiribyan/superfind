@@ -13,7 +13,7 @@ fetch() {
 }
 
 build() {
-  command -v go >/dev/null || { echo "go missing: install Go 1.26 or newer from https://go.dev/dl" >&2; exit 1; }
+  command -v go >/dev/null || { echo "Go is required to build from source. Install Go 1.26 or newer from https://go.dev/dl" >&2; exit 1; }
   (cd "$1" && go build -o bin/superfind .)
   binary="$1/bin/superfind"
 }
@@ -108,7 +108,7 @@ main() {
   echo "installed $bin/superfind ($installed)"
   receipt "$from" "$bin/superfind"
   if [ -n "$other" ] && [ "$other" != "$bin/superfind" ]; then
-    echo "note: another superfind is installed at $other"
+    echo "Another superfind is installed at $other. Check which copy your shell uses with: command -v superfind"
   fi
 
   omarchy=""
@@ -152,21 +152,21 @@ main() {
     *) shell="" rc="" ;;
   esac
   if [ -z "$shell" ]; then
-    echo "superfind sets up zsh, bash, and fish. To use it from one of them, add a line to that shell's startup file:"
+    echo "To resume sessions from zsh, bash, or fish, add the matching line to your shell's startup file:"
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init zsh)\"     # in ~/.zshrc"
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init bash)\"    # in ~/.bashrc, or ~/.bash_profile on macOS"
     echo "  \"\$HOME/.local/bin/superfind\" init fish | source      # in ~/.config/fish/config.fish"
-    echo "done: run $bin/superfind to see what it does"
+    echo "Installed. Run $bin/superfind pick --run to choose and resume a session."
     return
   fi
   if grep -Eq '^[^#]*superfind"? init' "$rc" 2>/dev/null; then
-    echo "$rc already sets up superfind; left it as it is"
+    echo "Shell setup already exists in $rc"
   else
     setup="eval \"\$(\"\$HOME/.local/bin/superfind\" init $shell)\""
     [ "$shell" = fish ] && setup="\"\$HOME/.local/bin/superfind\" init fish | source"
     mkdir -p "$(dirname "$rc")"
     printf '\n%s\n' "$setup" >> "$rc"
-    echo "added superfind to $rc"
+    echo "Added shell setup to $rc"
   fi
 
   ghostty_mac="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
@@ -175,7 +175,7 @@ main() {
     if [ -f "$ghostty_xdg" ] || [ ! -f "$ghostty_mac" ]; then ghostty="$ghostty_xdg"; else ghostty="$ghostty_mac"; fi
     keybind='keybind = super+shift+o=text:\x18c'
     if [ -n "$omarchy" ]; then
-      echo "skipped the Ghostty keybind: on Omarchy, superfind gets a Hyprland key instead"
+      echo "Use the Omarchy desktop shortcut in Ghostty."
     elif ! grep -qF "$keybind" "$ghostty" 2>/dev/null; then
       mkdir -p "$(dirname "$ghostty")"
       printf '\n%s\n' "$keybind" >> "$ghostty"
@@ -183,7 +183,7 @@ main() {
     fi
   fi
 
-  echo "done: open a new shell, then press Ctrl-X c or run superfind"
+  echo "Open a new terminal tab, then run superfind or press Ctrl-X then c."
 }
 
 main "$@"

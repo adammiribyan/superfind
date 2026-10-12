@@ -189,9 +189,8 @@ def build():
         names = commands(home)
         parts = [
             overview(),
-            "This file is the full reference in one place, for AI assistants and agents. scripts/llms.py writes it "
-            "from llms.txt, the help that superfind prints, and the JSON it prints for an example session. "
-            "Paths in the examples are shown under /Users/you.",
+            "Command help and JSON field reference for scripts and agents. "
+            "Example paths use /Users/you.",
             "## Commands\n\n`superfind --help`:\n\n" + fence(run(home, "--help")),
         ]
         for name in names:
