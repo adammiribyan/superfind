@@ -22,10 +22,12 @@ On macOS or Linux, with zsh, bash, or fish:
 curl -fsSL https://superfind.dev/install | sh
 ```
 
-Open a new terminal tab and run `superfind`, or `sfd` for short. You need the CLI of the agent you want to resume. To update later, run `superfind upgrade`; with Homebrew or Go it prints the command to use instead.
+Open a new terminal tab and run `superfind`, or `sfd` for short. To resume a session, you need that agent's CLI installed.
+
+Update with `superfind upgrade`. For Homebrew or Go installs, it prints the update command to run.
 
 <details>
-<summary>Homebrew, Go, or from source</summary>
+<summary>Install with Homebrew, Go, or from source</summary>
 
 ```sh
 brew install --cask adammiribyan/tap/superfind
@@ -53,7 +55,7 @@ cd superfind
 
 ## Find a session
 
-Open the picker with `sfd`, or press **Ctrl-X** then **c**. Type to search titles, projects, branches, and conversations.
+Run `sfd`, or press **Ctrl-X** then **c**. Type to search titles, projects, branches, and conversations.
 
 | Key | Action |
 | --- | --- |
@@ -63,37 +65,44 @@ Open the picker with `sfd`, or press **Ctrl-X** then **c**. Type to search title
 | Tab | Switch between the last exchange and recent conversation |
 | Esc | Go back or close |
 
-Can't remember the words? Type `where we fixed duplicate charges` and press **Ctrl-R**. Description search needs Claude Code installed and logged in, or a TypeSafe API key.
+Can't remember the words? Inside the picker, type `where we fixed duplicate charges` and press **Ctrl-R**. Ctrl-R is a key in the picker, not the shortcut that opens it, so your shell's own Ctrl-R keeps working. Description search needs Claude Code installed and logged in, or a [TypeSafe](https://docs.typesafe.ai) API key (TypeSafe is a hosted API for small AI models).
 
-Add filters to any search: `agent:codex`, `in:here`, `after:yesterday`, `file:main.go`, `is:unfinished`, `is:open`. `superfind help search` lists them all.
+Narrow your search with filters:
+
+```sh
+superfind search agent:codex after:yesterday
+superfind search in:here file:main.go
+```
+
+Use `is:open` to find open sessions. With a TypeSafe key, `is:waiting` and `is:unfinished` find sessions that need attention. Run `superfind help search` for all filters.
 
 If the session is already open, Enter switches to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
 
 To pick up where you left off in the current folder, run `superfind last`.
 
 <details>
-<summary>Sessions waiting on you, with TypeSafe</summary>
+<summary>Find sessions waiting on you</summary>
 
-Get a key from [TypeSafe](https://docs.typesafe.ai) and set:
+Get a key from TypeSafe and set:
 
 ```sh
 export TYPESAFE_API_KEY=your-key
 ```
 
-Sessions that stopped waiting on you are labeled, and `is:waiting` lists them.
+Open the picker to label recent sessions, then search for `is:waiting`.
 
 </details>
 
 <details>
 <summary>Open with a keyboard shortcut</summary>
 
-In Ghostty, Cmd-Shift-O opens the picker. The install script adds this line to your config:
+In Ghostty, **Cmd-Shift-O** opens the picker after installation. To add it manually, put this in your Ghostty config:
 
 ```text
 keybind = super+shift+o=text:\x18c
 ```
 
-On Omarchy, Super-Shift-Ctrl-F opens superfind in a new terminal. The install script sets it up, and tells you what to add when the key is taken.
+On Omarchy, **Super-Shift-Ctrl-F** opens the picker in a new terminal. If the shortcut is already taken, the installer prints setup instructions.
 
 </details>
 
@@ -104,7 +113,7 @@ superfind blame src/billing.ts:142
 superfind blame HEAD
 ```
 
-This lists the sessions behind a line, file, or commit, best match first. It reads what your agents already recorded, so it works on past commits with nothing installed in advance. Run `superfind command ID` to get the command that resumes one.
+Find the sessions behind a line, file, or commit, best match first. It reads what your agents already recorded, so it works on old commits with no hooks or setup. Run `superfind command ID` to get a session's resume command.
 
 ## Scripts and agents
 
@@ -114,14 +123,18 @@ superfind show ID --tail 6
 superfind handoff ID
 ```
 
-`handoff` prints where a session ended and the turns that matter, to brief another agent. Install [the skill](skills/README.md) so Claude Code, Codex, or Grok can search your sessions when you ask. Agents can read every command in [llms-full.txt](https://superfind.dev/llms-full.txt), and `superfind help <command>` explains one.
+Use `show` to read a conversation and `handoff` to get a briefing for another agent. `search --json` returns one JSON object per line.
+
+Install [the agent skill](skills/README.md) to let your agent find past sessions when you ask. Run `superfind help <command>` for command help, or see the [full reference](https://superfind.dev/llms-full.txt).
 
 ## Privacy
 
-Everything runs on your machine except two things. superfind never changes your session files.
+Keyword search and conversation reading stay on your machine. superfind never changes your session files.
 
-- **Description search** sends your query and session excerpts to TypeSafe if you set a key, or to Anthropic through Claude Code otherwise. With a TypeSafe key, session labels also send recent session endings.
-- **Update check:** opening the picker checks for a new release and sends an anonymous check-in, never your searches, paths, or session text. `superfind telemetry` shows exactly what it sends, and `superfind telemetry off` stops it.
+- Description search sends your query and session excerpts to TypeSafe if you set a key, or to Anthropic through Claude Code otherwise. TypeSafe session labels also send recent session endings.
+- Opening the picker checks for updates and sends an anonymous check-in at most once a day. It never includes searches, paths, or session text. Run `superfind telemetry` to inspect it or `superfind telemetry off` to disable it.
+
+See [Security](SECURITY.md#what-leaves-your-machine) for details.
 
 ---
 
