@@ -250,15 +250,16 @@ class Share(SuperfindBehavior):
 
 @unittest.skipUnless(shutil.which("tmux"), "the terminal tests drive a real terminal through tmux")
 class ShareAtATerminal(Share):
-    def at_terminal(self, folder, *args):
+    def at_terminal(self, folder, *args, pager="cat"):
         name = f"superfind-share-{os.getpid()}-{id(self)}"
         self.addCleanup(tmux, "kill-session", "-t", name)
         tmux("kill-session", "-t", name)
         out = self.home / "out"
         Path(f"{out}.code").unlink(missing_ok=True)
-        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PAGER": "cat", "TERM": "xterm-256color", "NO_COLOR": "1"}.items()
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PAGER": pager, "TERM": "xterm-256color", "NO_COLOR": "1"}.items()
                        if "'" not in v and "\n" not in v)
-        command = f"env -i {env} {SUPERFIND} {' '.join(args)} > {out}.stdout 2> {out}.stderr; echo $? > {out}.code"
+        stdout = "" if pager == "less" else f"> {out}.stdout"
+        command = f"env -i {env} {SUPERFIND} {' '.join(args)} {stdout} 2> {out}.stderr; echo $? > {out}.code"
         tmux("new-session", "-d", "-s", name, "-c", str(folder), "-x", "200", "-y", "50", command)
         return name, out
 
@@ -285,6 +286,20 @@ class ShareAtATerminal(Share):
         self.assertEqual((code, stderr), (0, WARNING))
         self.assertTrue(stdout.startswith("Wrote review.share.md, "), stdout)
         self.assertIn("title: \"Checkout double charge\"", (self.home / "review.share.md").read_text())
+
+    def test_receive_at_a_terminal_pages_who_sent_it_above_the_briefing(self):
+        path = self.shared()
+        name, out = self.at_terminal(self.clone(), "receive", str(path), "--print-only", pager="less")
+        deadline = time.time() + 30
+        while "# Shared briefing" not in self.screen(name):
+            self.assertLess(time.time(), deadline, f"never paged the briefing:\n{self.screen(name)}")
+            time.sleep(0.1)
+        self.assertTrue(self.screen(name).lstrip("\n").startswith("Shared by Ada L. (self-asserted) on "), self.screen(name))
+        tmux("send-keys", "-t", name, "q")
+        while not Path(f"{out}.code").exists():
+            self.assertLess(time.time(), deadline, f"superfind never exited:\n{self.screen(name)}")
+            time.sleep(0.1)
+        self.assertEqual(Path(f"{out}.code").read_text(), "0\n")
 
     def test_receive_at_a_terminal_starts_the_agent_with_the_prompt_after_a_yes(self):
         path = self.shared()

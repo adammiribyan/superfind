@@ -243,16 +243,13 @@ func runReceive(args []string) {
 	} else if fresh {
 		telemetry.Record(telemetry.ShareReceived{})
 	}
-	for _, line := range preview(m) {
-		fmt.Fprintln(stdout, line)
-	}
 	tty := terminal()
-	briefingText := strings.NewReplacer("\r", "", "\v", "", "\f", "").Replace(agent.Printable(s.Briefing))
+	text := strings.Join(preview(m), "\n") + "\n" + strings.NewReplacer("\r", "", "\v", "", "\f", "").Replace(agent.Printable(s.Briefing))
 	if tty != nil && term.IsTerminal(os.Stdout.Fd()) {
 		output.Flush()
-		page(tty, briefingText)
+		page(tty, text)
 	} else {
-		fmt.Fprint(stdout, briefingText)
+		fmt.Fprint(stdout, text)
 		output.Flush()
 	}
 	if printOnly {
