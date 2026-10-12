@@ -20,12 +20,14 @@ def claude_tool(at, tool_id, name, **given):
 
 
 def claude_result(at, tool_id, text, failed=False):
-    return line(type="user", timestamp=iso(at), message={"role": "user", "content": [
+    error = {"toolUseResult": "Error: " + text} if failed else {}
+    return line(type="user", timestamp=iso(at), **error, message={"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": tool_id, "content": text, "is_error": failed}]})
 
 
 def edited(at, tool_id, path, failed=False):
-    result = line(type="user", timestamp=iso(at + 1), message={"role": "user", "content": [
+    error = {"toolUseResult": "Error: String to replace not found"} if failed else {}
+    result = line(type="user", timestamp=iso(at + 1), **error, message={"role": "user", "content": [
         {"type": "tool_result", "tool_use_id": tool_id, "content": "The file has been updated", "is_error": failed}]})
     return [claude_tool(at, tool_id, "Edit", file_path=str(path), old_string="a", new_string="b"), result]
 
@@ -252,6 +254,168 @@ class Blame(SuperfindBehavior):
         sha = self.commit("fix: round charges to the cent", {"charge.go": "rounded\n", "refund.go": "r\n"}, t + 600)
         self.assertEqual(self.found("charge.go"), [(uid(2), f"made {sha[:7]}: fix: round charges to the cent"),
                                                    (uid(1), "edited it 2 times")])
+
+    def test_blame_on_a_file_finds_commits_that_only_other_branches_and_remotes_hold(self):
+        t = self.now - 3600
+        base = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        theme = self.commit("feat: theme the editor through its variables", {"charge.go": "themed\n"}, t + 60)
+        self.git("checkout", "-q", "-b", "receipts", base)
+        receipt = self.commit("feat: keep a receipt for each charge", {"charge.go": "receipt\n"}, t + 120)
+        self.git("update-ref", "refs/remotes/origin/receipts", receipt)
+        self.git("checkout", "-q", "-b", "refunds", base)
+        refund = self.commit("feat: refund a charge in full", {"charge.go": "refund\n"}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "receipts")
+        self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: theme the editor through its variables"'),
+                       claude_result(t + 61, "b1", f"[editor {theme[:7]}] feat: theme the editor through its variables"), title="Theme the editor")
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("keep receipts"),
+                           codex_at(t + 120, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -am 'feat: keep a receipt for each charge'"})),
+                           codex_at(t + 121, "response_item", type="function_call_output", call_id="c1",
+                                    output=f"Process exited with code 0\nOutput:\n[receipts {receipt[:7]}] feat: keep a receipt for each charge"),
+                           codex_reply("Committed."))
+        self.grok_session(uid(3), str(self.work), GROK_SYSTEM, grok_user("refund in full"),
+                          grok_call("run_terminal_command", "g1", command="git commit -am 'feat: refund a charge in full'"),
+                          line(type="tool_result", tool_call_id="g1", content=f"[refunds {refund[:7]}] feat: refund a charge in full"),
+                          title="Refunds")
+        self.assertEqual(self.git("rev-parse", "HEAD"), base)
+        self.assertEqual(sorted(self.found("charge.go")), sorted([
+            (uid(1), f"made {theme[:7]}: feat: theme the editor through its variables"),
+            (uid(2), f"made {receipt[:7]}: feat: keep a receipt for each charge"),
+            (uid(3), f"made {refund[:7]}: feat: refund a charge in full")]))
+
+    def test_blame_on_a_file_skips_a_merge_on_another_branch_that_only_carries_this_branchs_change(self):
+        t = self.now - 3600
+        self.commit("feat: charge in cents", {"charge.go": "a\nb\nc\nd\ne\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        top = self.commit("feat: theme the editor through its variables", {"charge.go": "themed\nb\nc\nd\ne\n"}, t + 60)
+        self.git("checkout", "-q", "main")
+        self.commit("fix: round charges to the cent", {"charge.go": "a\nb\nc\nd\nrounded\n"}, t + 120)
+        self.git("checkout", "-q", "editor")
+        self.git("merge", "-q", "--no-commit", "main", at=t + 180)
+        merge = self.commit("Merge branch 'main' into editor", {}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: theme the editor through its variables"'),
+                       claude_result(t + 61, "b1", f"[editor {top[:7]}] feat: theme the editor through its variables"), title="Theme the editor")
+        self.claude_at(2, claude_tool(t + 180, "b2", "Bash", command="git merge --no-commit main && git commit -qm \"Merge branch 'main' into editor\""),
+                       claude_result(t + 181, "b2", f"[editor {merge[:7]}] Merge branch 'main' into editor"), title="Merge main into editor")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {top[:7]}: feat: theme the editor through its variables")])
+
+    def test_blame_on_a_file_counts_a_merge_on_another_branch_that_resolved_a_conflict_in_it(self):
+        t = self.now - 3600
+        self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.git("checkout", "-q", "-b", "editor")
+        self.commit("feat: charge in euros", {"charge.go": "euros\n"}, t + 60)
+        self.git("checkout", "-q", "main")
+        self.commit("feat: charge in dollars", {"charge.go": "dollars\n"}, t + 120)
+        self.git("checkout", "-q", "editor")
+        subprocess.run(["git", "merge", "-q", "main"], cwd=self.work, env=self.env, capture_output=True)
+        merge = self.commit("Merge main into editor, charging in either currency", {"charge.go": "euros or dollars\n"}, t + 180)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t + 180, "b1", "Bash", command='git commit -qam "Merge main into editor, charging in either currency"'),
+                       claude_result(t + 181, "b1", f"[editor {merge[:7]}] Merge main into editor, charging in either currency"), title="Resolve")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {merge[:7]}: Merge main into editor, charging in either currency")])
+
+    def test_blame_on_a_file_reads_other_branches_from_a_branch_with_no_commits_yet(self):
+        t = self.now - 3600
+        made = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] feat: charge in cents"), title="Cents")
+        self.git("checkout", "-q", "--orphan", "docs")
+        self.assertEqual(self.found("charge.go"), [(uid(1), f"made {made[:7]}: feat: charge in cents")])
+
+    def test_blame_on_a_file_says_when_it_could_not_read_other_branches(self):
+        t = self.now - 3600
+        made = self.commit("feat: charge in cents", {"charge.go": "cents\n"}, t)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: charge in cents"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] feat: charge in cents"), title="Cents")
+        (self.work / ".git" / "refs" / "remotes" / "origin").mkdir(parents=True)
+        (self.work / ".git" / "refs" / "remotes" / "origin" / "gone").write_text("0123456789abcdef0123456789abcdef01234567\n")
+        result = self.blame("charge.go", "--json")
+        self.assertEqual([json.loads(l)["id"] for l in result.stdout.splitlines()], [uid(1)])
+        self.assertIn("superfind blame: couldn't read charge.go's commits on other branches:", result.stderr)
+
+    def test_blame_finds_edits_made_in_a_claude_worktree_that_was_removed_since(self):
+        t = self.now - 3600
+        gone = self.work / ".claude" / "worktrees" / "refunds"
+        self.claude_at(1, *edited(t, "e1", str(gone / "charge.go")), *edited(t + 5, "e2", str(gone / "nested" / "charge.go")),
+                       title="Edited in a worktree")
+        self.claude_at(2, *edited(t + 9, "e1", str(self.home / "elsewhere" / ".claude" / "worktrees" / "x" / "charge.go")),
+                       title="Another repository")
+        sha = self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertFalse(gone.exists())
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        self.assertEqual(self.found(sha[:7]), [(uid(1), "edited 1 of the commit's 1 files")])
+
+    def test_blame_answers_from_the_index_without_reading_transcripts_again(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        stat = os.stat(path)
+        os.chmod(path, 0)
+        try:
+            self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        finally:
+            os.chmod(path, stat.st_mode)
+
+    def test_an_edit_a_claude_subagent_makes_after_the_session_was_indexed_counts(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        part = path.parent / path.stem / "subagents" / "agent-a1.jsonl"
+        part.parent.mkdir(parents=True)
+        part.write_text("\n".join(edited(t + 5, "s1", str(self.work / "charge.go"))) + "\n")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it 2 times")])
+        with part.open("a") as f:
+            f.write("\n".join(edited(t + 9, "s2", str(self.work / "charge.go"))) + "\n")
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it 3 times")])
+        part.parent.chmod(0)
+        self.addCleanup(part.parent.chmod, 0o755)
+        os.utime(path)
+        result = self.blame("charge.go", "--json")
+        self.assertEqual([(r["id"], r["match"]) for r in map(json.loads, result.stdout.splitlines())], [(uid(1), "edited it 3 times")])
+
+    def test_a_new_session_whose_subagents_cannot_be_read_still_counts_its_own_edits(self):
+        t = self.now - 3600
+        path = self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        folder = path.parent / path.stem / "subagents"
+        folder.mkdir(parents=True)
+        (folder / "agent-a1.jsonl").write_text("\n".join(edited(t + 5, "s1", str(self.work / "charge.go"))) + "\n")
+        folder.chmod(0)
+        self.addCleanup(folder.chmod, 0o755)
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+
+    def test_blame_says_when_a_cache_it_cannot_write_may_miss_new_edits(self):
+        t = self.now - 3600
+        self.claude_at(1, *edited(t, "e1", str(self.work / "charge.go")), title="Edited the charge")
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+        self.freeze_cache()
+        self.claude_at(2, *edited(t + 60, "e1", str(self.work / "charge.go")), title="Edited it again")
+        result = self.blame("charge.go", "--json")
+        self.assertEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, r"^superfind blame: results may miss what changed in 1 session since ")
+
+    def test_a_grok_session_whose_summary_is_half_written_still_counts_its_edits(self):
+        t = self.now - 3600
+        chat = self.grok_session(uid(1), str(self.work), GROK_SYSTEM, grok_user("round the charges"),
+                                 grok_call("search_replace", "t1", file_path=str(self.work / "charge.go"), old_string="a", new_string="b"),
+                                 title="Rounding")
+        (chat.parent / "summary.json").write_text('{"info": {"cwd": ')
+        self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 600)
+        self.assertEqual(self.found("charge.go"), [(uid(1), "edited it once")])
+
+    def test_a_commit_command_that_failed_does_not_count(self):
+        t = self.now - 3600
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "fix: round charges to the cent"'),
+                       claude_result(t + 1, "b1", "pre-commit hook failed", failed=True), title="Hook failed")
+        self.claude_at(2, claude_tool(t + 60, "b1", "Bash", command='git commit -qm "fix: round charges to the cent"'),
+                       claude_result(t + 61, "b1", "1 file changed"), title="Committed")
+        sha = self.commit("fix: round charges to the cent", {"charge.go": "rounded\n"}, t + 60)
+        self.assertEqual(self.found(sha[:7]), [(uid(2), "made this commit")])
 
     def test_blame_on_a_line_blames_the_commit_that_last_changed_it(self):
         t = self.now - 3600

@@ -3,7 +3,43 @@
 All notable changes to superfind are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Before 0.9.0, superfind was called hop, and before 0.3.0, claude-sessions.
 
 
+## [Unreleased]
+
+> blame reads every branch; show --json carries commit messages
+
+### Added
+
+- `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
+- `file:PATH` filters the picker, `search`, `ask`, and `last` to sessions that edited a file, or a file in a folder, with an edit tool, in any worktree of its repository, including a Claude Code worktree since removed. `has:commit` keeps sessions that ran `git commit`, leaving out a commit that failed on its own.
+
+### Changed
+
+- `superfind blame FILE` now also reads the file's commits that only other branches, remotes, and tags hold: up to 30 more, after the last 30 on this branch. A session that committed the file on a branch that was never merged, or that was squash-merged under a message that doesn't list its commits, now shows up with the commit it made. A merge on another branch counts only when it changed the file beyond what its parents had.
+- `superfind show` says "committed, on no branch" for a commit that no branch, tag, stash, or checkout holds any more, such as one whose branch was deleted before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
+- `superfind blame FILE` answers from the index instead of reading every transcript again. On about 950 sessions it went from about 9.4 to 0.18 seconds of CPU time.
+- `superfind blame` finds edits a session made in a Claude Code worktree (`.claude/worktrees/…`) after that worktree was removed.
+- Titles and last requests are masked before the index cuts them to length, so a secret that the cut would split, such as a quoted password, is masked whole. The picker and `ask` see the masked text too.
+- The index also records the files each session edited or read and the commits it ran. The first run after upgrading rebuilds the index, which took about 4.5 seconds for 950 sessions.
+
+### Fixed
+
+- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, Tailscale keys (`tskey-auth-…`, `tskey-client-…`, `tskey-api-…`), and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
+
+## [0.12.0] - 2026-10-11
+
+> superfind upgrade installs new versions in place
+
+### Added
+
+- `superfind upgrade` installs the newest release in place of a copy that the install script put in `~/.local/bin`, after checking that the release's `checksums.txt` is signed with the superfind release key and that the archive matches it. It keeps the copy it replaced, and `superfind upgrade --rollback` swaps back to it; a second `--rollback` swaps forward again. `--check` says whether a newer release is out and changes nothing, and `--version X` installs that release, also to go back to an older one. A copy from Homebrew, `go install`, or a clone is left alone: upgrade prints the command that updates it. The install script now writes a receipt, `~/.local/state/superfind/install.json`, so upgrade knows which copy it may replace.
+- Once a day, when you open the picker, superfind asks superfind.dev for the newest release and sends one anonymous check-in: a random install id, its version, your OS and CPU type, how it was installed, and the outcome of any `superfind upgrade` you ran. It never sends a search, a path, a project name, or session text, and superfind.dev passes the check-in to PostHog without your IP address. The first picker tells you, in the line under the search box, and later pickers say when a newer release is out. `superfind telemetry` prints exactly what the next check-in sends, and `superfind telemetry off` turns it off, as do `SUPERFIND_TELEMETRY=off`, `DO_NOT_TRACK=1`, and CI. Scripted commands, agents, and `--json` never check in. [SECURITY.md](SECURITY.md#what-leaves-your-machine) lists exactly what is sent.
+- The first time you open the picker after superfind updates, the line under the search box says what's new in that version, in one line. It stays while the picker is open, gives way to search messages while they apply, and doesn't show again. A new install doesn't show it.
+- Releases include `checksums.txt.minisig`, a minisign signature of `checksums.txt` made with the superfind release key, so you can check that a download is the release the maintainer signed. [SECURITY.md](SECURITY.md#verify-a-release) has the commands.
+
+
 ## [0.11.0] - 2026-10-11
+
+> Handoff, last, filters, fish, and a skill for agents
 
 ### Added
 
@@ -293,7 +329,8 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
-[Unreleased]: https://github.com/adammiribyan/superfind/compare/v0.10.0...HEAD
+[0.12.0]: https://github.com/adammiribyan/superfind/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/adammiribyan/superfind/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adammiribyan/superfind/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/adammiribyan/superfind/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/adammiribyan/superfind/compare/v0.8.1...v0.9.0

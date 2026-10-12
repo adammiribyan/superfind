@@ -132,7 +132,8 @@ func (c *codexReader) feed(raw []byte) bool {
 		if item.Git != nil {
 			t.Branch = item.Git.Branch
 		}
-		t.Hidden = item.ParentThreadID != ""
+		t.Parent = item.ParentThreadID
+		t.Hidden = t.Parent != ""
 		t.ByAgent = string(item.Source) == `"exec"`
 		return !t.Hidden
 	case l.Type == "turn_context":

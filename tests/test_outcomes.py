@@ -36,12 +36,14 @@ class Outcomes(Blame):
         t = self.now - 3600
         self.origin()
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t)
-        merged = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t + 60)
+        merged = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t + 60,
+                             body="Stripe refunds settle in 5 days, so the receipt says pending until then.")
         self.claude_at(1, claude_tool(t + 60, "b1", "Bash", command='git commit -qam "feat: refund a charge in full"'),
                        claude_result(t + 61, "b1", f"[main {merged[:7]}] feat: refund a charge in full"), title="Refunds")
         self.git("push", "-q", "origin", "main")
         self.git("checkout", "-q", "-b", "receipts")
-        pushed = self.commit("feat: keep a receipt for each charge", {"receipt.go": "r\n"}, t + 120)
+        pushed = self.commit("feat: keep a receipt for each charge", {"receipt.go": "r\n"}, t + 120,
+                             body="Receipts are immutable.\n\nA correction is a new receipt that names the old one.")
         self.git("push", "-q", "origin", "receipts")
         self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("keep receipts"),
                            codex_at(t + 120, "response_item", type="function_call", name="exec_command", call_id="c1",
@@ -57,6 +59,9 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(1, *keys), [("commit", merged, 0, "feat: refund a charge in full", str(self.work), "merged", "main", merged, "")])
         self.assertEqual(self.outcomes(2, *keys), [("commit", pushed, 0, "feat: keep a receipt for each charge", str(self.work), "pushed", "main", "", "")])
         self.assertEqual(self.outcomes(3, *keys), [("commit", local, 0, "fix: round each charge to the cent", str(self.work), "committed", "main", "", "")])
+        self.assertEqual([self.outcomes(n, "body") for n in (1, 2, 3)],
+                         [[("Stripe refunds settle in 5 days, so the receipt says pending until then.",)],
+                          [("Receipts are immutable.\n\nA correction is a new receipt that names the old one.",)], [("",)]])
         self.assertEqual(self.outcomes(1)[0]["landed_at"], self.git("show", "-s", "--format=%cd", "--date=format:%Y-%m-%dT%H:%M:%SZ", merged))
         self.assertRegex(self.text(1)[0], rf"^made {merged[:7]} feat: refund a charge in full · merged into main \S+ ago$")
         self.assertEqual(self.text(2), [f"made {pushed[:7]} feat: keep a receipt for each charge · pushed, not on main"])
@@ -219,6 +224,40 @@ class Outcomes(Blame):
         self.assertEqual(self.outcomes(1, "subject"), [("fix: stop logging [masked Anthropic key]",)])
         self.assertRegex(self.text(1)[0], rf"^made {made[:7]} fix: stop logging \[masked Anthropic key\] · merged into main \S+ ago$")
 
+    def test_a_commit_s_body_is_masked_before_it_is_cut_to_2000_bytes(self):
+        t = self.now - 3600
+        key = "sk-ant-" + "a1B2c3D4e5" * 3
+        head = "Why: the old key leaked.\n" + "é" * 982 + " "
+        made = self.commit("fix: rotate the signing key", {"a.go": "a\n"}, t, body=head + key + "\n" + "tail " * 400)
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "fix: rotate the signing key"'),
+                       claude_result(t + 1, "b1", f"[main {made[:7]}] fix: rotate the signing key"), title="Keys")
+        result = self.run_superfind("show", uid(1), "--json")
+        self.assertEqual(len(head.encode()), 1990)
+        self.assertNotIn("sk-ant-", result.stdout)
+        [got] = self.outcomes(1, "body")[0]
+        self.assertEqual(got, head.rstrip() + "…")
+        self.assertNotIn("Why: the old key", self.superfind("show", uid(1)))
+
+    def test_commit_bodies_share_a_budget_newest_first(self):
+        t = self.now - 3600
+        commands, made = [], []
+        for i in range(8):
+            subject = f"feat: add step {i} of the charge pipeline"
+            made.append(self.commit(subject, {f"s{i}.go": "x\n"}, t + i * 60, body=f"Step {i}. " + "why " * 500))
+            commands += [claude_tool(t + i * 60, f"b{i}", "Bash", command=f'git commit -qm "{subject}"'),
+                         claude_result(t + i * 60 + 1, f"b{i}", f"[main {made[-1][:7]}] {subject}")]
+        self.claude_at(1, *commands, title="Pipeline")
+        bodies = [b for (b,) in self.outcomes(1, "body")]
+        self.assertEqual(len(bodies), 8)
+        self.assertTrue(bodies[-1].startswith("Step 7. why") and bodies[-1].endswith("…") and len(bodies[-1].encode()) <= 2003)
+        self.assertEqual(bodies[0], "…")
+        self.assertLessEqual(sum(len(b.encode()) for b in bodies), 12000 + 8 * 3)
+        small = json.loads(self.run_superfind("show", uid(1), "--json", "--max-bytes", "3000").stdout)["outcomes"]
+        self.assertLessEqual(sum(len(o["body"].encode()) for o in small), 1500 + 8 * 3)
+        self.assertTrue(small[-1]["body"].startswith("Step 7. why") and small[0]["body"] == "…")
+        whole = json.loads(self.run_superfind("show", uid(1), "--json", "--max-bytes", "0").stdout)["outcomes"]
+        self.assertTrue(all(o["body"].startswith(f"Step {i}. why") and len(o["body"].encode()) <= 2003 for i, o in enumerate(whole)))
+
     def test_a_signed_commit_is_read_without_running_the_signature_program(self):
         t = self.now - 3600
         self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
@@ -318,7 +357,7 @@ class Outcomes(Blame):
         self.git("branch", "-q", "-D", "refunds")
         self.commit("feat: refund a charge in full", {"receipt.go": "other\n"}, t + 900)
         self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qm "feat: refund a charge in full"'), title="Refunds")
-        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "dangling")])
 
     def test_two_commits_with_one_subject_squashed_together_stay_two(self):
         t = self.now - 7200
@@ -431,6 +470,51 @@ class Outcomes(Blame):
         self.assertEqual(result.returncode, 0)
         self.assertRegex(result.stderr, r"^superfind show: couldn't read all of this session, so its outcomes may be missing: .*agent-a1\.jsonl.*\n$")
         self.assertEqual([o["commit"] for o in json.loads(result.stdout)["outcomes"]], [made])
+
+    def test_a_commit_whose_branch_was_deleted_unmerged_reads_on_no_branch_for_each_agent(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 60)
+        self.git("checkout", "-q", "-b", "drafts")
+        made = [self.commit(f"feat: draft {name} for each charge", {f"{name}.go": name}, t + 60 * i)
+                for i, name in enumerate(("refunds", "receipts", "rounding"))]
+        self.git("checkout", "-q", "main")
+        self.git("branch", "-q", "-D", "drafts")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qam "feat: draft refunds for each charge"'),
+                       claude_result(t + 1, "b1", f"[drafts {made[0][:7]}] feat: draft refunds for each charge"), title="Refunds")
+        self.codex_session(uid(2), codex_meta(cwd=str(self.work)), codex_user("draft receipts"),
+                           codex_at(t + 60, "response_item", type="function_call", name="exec_command", call_id="c1",
+                                    arguments=json.dumps({"cmd": "git commit -qam 'feat: draft receipts for each charge'"})),
+                           codex_at(t + 61, "response_item", type="function_call_output", call_id="c1", output="Process exited with code 0"),
+                           codex_reply("Committed."))
+        self.grok_session(uid(3), str(self.work), GROK_SYSTEM, grok_user("draft rounding"),
+                          grok_call("run_terminal_command", "g1", command="git commit -qam 'feat: draft rounding for each charge'"),
+                          line(type="tool_result", tool_call_id="g1", content="done"), title="Rounding")
+        for n, sha in enumerate(made, 1):
+            self.assertEqual(self.outcomes(n, "commit", "stage", "landed"), [(sha, "dangling", "")])
+        self.assertEqual(self.text(1), [f"made {made[0][:7]} feat: draft refunds for each charge · committed, on no branch"])
+        self.assertEqual(self.text(3), [f"made {made[2][:7]} feat: draft rounding for each charge · committed, on no branch"])
+
+    def test_a_commit_a_branch_still_holds_is_never_on_no_branch_even_when_its_date_is_old(self):
+        t = self.now - 3600
+        self.commit("chore: start the billing service", {"a.go": "a\n"}, t - 9 * 86400)
+        self.git("checkout", "-q", "-b", "kept")
+        made = self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, t - 8 * 86400)
+        self.git("checkout", "-q", "main")
+        self.claude_at(1, claude_tool(t, "b1", "Bash", command='git commit -qam "feat: refund a charge in full"'),
+                       claude_result(t + 1, "b1", f"[kept {made[:7]}] feat: refund a charge in full"), title="Refunds")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.assertEqual(self.text(1), [f"made {made[:7]} feat: refund a charge in full · committed, not pushed"])
+        checkout = self.home / "work" / "checkout"
+        self.git("worktree", "add", "-q", "--detach", str(checkout), made)
+        self.git("branch", "-q", "-D", "kept")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "committed")])
+        self.git("worktree", "remove", "--force", str(checkout))
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "dangling")])
+        self.git("branch", "-q", "kept", made)
+        self.origin()
+        self.git("push", "-q", "origin", "kept")
+        self.git("branch", "-q", "-D", "kept")
+        self.assertEqual(self.outcomes(1, "commit", "stage"), [(made, "pushed")])
 
     def test_a_session_with_no_commits_shows_as_before_with_an_empty_list(self):
         self.commit("feat: refund a charge in full", {"refund.go": "refund\n"}, self.now)

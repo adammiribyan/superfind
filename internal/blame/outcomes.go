@@ -17,14 +17,15 @@ import (
 type Stage int
 
 const (
-	Committed Stage = iota
+	Dangling Stage = iota
+	Committed
 	Pushed
 	Opened
 	Merged
 	Reverted
 )
 
-var stageNames = [...]string{"committed", "pushed", "opened", "merged", "reverted"}
+var stageNames = [...]string{"dangling", "committed", "pushed", "opened", "merged", "reverted"}
 
 func (s Stage) String() string { return stageNames[s] }
 
@@ -40,6 +41,7 @@ type Outcome struct {
 	Commit     string `json:"commit"`
 	PR         int    `json:"pr"`
 	Subject    string `json:"subject"`
+	Body       string `json:"body"`
 	Repo       string `json:"repo"`
 	Stage      Stage  `json:"stage"`
 	Branch     string `json:"branch"`
@@ -87,12 +89,8 @@ type repo struct {
 
 func bare(s string) string { return plain(pullSuffix.ReplaceAllString(s, "")) }
 
-func Outcomes(r session.Row, rows []session.Row) ([]Outcome, error) {
-	var threads []string
-	if r.Agent.ID == "codex" {
-		threads = threadsOf(rows)[r.Path]
-	}
-	trail, err := agent.ReadTrail(r.Agent, r.Path, nil, threads...)
+func Outcomes(r session.Row) ([]Outcome, error) {
+	trail, err := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
 	found, _ := outcomesOf(r, trail)
 	return found, err
 }
@@ -174,7 +172,7 @@ func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {
 
 func withoutRedone(out []Outcome) []Outcome {
 	redone := func(o Outcome) bool {
-		return o.dangling && o.Stage == Committed && slices.ContainsFunc(out, func(m Outcome) bool {
+		return o.dangling && o.Stage <= Committed && slices.ContainsFunc(out, func(m Outcome) bool {
 			return m.Repo == o.Repo && m.Commit != "" && m.Commit != o.Commit && !m.dangling && plain(m.Subject) == plain(o.Subject) &&
 				m.authored >= o.authored && m.authored-o.authored <= matchAfter
 		})
@@ -409,7 +407,7 @@ func (rp *repo) squash(after float64, carries func(string) bool) (entry, string,
 }
 
 func (rp *repo) judge(e entry) Outcome {
-	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At, dangling: !rp.onRef[e.SHA]}
+	o := Outcome{Kind: Made, Commit: e.SHA, Subject: e.Subject, Body: e.body, Repo: rp.top, Branch: rp.branch, Stage: Committed, authored: e.At, dangling: !rp.onRef[e.SHA]}
 	if rp.onDefault[e.SHA] {
 		return rp.reverted(rp.landedAs(o, e))
 	}
@@ -421,6 +419,21 @@ func (rp *repo) judge(e entry) Outcome {
 	}
 	if _, ok := rp.copyOf(e, rp.onRemote); ok || rp.onRemote[e.SHA] {
 		o.Stage = Pushed
+		return o
+	}
+	if !o.dangling {
+		return o
+	}
+	unreached, err := git(rp.top, "rev-list", "-n1", e.SHA, "--not", "--all")
+	switch {
+	case err != nil:
+	case strings.TrimSpace(unreached) == e.SHA:
+		o.Stage = Dangling
+	default:
+		o.dangling = false
+		if remote, _ := git(rp.top, "for-each-ref", "--contains", e.SHA, "--count=1", "refs/remotes"); remote != "" {
+			o.Stage = Pushed
+		}
 	}
 	return o
 }

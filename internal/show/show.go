@@ -12,6 +12,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/mask"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 )
@@ -36,7 +37,7 @@ type Conversation struct {
 	Truncated bool
 }
 
-func Clean(s string) string { return Mask(agent.Printable(s)) }
+func Clean(s string) string { return mask.Secrets(agent.Printable(s)) }
 
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -45,6 +46,39 @@ func oneLine(s string) string {
 		}
 		return r
 	}, agent.Printable(s))
+}
+
+const (
+	bodyBytes   = 2000
+	bodiesBytes = 12000
+)
+
+func Bodies(bodies []string, maxBytes int) []string {
+	out, left := make([]string, len(bodies)), min(bodiesBytes, maxBytes/2)
+	for i := len(bodies) - 1; i >= 0; i-- {
+		most := bodyBytes
+		if maxBytes > 0 {
+			most = max(min(most, left), 0)
+		}
+		out[i] = body(bodies[i], most)
+		left -= len(out[i])
+	}
+	return out
+}
+
+func body(s string, most int) string {
+	s = strings.TrimSpace(Clean(strings.ToValidUTF8(s, "\uFFFD")))
+	if len(s) <= most {
+		return s
+	}
+	cut := most
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if open := strings.LastIndex(s[:cut], "[masked "); open >= 0 && !strings.Contains(s[open:cut], "]") {
+		cut = open
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }
 
 func lastBytes(s string, n int) string {
@@ -84,6 +118,8 @@ func outcomeLine(o blame.Outcome) string {
 func fateOf(o blame.Outcome) string {
 	known := o.Branch != ""
 	switch {
+	case o.Stage == blame.Dangling:
+		return "committed, on no branch"
 	case o.Stage == blame.Committed:
 		return "committed, not pushed"
 	case o.Stage == blame.Pushed && known:

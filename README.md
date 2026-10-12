@@ -65,7 +65,7 @@ Open the picker with `sfd`, or press **Ctrl-X** then **c**. Type to search title
 
 Can't remember the words? Type `where we fixed duplicate charges` and press **Ctrl-R**. Description search needs Claude Code installed and logged in, or a TypeSafe API key.
 
-Add filters to any search: `agent:codex`, `in:here`, `after:yesterday`, `is:unfinished`, `is:open`. `superfind help search` lists them all.
+Add filters to any search: `agent:codex`, `in:here`, `after:yesterday`, `file:main.go`, `is:unfinished`, `is:open`. `superfind help search` lists them all.
 
 If the session is already open, Enter switches to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
 
@@ -87,13 +87,13 @@ Sessions that stopped waiting on you are labeled, and `is:waiting` lists them.
 <details>
 <summary>Open with a keyboard shortcut</summary>
 
-In Ghostty, add this to your config and reload it to open the picker with Cmd-Shift-O:
+In Ghostty, Cmd-Shift-O opens the picker. The install script adds this line to your config:
 
 ```text
 keybind = super+shift+o=text:\x18c
 ```
 
-On Omarchy, the install script adds Super-Shift-Ctrl-F to your Hyprland bindings, or says what to add when the key is taken.
+On Omarchy, Super-Shift-Ctrl-F opens superfind in a new terminal. The install script sets up both keys, and tells you what to add when one is taken.
 
 </details>
 

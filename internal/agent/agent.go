@@ -23,8 +23,7 @@ type Agent struct {
 	Names    func(home string) map[string]string
 	reader   func(path string, start Transcript) (reader, error)
 	trail    func(t *Trail) func(raw []byte) bool
-	parts    func(path string) []string
-	parent   func(path string) string
+	parts    func(path string) ([]string, error)
 }
 
 var Agents = []*Agent{
@@ -33,7 +32,7 @@ var Agents = []*Agent{
 		reader: func(_ string, start Transcript) (reader, error) { return &parser{t: start}, nil }, trail: claudeTrail, parts: claudeParts},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
-		reader: newCodexReader, trail: codexTrail, parent: codexParent},
+		reader: newCodexReader, trail: codexTrail},
 	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "SUPERFIND_GROK_DIRS",
 		glob: "sessions/*/*/chat_history.jsonl", sidecar: "summary.json", resume: "grok --resume", IDOf: grokID,
 		reader: newGrokReader, trail: grokTrail},
@@ -134,6 +133,15 @@ func (a *Agent) Stat(path string) (FileID, float64, error) {
 		if side, err := os.Stat(filepath.Join(filepath.Dir(path), a.sidecar)); err == nil {
 			id.ModNanos += side.ModTime().UnixNano()
 			id.Size += side.Size()
+		}
+	}
+	if a.parts != nil {
+		parts, _ := a.parts(path)
+		for _, part := range parts {
+			if side, err := os.Stat(part); err == nil {
+				id.ModNanos += side.ModTime().UnixNano()
+				id.Size += side.Size()
+			}
 		}
 	}
 	return id, float64(info.ModTime().UnixNano()) / 1e9, nil

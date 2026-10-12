@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
@@ -25,15 +26,20 @@ import (
 	"github.com/adammiribyan/superfind/internal/blame"
 	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
+	"github.com/adammiribyan/superfind/internal/news"
 	"github.com/adammiribyan/superfind/internal/open"
+	"github.com/adammiribyan/superfind/internal/release"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
+	"github.com/adammiribyan/superfind/internal/store"
+	"github.com/adammiribyan/superfind/internal/telemetry"
 	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
+	"github.com/adammiribyan/superfind/internal/upgrade"
 )
 
-const version = "0.11.0"
+var version = "0.12.0"
 
 const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
 
@@ -53,9 +59,10 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
                           is:agent shows sessions another program started, is:open shows
-                          sessions an agent has open right now, and in:here,
-                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
-                          and last activity
+                          sessions an agent has open right now, in:here, branch:NAME,
+                          after:DAY, and before:DAY narrow by folder, branch, and last
+                          activity, and file:PATH and has:commit by what a session edited
+                          and whether it committed
   superfind ask WORDS [--json] [--limit N]
                           print the sessions that best fit what you describe, even in other words;
                           takes the same filters
@@ -72,6 +79,12 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           print the sessions that made a commit, or that edited a file
   superfind index         build or refresh the index
   superfind label         mark sessions waiting on you (needs a TypeSafe key)
+  superfind upgrade [--check] [--version X] [--rollback]
+                          install the newest release in place of this one; a copy from
+                          Homebrew, go install, or a clone is left alone, with its command
+  superfind telemetry [off|on]
+                          show whether superfind checks for updates and sends anonymous
+                          usage once a day, and exactly what it sends; off stops it
   superfind help COMMAND  explain one command
   superfind --version
 
@@ -167,13 +180,20 @@ unless you ask for them with is:agent.
                   date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
   before:DAY      only sessions last active before that day; after:2026-10-09
                   before:2026-10-10 is October 9
+  file:PATH       only sessions that edited that file, or a file in that folder, with an
+                  edit tool, in any worktree of its repository, including a Claude Code
+                  worktree since removed; a relative PATH starts from this folder. superfind
+                  blame FILE also lists the sessions that made the file's commits
+  has:commit      only sessions that ran git commit; a commit that failed on its own
+                  doesn't count
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
   --limit N       print only the first N sessions (default: all)
 
-Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
-different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
+Two branch:, agent:, or file: filters, or is:waiting with is:unfinished, keep sessions that
+fit either; different filters must all fit. An is: or agent: value superfind doesn't know is
+ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with -, put --
@@ -217,19 +237,23 @@ superfind search prints first.
 Print a session's conversation for scripts and agents: what you asked and what the agent
 answered, without color or wrapping. Tool calls, tool output, and system text are left out,
 messages in a row from one speaker are joined into one turn, and lines that can't be read are
-skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
-anywhere, but an agent that reads this passes it to its own model provider.
+skipped. Common keys, tokens, passwords, and webhook URLs are replaced with [masked …].
+Nothing is sent anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
-squash), or merged and then reverted. A pull request is opened, merged, or reverted. It reads
-only local git, so it knows what your last fetch knows. Merged means the change was accepted,
-not that it was right.
+squash), or merged and then reverted. A commit that no branch, tag, stash, or checkout holds
+any more, such as one whose branch was deleted before it merged, reads "committed, on no
+branch". A pull request is opened, merged, or reverted. It reads only local git, so it knows
+what your last fetch knows. Merged means the change was accepted, not that it was right.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
 
-  --json          print one JSON object: the session's fields, its outcomes, and its turns
+  --json          print one JSON object: the session's fields, its outcomes, and its turns.
+                  Each commit's body is its message after the subject, masked and cut to
+                  2,000 bytes. The bodies share 12,000 bytes or half of --max-bytes,
+                  whichever is less, newest first; --max-bytes 0 lifts that.
   --tail N        print only the last N turns
   --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
                   0 for no limit). The output says how many earlier turns it left out.
@@ -242,8 +266,8 @@ and resume command, how the session ended, and excerpts of the conversation. The
 the first request, the last request and what followed, and the turns that contain any of WORDS
 with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
 says which turns it left out. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
-Nothing is sent anywhere.
+not instructions. Keys, tokens, passwords, and webhook URLs are replaced with [masked …], as
+in show. Nothing is sent anywhere.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
@@ -266,15 +290,18 @@ git repository, or pass a file in one.
                "Merge pull request #N" subject. A squash merge lists the sessions that made
                the commits it squashed. When no session left a record of either, it says so,
                then lists the sessions that edited its files in the three days before it.
-  FILE         lists the sessions that edited the file, or made or opened the pull request of
-               one of its last 30 commits, most recent first
+  FILE         lists the sessions that edited the file, or made one of its commits, or opened
+               that commit's pull request, most recent first. It reads the file's last 30
+               commits on this branch, and up to 30 more that only other branches, remotes,
+               and tags hold, leaving out merges that only carry work from elsewhere
   FILE:LINE    blames the commit that last changed that line. A file whose name ends in
                :LINE is read as that file.
   --json       print one JSON object per session, as search --json does, with what the
                session did in match
 
 A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+started it, and an edit in a Claude Code worktree counts for the file it changed, even after
+the worktree is removed. It reads the commands and edits each agent recorded, so it misses a commit made by
 hand in a terminal or on another machine, and one whose message and hash the session never
 recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
 letters and digits, and the session ran it from a folder in the repository or one that no
@@ -292,13 +319,57 @@ Mark sessions waiting on you or unfinished, using Jev. Needs a TypeSafe key in T
 or ~/.config/superfind/env. It sends the ending of each recent session that changed to TypeSafe.
 The picker runs this in the background when it opens.
 `,
+	"upgrade": `superfind upgrade [--check] [--version X] [--rollback]
+
+Install the newest superfind release in place of this one, when the install script put it here
+(curl -fsSL https://superfind.dev/install | sh). It downloads the release from GitHub, checks
+that its checksums.txt is signed with the superfind release key and that the archive matches
+it, runs the new superfind once, then replaces the installed file and keeps the old one. A copy
+that Homebrew, go install, or a clone's install.sh put here is left alone: upgrade prints the
+command that updates it instead, and changes nothing.
+
+  --check         say whether a newer release is out, and how to get it; changes nothing
+  --version X     install release X instead of the newest one, also to go back to an older
+                  one; releases before 0.11.1 aren't signed, so upgrade won't install them
+  --rollback      swap the installed superfind with the copy the last upgrade replaced; a
+                  second --rollback swaps them back
+
+The three options are separate: use one at a time. Exit 0 when there was nothing to do; exit 1
+when a check failed, and then nothing was installed.
+`,
+	"telemetry": `superfind telemetry [off|on] [--json]
+
+Once a day, when you open the picker, superfind asks superfind.dev for the newest release and
+sends one anonymous check-in: a random install id, superfind's version, your OS and CPU type,
+how superfind was installed, and the outcome of any superfind upgrade you ran. It never sends
+a search, a path, a project name, or session text, and superfind.dev passes the check-in to
+PostHog without your IP address. The picker then says when a newer release is out. Scripted
+commands such as search, show, and last never check in.
+
+With no option, print whether telemetry is on, or why it is off, the install id, and the exact
+body of the next check-in. The picker tells you once that telemetry is on; running this counts
+as having been told.
+
+  off             turn it off: write SUPERFIND_TELEMETRY=off to ~/.config/superfind/env and
+                  delete the install id, the queued events, and the last check. superfind
+                  then sends nothing and stops checking for updates; superfind upgrade --check
+                  still works when you run it.
+  on              remove that line, so telemetry is on again unless the environment says off
+  --json          print the next check-in's body as superfind would send it, byte for byte,
+                  and nothing when telemetry is off
+
+Telemetry is also off whenever SUPERFIND_TELEMETRY is set to anything but on, 1, or true, when
+DO_NOT_TRACK is set, in CI (CI, GITHUB_ACTIONS, GITLAB_CI, BUILDKITE, CIRCLECI, JENKINS_URL,
+TF_BUILD, or TEAMCITY_VERSION), or when superfind can't write its state folder. Nothing turns
+it on against those.
+`,
 	"version": `superfind --version
 
 Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -596,7 +667,7 @@ func selfPath() string {
 func mustOpenSearch() *sql.DB {
 	db, err := session.OpenSearch()
 	if err != nil {
-		fail("superfind: can't open the search index in " + session.CacheDir() + ": " + err.Error())
+		fail("superfind: can't open the search index in " + store.CacheDir() + ": " + err.Error())
 	}
 	return db
 }
@@ -625,8 +696,8 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 	if errors.As(err, &readOnly) {
 		switch {
 		case command == "index" || command == "label":
-			fail("superfind " + command + ": " + session.CacheDir() + " can't be written from here, so nothing was saved")
-		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+			fail("superfind " + command + ": " + store.CacheDir() + " can't be written from here, so nothing was saved")
+		case (command == "search" || command == "ask" || command == "blame") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}
 		err = nil
@@ -737,7 +808,7 @@ func runShow(args []string) {
 	if target == "" {
 		usageError("superfind show: which session? Pass its id, or a path that superfind search prints first.")
 	}
-	r, indexed, rows := findSession("show", target)
+	r, indexed, _ := findSession("show", target)
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
@@ -745,13 +816,18 @@ func runShow(args []string) {
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
-	outcomes, err := blame.Outcomes(r, rows)
+	outcomes, err := blame.Outcomes(r)
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
 	}
+	bodies := make([]string, len(outcomes))
 	for i := range outcomes {
 		o := &outcomes[i]
 		o.Subject, o.Repo, o.Branch = show.Clean(o.Subject), show.Clean(o.Repo), show.Clean(o.Branch)
+		bodies[i] = o.Body
+	}
+	for i, b := range show.Bodies(bodies, opt.MaxBytes) {
+		outcomes[i].Body = b
 	}
 	record := session.RecordOf(r, show.Clean)
 	if asJSON {
@@ -853,7 +929,7 @@ func runBlame(args []string) {
 	}
 	switch {
 	case len(found) == 0 && t.File != "":
-		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its last 30 commits")
+		fmt.Fprintln(stderr, "superfind blame: no session on this machine edited "+field(target)+" or made one of its recent commits, on this branch or another")
 	case len(found) == 0:
 		fmt.Fprintln(stderr, "superfind blame: no session on this machine made "+field(target)+" or edited its files in the three days before it")
 	case t.File == "" && found[0].Guess:
@@ -878,9 +954,160 @@ func runBlame(args []string) {
 	}
 }
 
+func runUpgrade(args []string) {
+	check, rollback := false, false
+	var pinned *release.Version
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--check":
+			check = true
+		case arg == "--rollback":
+			rollback = true
+		case arg == "--version" || strings.HasPrefix(arg, "--version="):
+			value, inline := strings.CutPrefix(arg, "--version=")
+			if !inline {
+				if i+1 == len(args) {
+					usageError("superfind upgrade: --version needs a release, like --version 0.12.0. See superfind help upgrade.")
+				}
+				i++
+				value = args[i]
+			}
+			v, err := release.ParseVersion(value)
+			if err != nil {
+				usageError("superfind upgrade: " + err.Error() + ". See superfind help upgrade.")
+			}
+			pinned = &v
+		default:
+			usageError("superfind upgrade: there is no " + arg + " option. See superfind help upgrade.")
+		}
+	}
+	if (check && rollback) || (pinned != nil && (check || rollback)) {
+		usageError("superfind upgrade: --check, --rollback, and --version are separate; use one at a time. See superfind help upgrade.")
+	}
+	current, err := release.ParseVersion(version)
+	if err != nil {
+		fail("superfind upgrade: this build calls itself " + version + ", which is not a release version, so it can't be upgraded in place")
+	}
+	facts, err := upgrade.Gather()
+	if err != nil {
+		fail("superfind upgrade: can't tell where this superfind is: " + err.Error())
+	}
+	u := upgrade.Upgrader{Current: current, Install: upgrade.Detect(facts), Source: release.DefaultSource()}
+	if term.IsTerminal(os.Stderr.Fd()) {
+		u.Progress = func(line string) { fmt.Fprintln(stderr, line) }
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	var message string
+	switch {
+	case check:
+		message, err = u.Check(ctx)
+	case rollback:
+		message, err = u.Rollback(ctx)
+	default:
+		message, err = u.To(ctx, pinned)
+		if ctx.Err() == nil {
+			telemetry.Record(telemetry.Upgraded{Method: telemetry.ParseMethod(string(u.Install.Method)), Outcome: upgradeOutcome(message, err)})
+		}
+	}
+	interrupted := ctx.Err() != nil
+	stop()
+	if interrupted {
+		exit(130)
+	}
+	if err != nil {
+		fail("superfind upgrade: " + err.Error())
+	}
+	fmt.Fprintln(stdout, message)
+}
+
+func upgradeOutcome(message string, err error) telemetry.Outcome {
+	switch {
+	case err != nil:
+		return telemetry.Failed
+	case strings.HasPrefix(message, "installed superfind "):
+		return telemetry.Installed
+	}
+	return telemetry.Unchanged
+}
+
+func telemetryBuild() telemetry.Build {
+	method := telemetry.Unknown
+	if facts, err := upgrade.Gather(); err == nil {
+		method = telemetry.ParseMethod(string(upgrade.Detect(facts).Method))
+	}
+	return telemetry.Build{Version: version, Method: method}
+}
+
+const telemetryOffAdvice = "superfind sends nothing and doesn't check for updates; superfind upgrade --check still works when you run it."
+
+func runTelemetry(args []string) {
+	asJSON, action := false, ""
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			asJSON = true
+		case (arg == "off" || arg == "on") && action == "":
+			action = arg
+		case arg == "off" || arg == "on":
+			usageError("superfind telemetry: off or on, not both. See superfind help telemetry.")
+		default:
+			usageError("superfind telemetry: there is no " + arg + " option. See superfind help telemetry.")
+		}
+	}
+	if asJSON && action != "" {
+		usageError("superfind telemetry: --json goes with neither off nor on. See superfind help telemetry.")
+	}
+	switch action {
+	case "off":
+		if err := telemetry.TurnOff(); err != nil {
+			fail("superfind telemetry: couldn't turn it off: " + err.Error())
+		}
+		fmt.Fprintln(stdout, "Telemetry is off: SUPERFIND_TELEMETRY=off is now in ~/.config/superfind/env, and the install id, queued events, and last check were deleted. "+telemetryOffAdvice)
+		if setting := telemetry.Current(); setting.On() {
+			fmt.Fprintln(stdout, "Until you unset it, the environment overrides that file, and telemetry stays on: "+telemetry.Variable+" is set to on there.")
+		}
+		return
+	case "on":
+		if err := telemetry.TurnOn(); err != nil {
+			fail("superfind telemetry: couldn't turn it on: " + err.Error())
+		}
+	}
+	setting := telemetry.Current()
+	if !setting.On() {
+		if asJSON {
+			fmt.Fprintln(stderr, "superfind telemetry: off because "+setting.Why()+", so no check-in is sent.")
+			return
+		}
+		fmt.Fprintln(stdout, "Telemetry is off because "+setting.Why()+". "+telemetryOffAdvice)
+		return
+	}
+	ping := telemetry.NextPing(telemetryBuild(), time.Now())
+	if asJSON {
+		stdout.Write(ping.JSON())
+		return
+	}
+	news.Tell()
+	fmt.Fprintln(stdout, "Telemetry is on. Once a day, when you open the picker, superfind sends this to superfind.dev and gets back the newest release's version:")
+	stdout.Write(ping.JSON())
+	if ping.ID == "" {
+		fmt.Fprintln(stdout, "Install id: none yet; a random one is made at the first check-in.")
+	} else {
+		fmt.Fprintln(stdout, "Install id: "+ping.ID+", a random id made on this machine that names nothing but this install.")
+	}
+	check, _ := telemetry.LastCheck()
+	if telemetry.Due(check, time.Now()) {
+		fmt.Fprintln(stdout, "Next check-in: the next time you open the picker.")
+	} else {
+		fmt.Fprintln(stdout, "Next check-in: the first time you open the picker after "+check.Next.Local().Format("Jan 2 at 15:04")+".")
+	}
+	fmt.Fprintln(stdout, "It never sends a search, a path, a project name, or session text, and superfind.dev passes the check-in to PostHog without your IP address.")
+	fmt.Fprintln(stdout, "superfind telemetry off turns it off and deletes the install id; SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1 in your environment do the same.")
+}
+
 var output *bufio.Writer
 
 func exit(code int) {
+	telemetry.Flush()
 	if err := output.Flush(); err != nil && code == 0 {
 		fmt.Fprintln(stderr, "superfind: couldn't write the output: "+err.Error())
 		code = 1
@@ -960,12 +1187,16 @@ func atMost(rows []session.Row, limit int) []session.Row {
 
 func main() {
 	typesafe.UserAgent = "superfind/" + version
+	release.UserAgent = typesafe.UserAgent
 	if render.NoColor {
 		stdout = &colorprofile.Writer{Forward: os.Stdout, Profile: colorprofile.Ascii}
 		stderr = &colorprofile.Writer{Forward: os.Stderr, Profile: colorprofile.Ascii}
 	}
 	output = bufio.NewWriter(stdout)
 	stdout = output
+	if v, err := release.ParseVersion(version); err == nil && (len(os.Args) < 2 || os.Args[1] != "upgrade") {
+		news.Arrive(v)
+	}
 	run(os.Args[1:])
 	exit(0)
 }
@@ -1130,6 +1361,14 @@ func run(args []string) {
 		runHandoff(args[1:])
 	case "blame":
 		runBlame(args[1:])
+	case "upgrade":
+		runUpgrade(args[1:])
+	case "telemetry":
+		runTelemetry(args[1:])
+	case "checkin":
+		if news.Told() {
+			telemetry.Checkin(context.Background(), telemetryBuild())
+		}
 	case "pick":
 		resume := false
 		for _, arg := range args[1:] {
@@ -1138,7 +1377,7 @@ func run(args []string) {
 			}
 			resume = true
 		}
-		chosen, err := tui.Pick()
+		chosen, err := tui.Pick(build())
 		if err != nil {
 			fail(err.Error())
 		}
@@ -1162,7 +1401,7 @@ func asksForHelp(args []string) bool {
 		switch args[i] {
 		case "--":
 			return false
-		case "--query", "--width", "--limit":
+		case "--query", "--width", "--limit", "--version":
 			i++
 		case "--help", "-h":
 			return true

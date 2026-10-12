@@ -17,63 +17,143 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	"modernc.org/sqlite"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/mask"
+	"github.com/adammiribyan/superfind/internal/store"
 )
 
-const cacheVersion = 15
+const cacheVersion = 16
 
 const (
 	titleRunes  = 200
 	promptRunes = 400
 )
 
+const (
+	maskWindow = 4 << 10
+	maskMargin = 1 << 10
+)
+
 func clip(s string, n int) string {
 	s = strings.Join(strings.Fields(s), " ")
+	if cut, over := cutAt(s, n); over {
+		return s[:cut] + "…"
+	}
+	return s
+}
+
+func cutAt(s string, n int) (int, bool) {
 	cut, clusters := 0, 0
 	for i := 0; i < len(s); clusters++ {
 		if clusters == n-1 {
 			cut = i
 		}
 		if clusters == n {
-			return s[:cut] + "…"
+			return cut, true
 		}
 		cluster, _ := ansi.FirstGraphemeCluster(s[i:], ansi.GraphemeWidth)
 		i += len(cluster)
 	}
-	return s
+	return len(s), false
 }
 
-func parse(f found) (*Session, string, bool, error) {
-	t, err := agent.ReadTranscript(f.Agent, f.path)
-	if err != nil {
-		return nil, "", false, err
+func clipMasked(s string, n int) string {
+	for window := maskWindow; window < len(s); window *= 4 {
+		space := strings.IndexAny(s[window:], " \t\n\r\f\v")
+		if space < 0 {
+			break
+		}
+		if mask.Unclosed(s[:window+space]) {
+			continue
+		}
+		head := strings.Join(strings.Fields(mask.Secrets(s[:window+space])), " ")
+		if cut, over := cutAt(head, n); over && cut <= len(head)-maskMargin {
+			return head[:cut] + "…"
+		}
 	}
+	return clip(mask.Secrets(s), n)
+}
+
+func parse(f found) (parsed, bool, error) {
+	t, trail, err := agent.ReadSession(f.Agent, f.path)
+	var unread *agent.PartUnread
+	if err != nil && !errors.As(err, &unread) {
+		return parsed{}, false, err
+	}
+	seen := map[agent.PR]bool{}
+	trail.PRs = slices.DeleteFunc(trail.PRs, func(pr agent.PR) bool {
+		repeated := seen[pr]
+		seen[pr] = true
+		return repeated
+	})
+	p := parsed{kept: unread != nil, entry: cacheEntry{FileID: f.id, Name: f.name, Parent: t.Parent, Commits: len(trail.Commits)}, trail: trail}
 	firstPrompt, latestPrompt := "", ""
 	if len(t.Prompts) > 0 {
 		firstPrompt, latestPrompt = t.Prompts[0], t.Prompts[len(t.Prompts)-1]
 	}
 	if t.Hidden || t.Cwd == "" || (firstPrompt == "" && t.LastPrompt == "") {
-		return nil, "", t.Incomplete, nil
+		return p, t.Incomplete || unread != nil, err
 	}
-	body := agent.Searchable(strings.Join(t.Messages, "\n"))
-	return &Session{
+	p.body = agent.Searchable(strings.Join(t.Messages, "\n"))
+	p.entry.Session = &Session{
 		ID: f.Agent.IDOf(f.path), Cwd: t.Cwd,
-		Title:      clip(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
-		LastPrompt: clip(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
-		Words: len(strings.Fields(body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
-	}, body, t.Incomplete, nil
+		Title:      clipMasked(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
+		LastPrompt: clipMasked(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
+		Words: len(strings.Fields(p.body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
+	}
+	return p, t.Incomplete || unread != nil, err
 }
 
 type cacheEntry struct {
 	agent.FileID
 	Name    string   `json:"name,omitempty"`
 	Session *Session `json:"session"`
+	Parent  string   `json:"parent,omitempty"`
+	Commits int      `json:"commits,omitempty"`
+}
+
+func (e cacheEntry) row(p agent.Place, path string) Row {
+	return Row{Session: *e.Session, Agent: p.Agent, Home: p.Home, Path: path, Commits: e.Commits}
+}
+
+func withThreads(rows []Row, entries map[string]cacheEntry, places []agent.Place) []Row {
+	at := map[string]int{}
+	for i, r := range rows {
+		at[r.Agent.ID+":"+r.Session.ID] = i
+	}
+	parentOf, pathOf := map[string]string{}, map[string]string{}
+	for path, e := range entries {
+		if e.Parent == "" || e.Session != nil {
+			continue
+		}
+		if p, ok := agent.Locate(path, places); ok {
+			id := p.Agent.ID + ":" + p.Agent.IDOf(path)
+			parentOf[id], pathOf[id] = p.Agent.ID+":"+e.Parent, path
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(pathOf)) {
+		root := parentOf[id]
+		for hops := 0; hops < 8 && parentOf[root] != ""; hops++ {
+			if _, ok := at[root]; ok {
+				break
+			}
+			root = parentOf[root]
+		}
+		i, ok := at[root]
+		if !ok {
+			continue
+		}
+		thread := entries[pathOf[id]]
+		r := &rows[i]
+		r.Threads = append(r.Threads, pathOf[id])
+		r.Commits += thread.Commits
+	}
+	return rows
 }
 
 type cacheFile struct {
@@ -82,7 +162,7 @@ type cacheFile struct {
 }
 
 func loadCache() map[string]cacheEntry {
-	raw, err := os.ReadFile(CachePath("index.json"))
+	raw, err := os.ReadFile(store.CachePath("index.json"))
 	if err != nil {
 		return map[string]cacheEntry{}
 	}
@@ -91,37 +171,6 @@ func loadCache() map[string]cacheEntry {
 		return map[string]cacheEntry{}
 	}
 	return c.Files
-}
-
-func makeCacheDir() error {
-	if err := os.MkdirAll(CacheDir(), 0o700); err != nil {
-		return err
-	}
-	os.Chmod(CacheDir(), 0o700)
-	return nil
-}
-
-func writeAtomically(path string, data []byte) error {
-	if err := makeCacheDir(); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func unwritable(err error) bool {
-	return errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)
 }
 
 type ReadOnly struct {
@@ -135,22 +184,7 @@ func (r ReadOnly) Error() string {
 		noun = "session"
 	}
 	return fmt.Sprintf("results may miss what changed in %d %s since %s, because the index in %s can't be updated from here",
-		r.Changed, noun, r.Since.Local().Format("Jan 2 15:04"), CacheDir())
-}
-
-func lockFile(name string) (func(), error) {
-	if err := makeCacheDir(); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(CachePath(name), os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() { f.Close() }, nil
+		r.Changed, noun, r.Since.Local().Format("Jan 2 15:04"), store.CacheDir())
 }
 
 func saveCache(files map[string]cacheEntry) error {
@@ -158,33 +192,52 @@ func saveCache(files map[string]cacheEntry) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomically(CachePath("index.json"), data)
+	return store.WriteAtomically(store.CachePath("index.json"), data)
 }
 
 func CachedRows() []Row {
 	in := agent.Places()
 	var rows []Row
-	for path, e := range loadCache() {
+	entries := loadCache()
+	for path, e := range entries {
 		if p, ok := agent.Locate(path, in); ok && e.Session != nil {
-			rows = append(rows, Row{Session: *e.Session, Agent: p.Agent, Home: p.Home, Path: path})
+			rows = append(rows, e.row(p, path))
 		}
 	}
-	return rows
+	return withThreads(rows, entries, in)
 }
 
-const docsModule = "fts5(path UNINDEXED, title, body, tokenize='porter unicode61')"
+var (
+	tables = []string{"docs", "trails", "files", "built"}
+	schema = []string{
+		"CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(path UNINDEXED, title, body, tokenize='porter unicode61')",
+		"CREATE TABLE IF NOT EXISTS trails (path TEXT PRIMARY KEY, trail TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS files (session TEXT NOT NULL, path TEXT NOT NULL, name TEXT NOT NULL, how TEXT NOT NULL, " +
+			"kind TEXT NOT NULL, failed INTEGER NOT NULL, at REAL NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS files_by_name ON files (name)",
+		"CREATE INDEX IF NOT EXISTS files_by_path ON files (path)",
+		"CREATE INDEX IF NOT EXISTS files_by_session ON files (session)",
+		"CREATE TABLE IF NOT EXISTS built (version INTEGER NOT NULL)",
+	}
+)
+
+const (
+	Edited  = "edited"
+	Read    = "read"
+	ByATool = "tool"
+)
 
 func OpenSearch() (*sql.DB, error) {
-	if err := makeCacheDir(); err != nil {
+	if err := store.MakeDir(store.CacheDir()); err != nil {
 		return nil, err
 	}
-	path, err := filepath.Abs(CachePath("search.db"))
+	path, err := filepath.Abs(store.CachePath("search.db"))
 	if err != nil {
 		return nil, err
 	}
 	settings := "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate"
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	readOnly := unwritable(err)
+	readOnly := store.Unwritable(err)
 	switch {
 	case readOnly:
 		if _, err = os.Stat(path); err != nil {
@@ -211,11 +264,54 @@ func OpenSearch() (*sql.DB, error) {
 	if readOnly {
 		return db, nil
 	}
-	if _, err := db.Exec("CREATE VIRTUAL TABLE IF NOT EXISTS docs USING " + docsModule); err != nil {
-		db.Close()
-		return nil, err
+	for _, statement := range schema {
+		if _, err := db.Exec(statement); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	return db, nil
+}
+
+func Trails(names []string) (map[string]agent.Trail, error) {
+	db, err := OpenSearch()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	trails := map[string]agent.Trail{}
+	pairs, err := QueryPairs(db, "SELECT path, trail FROM trails")
+	if err != nil {
+		return nil, err
+	}
+	for _, pair := range pairs {
+		var t agent.Trail
+		if err := json.Unmarshal([]byte(pair[1]), &t); err != nil {
+			return nil, err
+		}
+		trails[pair[0]] = t
+	}
+	named, err := json.Marshal(names)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query("SELECT session, path, at FROM files WHERE how = ? AND NOT failed AND name IN (SELECT value FROM json_each(?)) ORDER BY rowid",
+		Edited, string(named))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var session string
+		var e agent.Edit
+		if err := rows.Scan(&session, &e.Path, &e.At); err != nil {
+			return nil, err
+		}
+		t := trails[session]
+		t.Edits = append(t.Edits, e)
+		trails[session] = t
+	}
+	return trails, rows.Err()
 }
 
 func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
@@ -225,9 +321,9 @@ func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
 			want++
 		}
 	}
-	held, err := searchCount()
+	held, built, err := searchCount()
 	if err == nil {
-		return held == want
+		return held == want && built
 	}
 	if !readOnly {
 		discardSearch()
@@ -237,7 +333,7 @@ func searchHolds(cached map[string]cacheEntry, readOnly bool) bool {
 
 func discardSearch() {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		os.Remove(CachePath("search.db" + suffix))
+		os.Remove(store.CachePath("search.db" + suffix))
 	}
 }
 
@@ -263,15 +359,18 @@ func intact(db *sql.DB) bool {
 	return db.QueryRow("SELECT term FROM temp.terms LIMIT 1").Scan(&term) == nil
 }
 
-func searchCount() (int, error) {
+func searchCount() (int, bool, error) {
 	db, err := OpenSearch()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer db.Close()
-	var held int
-	err = db.QueryRow("SELECT count(*) FROM docs").Scan(&held)
-	return held, err
+	var held, built int
+	if err := db.QueryRow("SELECT count(*) FROM docs").Scan(&held); err != nil {
+		return 0, false, err
+	}
+	err = db.QueryRow("SELECT count(*) FROM built").Scan(&built)
+	return held, built > 0, err
 }
 
 type found struct {
@@ -283,8 +382,10 @@ type found struct {
 }
 
 type parsed struct {
-	session *Session
-	body    string
+	entry cacheEntry
+	body  string
+	trail agent.Trail
+	kept  bool
 }
 
 func Unreadable(problems []error) string {
@@ -304,8 +405,8 @@ func Index(announce func(stale int)) ([]Row, []error, error) { return index(anno
 func Rebuild(announce func(stale int)) ([]Row, []error, error) { return index(announce, true) }
 
 func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
-	unlock, err := lockFile("index.lock")
-	readOnly := unwritable(err)
+	unlock, err := store.Lock(store.CachePath("index.lock"))
+	readOnly := store.Unwritable(err)
 	if err != nil && !readOnly {
 		return nil, nil, fmt.Errorf("locking the index: %w", err)
 	}
@@ -314,7 +415,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	if rebuild && readOnly {
 		return nil, nil, fmt.Errorf("%w, and it can't be rebuilt from here. Run superfind index where %s can be written",
-			ErrDamaged, CacheDir())
+			ErrDamaged, store.CacheDir())
 	}
 	if rebuild {
 		discardSearch()
@@ -323,7 +424,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	if !searchHolds(old, readOnly) {
 		if readOnly {
 			return nil, nil, fmt.Errorf("there's no usable index in %s, and it can't be written from here. "+
-				"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written", CacheDir())
+				"Run superfind index once where it can, or set XDG_CACHE_HOME to a folder that can be written", store.CacheDir())
 		}
 		old = map[string]cacheEntry{}
 	}
@@ -364,7 +465,7 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		announce(len(stale))
 	}
 	results := make(map[string]parsed, len(stale))
-	partial := map[string]*Session{}
+	partial := map[string]parsed{}
 	var mu sync.Mutex
 	work := make(chan found)
 	var wg sync.WaitGroup
@@ -373,17 +474,20 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		go func() {
 			defer wg.Done()
 			for f := range work {
-				s, body, incomplete, err := parse(f)
+				p, incomplete, err := parse(f)
+				if _, known := old[f.path]; !known {
+					p.kept = false
+				}
 				mu.Lock()
-				if err != nil {
+				if err != nil && !incomplete {
 					problems = append(problems, err)
 					mu.Unlock()
 					continue
 				}
 				if incomplete {
-					partial[f.path] = s
+					partial[f.path] = p
 				} else {
-					results[f.path] = parsed{s, body}
+					results[f.path] = p
 				}
 				mu.Unlock()
 			}
@@ -400,17 +504,18 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	for _, f := range all {
 		entry, known := old[f.path]
 		if p, ok := results[f.path]; ok {
-			entry, known = cacheEntry{f.id, f.name, p.session}, true
+			entry, known = p.entry, true
 		}
 		if known {
 			fresh[f.path] = entry
 		}
-		s, listed := partial[f.path]
-		if !listed || (known && entry.Session == nil) {
-			s = entry.Session
+		unfinished, listed := partial[f.path]
+		shown := unfinished.entry
+		if !listed || unfinished.kept || (known && entry.Session == nil) {
+			shown = entry
 		}
-		if s != nil {
-			rows = append(rows, Row{Session: *s, Agent: f.Agent, Home: f.Home, Path: f.path})
+		if shown.Session != nil {
+			rows = append(rows, shown.row(f.Place, f.path))
 		}
 	}
 	for path, entry := range old {
@@ -419,10 +524,11 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 		if p, ok := agent.Locate(path, places); !seen && under && ok {
 			fresh[path] = entry
 			if entry.Session != nil {
-				rows = append(rows, Row{Session: *entry.Session, Agent: p.Agent, Home: p.Home, Path: path})
+				rows = append(rows, entry.row(p, path))
 			}
 		}
 	}
+	rows = withThreads(rows, fresh, places)
 	var gone []string
 	for p := range old {
 		if _, ok := fresh[p]; !ok {
@@ -431,16 +537,16 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	}
 	if readOnly {
 		since := time.Time{}
-		if info, err := os.Stat(CachePath("index.json")); err == nil {
+		if info, err := os.Stat(store.CachePath("index.json")); err == nil {
 			since = info.ModTime()
 		}
 		return rows, problems, ReadOnly{len(stale) + len(gone), since}
 	}
 	discarded := len(old) == 0
-	if len(results) > 0 || len(gone) > 0 || discarded {
+	if len(results) > 0 || len(partial) > 0 || len(gone) > 0 || discarded {
 		db, err := OpenSearch()
 		if err == nil {
-			err = updateSearch(db, results, gone, discarded)
+			err = updateSearch(db, results, partial, gone, discarded)
 			db.Close()
 		}
 		if err != nil {
@@ -455,39 +561,80 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 	return rows, problems, nil
 }
 
-func updateSearch(db *sql.DB, results map[string]parsed, gone []string, discarded bool) error {
+func updateSearch(db *sql.DB, results, partial map[string]parsed, gone []string, discarded bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if discarded {
-		for _, statement := range []string{"DROP TABLE docs", "CREATE VIRTUAL TABLE docs USING " + docsModule} {
+		var statements []string
+		for _, table := range tables {
+			statements = append(statements, "DROP TABLE IF EXISTS "+table)
+		}
+		for _, statement := range append(append(statements, schema...), fmt.Sprintf("INSERT INTO built VALUES (%d)", cacheVersion)) {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
 		}
 	} else {
-		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY)"); err != nil {
+		if _, err := tx.Exec("CREATE TEMP TABLE replaced (path TEXT PRIMARY KEY, searched INTEGER NOT NULL)"); err != nil {
 			return err
 		}
 		for _, p := range slices.AppendSeq(slices.Clone(gone), maps.Keys(results)) {
-			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?)", p); err != nil {
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?, 1)", p); err != nil {
 				return err
 			}
 		}
-		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
+		for p, r := range partial {
+			if r.kept {
+				continue
+			}
+			if _, err := tx.Exec("INSERT OR IGNORE INTO replaced VALUES (?, 0)", p); err != nil {
+				return err
+			}
+		}
+		for _, statement := range []string{"DELETE FROM docs WHERE path IN (SELECT path FROM replaced WHERE searched)",
+			"DELETE FROM trails WHERE path IN (SELECT path FROM replaced)",
+			"DELETE FROM files WHERE session IN (SELECT path FROM replaced)", "DROP TABLE replaced"} {
 			if _, err := tx.Exec(statement); err != nil {
 				return err
 			}
 		}
 	}
+	file, err := tx.Prepare("INSERT INTO files (session, path, name, how, kind, failed, at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 	for p, r := range results {
-		if r.session != nil {
-			s := r.session
+		if s := r.entry.Session; s != nil {
 			if _, err := tx.Exec("INSERT INTO docs (path, title, body) VALUES (?, ?, ?)", p,
 				agent.Searchable(s.Title+" "+s.Project()+" "+s.Branch), r.body); err != nil {
 				return err
+			}
+		}
+	}
+	for _, batch := range []map[string]parsed{results, partial} {
+		for p, r := range batch {
+			if r.kept {
+				continue
+			}
+			for how, files := range map[string][]agent.Edit{Edited: r.trail.Edits, Read: r.trail.Reads} {
+				for _, f := range files {
+					if _, err := file.Exec(p, f.Path, filepath.Base(f.Path), how, ByATool, f.Failed, f.At); err != nil {
+						return err
+					}
+				}
+			}
+			if len(r.trail.Commits)+len(r.trail.PRs) > 0 {
+				trail, err := json.Marshal(agent.Trail{Commits: r.trail.Commits, PRs: r.trail.PRs})
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec("INSERT INTO trails (path, trail) VALUES (?, ?)", p, trail); err != nil {
+					return err
+				}
 			}
 		}
 	}

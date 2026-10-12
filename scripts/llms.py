@@ -76,8 +76,14 @@ OUTCOME_FIELDS = {
               "merge carried after its branch was deleted.",
     "pr": "The pull request that carried the commit, or that the session opened, or `0` when none is known.",
     "subject": "The commit's subject from git. For a pull request, the subject it landed with, or empty.",
+    "body": "The commit's message after its subject, masked like the turns and cut to 2,000 bytes, with `…` where it "
+            "was cut. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest commit first; `--max-bytes 0` lifts that. Empty for a pull "
+            "request, and for a commit that a squash merge carried after its branch was deleted.",
     "repo": "The repository's top folder.",
-    "stage": "How far it got. A commit is `committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
+    "stage": "How far it got. A commit is `dangling` (committed, but no ref, such as a branch, tag, remote branch, or "
+             "stash, and no worktree's checkout reaches it any more; while git's reflog keeps it, "
+             "`git branch NAME HASH` brings it back), "
+             "`committed`, `pushed` (on a remote branch), `merged` (on the default branch, "
              "directly or in a squash), or `reverted` (merged, then a later commit on the default branch reverts it). "
              "A pull request is `opened`, `merged`, or `reverted`.",
     "branch": "The default branch it is measured against, such as `main`, or empty when none was found.",
@@ -98,7 +104,7 @@ def git(folder, *args):
 
 def run(home, *args):
     env = {"HOME": str(home), "XDG_CACHE_HOME": str(home / ".cache"), "PATH": os.environ.get("PATH", ""),
-           "NO_COLOR": "1", "TYPESAFE_API_KEY": "", "COLUMNS": "100"}
+           "NO_COLOR": "1", "TYPESAFE_API_KEY": "", "COLUMNS": "100", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
     result = subprocess.run([str(SUPERFIND), *args], env=env, capture_output=True, encoding="utf-8")
     if result.returncode != 0 or result.stderr:
         sys.exit(f"scripts/llms.py: superfind {' '.join(args)} exited {result.returncode}: {result.stderr}")
@@ -143,7 +149,7 @@ def overview():
 
 def commands(home):
     result = subprocess.run([str(SUPERFIND), "no-such-command"], capture_output=True, encoding="utf-8",
-                            env={"HOME": str(home), "PATH": os.environ.get("PATH", "")})
+                            env={"HOME": str(home), "PATH": os.environ.get("PATH", ""), "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"})
     if result.returncode != 2:
         sys.exit(f"scripts/llms.py: an unknown command exited {result.returncode}, not 2: {result.stderr}")
     listed = re.search(r"The commands are (.+)\.\n", result.stderr).group(1)
