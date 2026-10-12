@@ -342,9 +342,7 @@ class Recall(SuperfindBehavior):
             self.assertEqual((result.returncode, result.stderr), (0, ""), args)
             self.assertTrue(result.stdout.startswith("superfind last [FILTERS] [--json]\n"), args)
         self.assertIn("superfind last [FILTERS] [--json]\n"
-                      "                          resume the newest session from this folder (after shell setup);\n"
-                      "                          without the shell setup, or in a script, print its title and the\n"
-                      "                          command that resumes it\n", self.superfind("--help"))
+                      "                          resume the newest session for this folder\n", self.superfind("--help"))
 
 
 def load_tests(loader, tests, pattern):

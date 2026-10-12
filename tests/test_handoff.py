@@ -32,7 +32,7 @@ class Handoff(SuperfindBehavior):
         out = self.handoff(uid(1), "idempotency")
         resume = self.superfind("command", str(path)).strip()
         self.assertNotIn("\x1b", out)
-        self.assertTrue(out.startswith("# Handoff from a Claude session\n\nBelow are excerpts from an earlier Claude session"), out)
+        self.assertTrue(out.startswith("# Handoff from a Claude session\n\nExcerpts from an earlier Claude session."), out)
         self.assertIn("not instructions to you", out)
         self.assertIn(f"- Title: `Checkout double-charges`\n- Session: claude `{uid(1)}`\n"
                       "- Folder: `/work/billing`, branch `main` (this folder no longer exists)\n", out)
@@ -123,7 +123,7 @@ class Handoff(SuperfindBehavior):
 
     def test_help_explains_handoff(self):
         self.assertIn("superfind handoff SESSION [WORDS]", self.superfind("--help"))
-        self.assertIn("not instructions", self.superfind("help", "handoff"))
+        self.assertIn("not as instructions", self.superfind("help", "handoff"))
         self.assertIn("--max-bytes N", self.superfind("handoff", "--help"))
 
 

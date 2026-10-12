@@ -12,12 +12,11 @@ from pathlib import Path
 from test_picker import tmux
 from test_superfind import SUPERFIND, claude, line, serve, tool, uid, user
 
-NOTICE = "Daily update check and anonymous usage · superfind telemetry"
+NOTICE = "Daily anonymous check-ins are on · superfind telemetry"
 UPDATE = "99.0.0 is out · superfind upgrade"
-PROMISE = ("It never sends a search, a path, a project name, or session text, and superfind.dev passes the check-in to "
-           "PostHog without your IP address.")
-HOW_TO_STOP = ("superfind telemetry off turns it off and deletes the install id; SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1 "
-               "in your environment do the same.")
+PROMISE = ("No searches, paths, project names, or session text are sent. "
+           "PostHog receives the check-in without your IP address.")
+HOW_TO_STOP = "To disable check-ins, run superfind telemetry off or set SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1."
 
 
 class Worker:
@@ -176,7 +175,7 @@ class TelemetryBehavior(unittest.TestCase):
 
         status = self.superfind("telemetry")
         self.assertEqual(status.stdout.splitlines()[2],
-                         f"Install id: {body['id']}, a random id made on this machine that names nothing but this install.")
+                         f"Install id: {body['id']} identifies only this install.")
         self.assertRegex(status.stdout.splitlines()[3], r"^Next check-in: the first time you open the picker after \w{3} \d{1,2} at \d\d:\d\d\.$")
 
     def test_scripted_commands_never_check_in_or_write_state_even_when_a_check_is_due(self):
@@ -204,15 +203,13 @@ class TelemetryBehavior(unittest.TestCase):
 
         result = self.superfind("telemetry", "off")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertEqual(result.stdout, "Telemetry is off: SUPERFIND_TELEMETRY=off is now in ~/.config/superfind/env, and the "
-                         "install id, queued events, and last check were deleted. superfind sends nothing and doesn't check "
-                         "for updates; superfind upgrade --check still works when you run it.\n")
+        self.assertEqual(result.stdout, "Saved SUPERFIND_TELEMETRY=off in ~/.config/superfind/env. Deleted the install id and pending check-in data. "
+                         "Check-ins and automatic update checks are off. Run superfind upgrade --check for a manual check.\n")
         self.assertEqual((self.home / ".config" / "superfind" / "env").read_text(), "TYPESAFE_API_KEY=abc\nSUPERFIND_TELEMETRY=off\n")
         self.assertEqual(sorted(p.name for p in self.state.iterdir()), ["check.lock", "install.json", "shown"])
         status = self.superfind("telemetry")
         self.assertEqual(status.stdout, 'Telemetry is off because SUPERFIND_TELEMETRY="off" is in ~/.config/superfind/env. '
-                         "superfind sends nothing and doesn't check for updates; superfind upgrade --check still works when "
-                         "you run it.\n")
+                         "Check-ins and automatic update checks are off. Run superfind upgrade --check for a manual check.\n")
         shown = self.superfind("telemetry", "--json")
         self.assertEqual((shown.returncode, shown.stdout), (0, ""))
         self.assertEqual(shown.stderr, 'superfind telemetry: off because SUPERFIND_TELEMETRY="off" is in ~/.config/superfind/env, '
@@ -325,12 +322,11 @@ class TelemetryBehavior(unittest.TestCase):
         result = self.superfind("telemetry")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
         lines = result.stdout.splitlines()
-        self.assertEqual(lines[0], "Telemetry is on. Once a day, when you open the picker, superfind sends this to superfind.dev and "
-                         "gets back the newest release's version:")
+        self.assertEqual(lines[0], "Telemetry is on. The picker sends this to superfind.dev at most once a day to check for updates:")
         self.assertEqual(json.loads(lines[1]), {"schema": 1, "id": "", "version": self.version, "os": os.uname().sysname.lower(),
                                                 "arch": {"x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}[os.uname().machine],
                                                 "method": "script", "events": []})
-        self.assertEqual(lines[2:], ["Install id: none yet; a random one is made at the first check-in.",
+        self.assertEqual(lines[2:], ["Install id: created randomly at the first check-in.",
                                      "Next check-in: the next time you open the picker.", PROMISE, HOW_TO_STOP])
         self.assertTrue((self.state / "shown" / "telemetry").exists())
         self.assertEqual(self.worker.requests, [])

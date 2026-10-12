@@ -401,8 +401,8 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertIn("--max-bytes N", self.superfind("show", "--help"))
         usage = self.superfind("--help")
         self.assertIn("superfind show SESSION", usage)
-        self.assertIn("Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cancelled;", usage)
-        self.assertIn("SESSION is a session id", self.superfind("help", "command"))
+        self.assertIn("Exit codes: 0 success, including no search matches; 1 failure or picker cancelled;", usage)
+        self.assertIn("SESSION is an id", self.superfind("help", "command"))
 
 
 def load_tests(loader, tests, pattern):

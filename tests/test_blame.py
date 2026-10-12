@@ -462,8 +462,8 @@ class Blame(SuperfindBehavior):
         for args, cwd, code, message in cases:
             result = self.blame(*args, cwd=cwd)
             self.assertEqual((result.returncode, result.stderr), (code, message), args)
-        self.assertIn("FILE:LINE    blames the commit that last changed that line", self.superfind("help", "blame"))
-        self.assertIn("To resume one, run the command that superfind command prints for its id.", self.superfind("help", "blame"))
+        self.assertIn("FILE:LINE       sessions behind the commit that last changed that line", self.superfind("help", "blame"))
+        self.assertIn("superfind command SESSION", self.superfind("help", "blame"))
         self.assertIn("superfind blame FILE|FILE:LINE|COMMIT [--json]", self.superfind("--help"))
 
 

@@ -92,7 +92,7 @@ class Installer(unittest.TestCase):
         ghostty.write_text("theme = dark\n")
         result = self.install("bash")
         self.assertEqual(ghostty.read_text(), "theme = dark\n")
-        self.assertIn("skipped the Ghostty keybind: on Omarchy, superfind gets a Hyprland key instead\n", result.stdout)
+        self.assertIn("Use the Omarchy desktop shortcut in Ghostty.\n", result.stdout)
 
     def test_on_omarchy_an_unknown_shell_still_gets_the_binding(self):
         path = self.omarchy("bindings.lua", "")
@@ -323,8 +323,8 @@ class ReleaseInstaller(unittest.TestCase):
         result = self.install(PATH=f"{self.stubs}:{brew}:/usr/bin:/bin")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.home / ".zshrc").read_text(), rc)
-        self.assertIn(f"{self.home}/.zshrc already sets up superfind; left it as it is", result.stdout)
-        self.assertIn(f"note: another superfind is installed at {brew}/superfind", result.stdout)
+        self.assertIn(f"Shell setup already exists in {self.home}/.zshrc", result.stdout)
+        self.assertIn(f"Another superfind is installed at {brew}/superfind. Check which copy your shell uses with: command -v superfind", result.stdout)
         self.assertEqual(self.installed_version(), "superfind 0.10.0")
 
     def test_a_release_that_does_not_run_leaves_the_installed_superfind_alone(self):
@@ -347,7 +347,7 @@ class ReleaseInstaller(unittest.TestCase):
             self.assertIn('  eval "$("$HOME/.local/bin/superfind" init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS\n',
                           result.stdout)
             self.assertIn('  "$HOME/.local/bin/superfind" init fish | source      # in ~/.config/fish/config.fish\n', result.stdout)
-            self.assertEqual(result.stdout.splitlines()[-1], f"done: run {self.home}/.local/bin/superfind to see what it does")
+            self.assertEqual(result.stdout.splitlines()[-1], f"Installed. Run {self.home}/.local/bin/superfind pick --run to choose and resume a session.")
             self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".local"])
 
     def test_on_omarchy_the_release_install_binds_super_shift_ctrl_f(self):

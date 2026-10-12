@@ -148,7 +148,7 @@ func TestTheTelemetryNoticeShowsOnceAndThatSessionSendsNothing(t *testing.T) {
 	spawned := telemetryOn(t)
 	write(t, filepath.Join(dir, ".cache", "superfind", "index.json"), "{}")
 	write(t, filepath.Join(dir, ".local", "state", "superfind", "shown", "version"), "0.10.0\n")
-	if got := line(v0110); got != "Daily update check and anonymous usage · superfind telemetry" {
+	if got := line(v0110); got != "Daily anonymous check-ins are on · superfind telemetry" {
 		t.Errorf("the first picker says %q, want the telemetry notice", got)
 	}
 	told := filepath.Join(dir, ".local", "state", "superfind", "shown", "telemetry")
