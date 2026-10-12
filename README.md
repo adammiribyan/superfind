@@ -93,7 +93,7 @@ In Ghostty, Cmd-Shift-O opens the picker. The install script adds this line to y
 keybind = super+shift+o=text:\x18c
 ```
 
-On Omarchy, Super-Shift-Ctrl-F opens superfind in a new terminal. The install script sets up both keys, and tells you what to add when one is taken.
+On Omarchy, Super-Shift-Ctrl-F opens superfind in a new terminal. The install script sets it up, and tells you what to add when the key is taken.
 
 </details>
 
