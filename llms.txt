@@ -4,7 +4,7 @@
 
 Install with `curl -fsSL https://superfind.dev/install | sh`. Alternatives are `brew install --cask adammiribyan/tap/superfind` and `go install github.com/adammiribyan/superfind@latest`.
 
-The curl installer sets up your shell. For other installs, add `eval "$(superfind init zsh)"` to `~/.zshrc`, `eval "$(superfind init bash)"` to `~/.bashrc` or `~/.bash_profile` on macOS, or `superfind init fish | source` to `~/.config/fish/config.fish`. Open a new terminal tab. Run `superfind`, `sfd`, or press Ctrl-X then c. Enter resumes the selection in its folder. The agent's CLI must be installed. Ctrl-R searches by description.
+The curl installer sets up your shell. For other installs, add `eval "$(superfind init zsh)"` to `~/.zshrc`, `eval "$(superfind init bash)"` to `~/.bashrc` or `~/.bash_profile` on macOS, or `superfind init fish | source` to `~/.config/fish/config.fish`. Open a new terminal tab. Run `superfind`, `sfd`, or press Ctrl-X then c. Enter resumes the selection in its folder, and Ctrl-O goes to that folder instead. The agent's CLI must be installed. Ctrl-R searches by description.
 
 Update with `superfind upgrade`. It saves the previous version for rollback. For Homebrew, Go, or source installs, it prints the update command instead.
 
