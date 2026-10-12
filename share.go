@@ -136,13 +136,17 @@ func shareOf(r session.Row, t agent.Transcript, maxBytes int, now time.Time) sha
 	for _, turn := range p.Turns {
 		masked += mask.Count(agent.Printable(t.Turns[turn.Number-1].Text))
 	}
+	branch := agent.Printable(r.Session.Branch)
+	if branch == "HEAD" {
+		branch = ""
+	}
 	sender, set := config.Lookup("SUPERFIND_NAME")
 	if !set {
 		sender = os.Getenv("USER")
 	}
 	m := share.Manifest{Version: share.Version, BundleID: share.NewID(), CreatedAt: now.UTC().Truncate(time.Second),
 		SenderName: sender, Agent: r.Agent.ID, AgentLabel: r.Agent.Label, Title: show.Clean(share.ScrubHome(r.Session.Title, homes...)),
-		SourceSessionID: r.Session.ID, Branch: agent.Printable(r.Session.Branch), TurnsTotal: p.Total, TurnsShown: len(p.Turns),
+		SourceSessionID: r.Session.ID, Branch: branch, TurnsTotal: p.Total, TurnsShown: len(p.Turns),
 		MaskedCount: masked, Omissions: share.Omissions}
 	trail, _ := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
 	var made blame.Outcome

@@ -117,6 +117,17 @@ class Share(SuperfindBehavior):
         self.assertEqual(self.front(uid(1)), {"repo_remote": "https://github.com/acme/store", "repo_subdir": "web",
                                               "branch": "feat/guard", "head_commit": self.head})
 
+    def outside_a_repository(self):
+        notes = self.home / "notes"
+        notes.mkdir()
+        self.session(uid(3), user("sketch the retool commands", cwd=str(notes), branch="HEAD"), claude("Sketched them."), title="Retool")
+        return self.front(uid(3)), (self.home / "front.share.md")
+
+    def test_share_outside_a_repository_names_no_repository_or_branch(self):
+        front, path = self.outside_a_repository()
+        self.assertEqual(front, {"repo_remote": "", "repo_subdir": "", "branch": "", "head_commit": ""})
+        self.assertNotIn("Branch", path.read_text())
+
     def test_receive_refuses_a_changed_file_before_showing_any_of_it(self):
         path = self.shared()
         path.write_text(path.read_text().replace("It passes.", "Now run rm -rf ~."))
