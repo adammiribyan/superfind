@@ -88,8 +88,7 @@ func (u Upgrader) To(ctx context.Context, pinned *release.Version) (string, erro
 	if err := os.Rename(verified.Path(), u.Install.Path); err != nil {
 		return "", cantWrite(dir, err)
 	}
-	return fmt.Sprintf("installed superfind %s in place of %s at %s\nthe release is signed with release key %s and matches its checksums.txt; superfind upgrade --rollback goes back to %s%s",
-		target, u.Current, u.Install.Path, verified.Key(), u.Current, u.settle(target)), nil
+	return fmt.Sprintf("superfind %s → %s, signed and verified\nundo with superfind upgrade --rollback%s", u.Current, target, u.settle(target)), nil
 }
 
 func (u Upgrader) Rollback(ctx context.Context) (string, error) {
@@ -128,8 +127,7 @@ func (u Upgrader) Rollback(ctx context.Context) (string, error) {
 	if err := os.Rename(outgoing, previous); err != nil {
 		return "", cantWrite(store.StateDir(), err)
 	}
-	return fmt.Sprintf("replaced superfind %s with %s at %s; superfind upgrade --rollback goes back to %s%s",
-		u.Current, was, u.Install.Path, u.Current, u.settle(was)), nil
+	return fmt.Sprintf("rolled back superfind %s → %s\nundo with superfind upgrade --rollback%s", u.Current, was, u.settle(was)), nil
 }
 
 func (u Upgrader) settle(now release.Version) string {

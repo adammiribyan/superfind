@@ -14,6 +14,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 ### Changed
 
 - The first run after upgrading may take longer while the session index rebuilds.
+- `superfind upgrade` prints the version change and how to undo it, and nothing more. While it works, its progress shows on one line that clears when it's done.
 
 ## [0.13.1] - 2026-10-12
 

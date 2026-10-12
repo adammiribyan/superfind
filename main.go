@@ -927,8 +927,12 @@ func runUpgrade(args []string) {
 		fail("superfind upgrade: can't tell where this superfind is: " + err.Error())
 	}
 	u := upgrade.Upgrader{Current: current, Install: upgrade.Detect(facts), Source: release.DefaultSource()}
+	showing := false
 	if term.IsTerminal(os.Stderr.Fd()) {
-		u.Progress = func(line string) { fmt.Fprintln(stderr, line) }
+		u.Progress = func(line string) {
+			showing = true
+			fmt.Fprint(stderr, "\r\x1b[K"+line+"…")
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	var message string
@@ -945,6 +949,9 @@ func runUpgrade(args []string) {
 	}
 	interrupted := ctx.Err() != nil
 	stop()
+	if showing {
+		fmt.Fprint(stderr, "\r\x1b[K")
+	}
 	if interrupted {
 		exit(130)
 	}
@@ -958,7 +965,7 @@ func upgradeOutcome(message string, err error) telemetry.Outcome {
 	switch {
 	case err != nil:
 		return telemetry.Failed
-	case strings.HasPrefix(message, "installed superfind "):
+	case strings.Contains(message, ", signed and verified\n"):
 		return telemetry.Installed
 	}
 	return telemetry.Unchanged
