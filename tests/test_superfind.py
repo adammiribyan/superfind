@@ -232,6 +232,17 @@ class SuperfindBehavior(unittest.TestCase):
         os.utime(path, (self.clock, self.clock))
         return path.resolve()
 
+    def history(self, session_id, *prompts, project="/work/billing", home=None, pasted=None):
+        home = Path(home) if home else self.home / ".claude"
+        with open(home / "history.jsonl", "a") as f:
+            for text in prompts:
+                self.clock += 60
+                entry = {"display": text, "pastedContents": pasted or {}, "timestamp": int(self.clock * 1000), "project": project}
+                if session_id:
+                    entry["sessionId"] = session_id
+                f.write(line(**entry) + "\n")
+        return home.resolve() / "history.jsonl" / (session_id or "")
+
     def superfind(self, *args):
         result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True)
         return ANSI.sub("", result.stdout)
@@ -1325,7 +1336,7 @@ class SuperfindBehavior(unittest.TestCase):
                 "branch": "main", "prompts": 1, "words": 300, "tool_calls": 1, "mtime": st.st_mtime}}}}))
         self.judged(waiting, "waiting")
         self.assertEqual(self.rows("is:waiting"), ["Ledger migration  waiting on you · 1d ago · tmp"])
-        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 16)
+        self.assertEqual(json.loads((cache / "index.json").read_text())["version"], 17)
 
     def test_an_older_search_index_forgets_the_sessions_it_held(self):
         import sqlite3

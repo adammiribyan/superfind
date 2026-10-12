@@ -172,6 +172,9 @@ func Label(key string, rows []Row) error {
 	}
 	var todo []job
 	for _, r := range rows {
+		if agent.TranscriptGone(r.Path) {
+			continue
+		}
 		id, mtime, err := r.Agent.Stat(r.Path)
 		if err != nil {
 			continue

@@ -32,6 +32,7 @@ func TestTheHandoffTitleSaysWhenTheSessionIsOpenElsewhere(t *testing.T) {
 func TestPickingASessionOpenInATmuxPaneSwitchesToThePane(t *testing.T) {
 	t.Setenv("TMUX", "/private/tmp/tmux-501/default,1,0")
 	row := session.Row{Agent: agent.Named("claude"), Home: "/home/me/.claude",
+		Path:    "/home/me/.claude/projects/-tmp/0f6cab12-3a4b-4c5d-8e9f-001122334455.jsonl",
 		Session: session.Session{ID: "0f6cab12-3a4b-4c5d-8e9f-001122334455", Title: "fix ledger", Cwd: "/tmp", Mtime: session.Now()},
 		Open:    &open.State{PID: 4242, Status: "idle", Tmux: &open.Pane{ID: "%3", Session: "work\x1b[2J", Window: 1}}}
 	want := "fix ledger" + render.Reset + render.Dim + " · in tmux session work, window 1\ntmux switch-client -t '%3'\n"
@@ -49,6 +50,7 @@ func TestPickingASessionOpenInATmuxPaneSwitchesToThePane(t *testing.T) {
 func TestPickingASessionOpenInATmuxPaneOutsideTmuxResumesIt(t *testing.T) {
 	t.Setenv("TMUX", "")
 	row := session.Row{Agent: agent.Named("claude"), Home: "/home/me/.claude",
+		Path:    "/home/me/.claude/projects/-tmp/0f6cab12-3a4b-4c5d-8e9f-001122334455.jsonl",
 		Session: session.Session{ID: "0f6cab12-3a4b-4c5d-8e9f-001122334455", Title: "fix ledger", Cwd: "/tmp", Mtime: session.Now() - 86400},
 		Open:    &open.State{PID: 4242, Status: "idle", Tmux: &open.Pane{ID: "%3", Session: "work", Window: 1}}}
 	want := "fix ledger" + render.Reset + render.Dim + " · already open in another window\ncd /tmp && CLAUDE_CONFIG_DIR=/home/me/.claude claude --resume 0f6cab12-3a4b-4c5d-8e9f-001122334455\n"

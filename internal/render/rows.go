@@ -87,6 +87,8 @@ func NoSessions() string {
 	return "No sessions yet in " + strings.Join(homes[:len(homes)-1], ", ") + ", or " + homes[len(homes)-1] + "."
 }
 
+const GoneMark = "transcript deleted"
+
 type RowText struct {
 	Title, Waiting string
 	Context        []string
@@ -102,6 +104,9 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	t.Context = append(t.Context, when(r), Flat(r.Session.Project()))
 	if r.FolderGone {
 		t.Context = append(t.Context, "folder removed")
+	}
+	if agent.TranscriptGone(r.Path) {
+		t.Context = append(t.Context, GoneMark)
 	}
 	t.Context = append(t.Context, shown.of(r)...)
 	return t
@@ -166,6 +171,8 @@ func CellsOf(r session.Row, t Tags) Cells {
 		c.Status = r.Status
 	case r.Open != nil:
 		c.Status = "open"
+	case agent.TranscriptGone(r.Path):
+		c.Status = GoneMark
 	case r.Status != "":
 		c.Status = r.Status
 	case r.Session.Active():

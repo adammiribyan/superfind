@@ -32,14 +32,15 @@ FIELDS = {
     "schema": "The version of this record format, `1` today.",
     "agent": "`claude`, `codex`, or `grok`.",
     "id": "The agent's own session id, the one its resume command takes.",
-    "path": "The transcript file. The one field that always names exactly one session.",
+    "path": "The transcript file, or `<home>/history.jsonl/<id>` when `transcript_gone` is true. "
+            "The one field that always names exactly one session.",
     "cwd": "The folder the session ran in.",
     "home": "The agent's home folder that holds the transcript, such as `~/.claude`.",
     "title": "The session's title: the one you or the agent gave it, or else its first request. "
              "Common keys and passwords in it are masked.",
     "project": "The last part of the session's folder, for display. For a Claude Code worktree under `.claude/worktrees`, the main checkout's folder.",
     "branch": "The git branch the transcript last recorded, or empty.",
-    "updated": "When the transcript last changed, in UTC.",
+    "updated": "When the transcript last changed, or the last prompt's time when `transcript_gone` is true, in UTC.",
     "prompts": "How many requests the session has, at least 1. In a session another program drove, its requests count.",
     "status": "`waiting` or `unfinished` when a TypeSafe label says so, and empty otherwise.",
     "active": "True when the transcript changed in the last two minutes, so the session may still be open "
@@ -49,7 +50,11 @@ FIELDS = {
             "as `{\"pane\": \"%3\", \"session\": \"work\", \"window\": 1}`, or `null` when superfind can't see the pane. "
             "Codex counts as open only when it was started with `codex resume <id>`.",
     "folder_gone": "True when the session's folder no longer exists. `resume` then moves to the nearest parent that does.",
-    "resume": "The shell command that resumes the session, with every value quoted for the shell.",
+    "transcript_gone": "True when Claude Code deleted the session's transcript and only your prompts in its "
+                       "`history.jsonl` are left. `resume` is then empty, and `show` and `handoff` print the prompts with their "
+                       "times. Set `cleanupPeriodDays` in Claude Code's `settings.json` to keep transcripts longer.",
+    "resume": "The shell command that resumes the session, with every value quoted for the shell. "
+              "Empty when `transcript_gone` is true.",
     "kind": "`agent` when another program started the session, such as `codex exec` or `claude -p`, and "
             "`interactive` otherwise.",
     "match": "On search and ask results, the passage that holds your words, or empty. Always empty in `show --json`.",

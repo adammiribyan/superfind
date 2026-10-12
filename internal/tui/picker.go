@@ -772,6 +772,10 @@ func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		return m, tea.Quit
 	}
+	if _, err := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd); err != nil {
+		m.message = err.Error()
+		return m, nil
+	}
 	var fresh *open.State
 	if state, ok := open.Find(agent.Places())[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
 		fresh = &state
