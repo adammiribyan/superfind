@@ -16,24 +16,25 @@ const (
 )
 
 type Record struct {
-	Schema     int         `json:"schema"`
-	Agent      string      `json:"agent"`
-	ID         string      `json:"id"`
-	Path       string      `json:"path"`
-	Cwd        string      `json:"cwd"`
-	Home       string      `json:"home"`
-	Title      string      `json:"title"`
-	Project    string      `json:"project"`
-	Branch     string      `json:"branch"`
-	Updated    string      `json:"updated"`
-	Prompts    int         `json:"prompts"`
-	Status     string      `json:"status"`
-	Active     bool        `json:"active"`
-	Open       *open.State `json:"open"`
-	FolderGone bool        `json:"folder_gone"`
-	Resume     string      `json:"resume"`
-	Kind       string      `json:"kind"`
-	Match      string      `json:"match"`
+	Schema         int         `json:"schema"`
+	Agent          string      `json:"agent"`
+	ID             string      `json:"id"`
+	Path           string      `json:"path"`
+	Cwd            string      `json:"cwd"`
+	Home           string      `json:"home"`
+	Title          string      `json:"title"`
+	Project        string      `json:"project"`
+	Branch         string      `json:"branch"`
+	Updated        string      `json:"updated"`
+	Prompts        int         `json:"prompts"`
+	Status         string      `json:"status"`
+	Active         bool        `json:"active"`
+	Open           *open.State `json:"open"`
+	FolderGone     bool        `json:"folder_gone"`
+	TranscriptGone bool        `json:"transcript_gone"`
+	Resume         string      `json:"resume"`
+	Kind           string      `json:"kind"`
+	Match          string      `json:"match"`
 }
 
 func StatusName(label string) string {
@@ -50,24 +51,26 @@ func StatusName(label string) string {
 
 func RecordOf(r Row, clean func(string) string) Record {
 	s := r.Session
+	resume, _ := agent.ResumeCommand(r.Agent, r.Home, r.Path, s.Cwd)
 	return Record{
-		Schema:     RecordSchema,
-		Agent:      r.Agent.ID,
-		ID:         s.ID,
-		Path:       r.Path,
-		Cwd:        s.Cwd,
-		Home:       r.Home,
-		Title:      clean(s.Title),
-		Project:    agent.Printable(s.Project()),
-		Branch:     agent.Printable(s.Branch),
-		Updated:    time.Unix(int64(s.Mtime), 0).UTC().Format(time.RFC3339),
-		Prompts:    s.Prompts,
-		Status:     StatusName(r.Status),
-		Active:     s.Active(),
-		Open:       r.Open,
-		FolderGone: r.FolderGone,
-		Resume:     agent.ResumeCommand(r.Agent, r.Home, s.Cwd, s.ID),
-		Kind:       KindOf(s),
+		Schema:         RecordSchema,
+		Agent:          r.Agent.ID,
+		ID:             s.ID,
+		Path:           r.Path,
+		Cwd:            s.Cwd,
+		Home:           r.Home,
+		Title:          clean(s.Title),
+		Project:        agent.Printable(s.Project()),
+		Branch:         agent.Printable(s.Branch),
+		Updated:        time.Unix(int64(s.Mtime), 0).UTC().Format(time.RFC3339),
+		Prompts:        s.Prompts,
+		Status:         StatusName(r.Status),
+		Active:         s.Active(),
+		Open:           r.Open,
+		FolderGone:     r.FolderGone,
+		TranscriptGone: agent.TranscriptGone(r.Path),
+		Resume:         resume,
+		Kind:           KindOf(s),
 	}
 }
 

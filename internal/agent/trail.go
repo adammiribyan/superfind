@@ -149,6 +149,9 @@ func stamp(s string) float64 {
 }
 
 func ReadTrail(a *Agent, path string, threads ...string) (Trail, error) {
+	if a.history && TranscriptGone(path) {
+		return Trail{}, nil
+	}
 	var t Trail
 	paths := []string{path}
 	var problems []error
@@ -170,6 +173,10 @@ func (p *PartUnread) Error() string { return p.err.Error() }
 func (p *PartUnread) Unwrap() error { return p.err }
 
 func ReadSession(a *Agent, path string) (Transcript, Trail, error) {
+	if a.history && TranscriptGone(path) {
+		t, err := read(a, path, Transcript{})
+		return t, Trail{}, err
+	}
 	r, err := a.reader(path, Transcript{Last: Replied})
 	if err != nil {
 		return Transcript{}, Trail{}, err

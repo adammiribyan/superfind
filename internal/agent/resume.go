@@ -7,12 +7,16 @@ import (
 	"strings"
 )
 
-func ResumeCommand(a *Agent, home, cwd, id string) string {
+func ResumeCommand(a *Agent, home, path, cwd string) (string, error) {
+	id := a.IDOf(path)
+	if a.history && TranscriptGone(path) {
+		return "", NoResume{home, id}
+	}
 	env := ""
 	if def := a.DefaultHome(); home != def && Resolve(home) != Resolve(def) {
 		env = a.homeVar + "=" + ShellQuote(home) + " "
 	}
-	return "cd " + ShellQuote(SurvivingDir(cwd)) + " && " + env + a.resume + " " + ShellQuote(id)
+	return "cd " + ShellQuote(SurvivingDir(cwd)) + " && " + env + a.resume + " " + ShellQuote(id), nil
 }
 
 var shellSafe = regexp.MustCompile(`^[A-Za-z0-9@_+:,./-]+$`)

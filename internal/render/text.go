@@ -402,6 +402,13 @@ func lowered(runes []rune) []rune {
 
 func isLetterOrDigit(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
 
+func At(at time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	return " · " + at.Local().Format("2006-01-02 15:04")
+}
+
 func when(r session.Row) string {
 	if r.Open != nil {
 		return "open"

@@ -5,10 +5,15 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 ## [Unreleased]
 
-> superfind upgrade says less
+> Find Claude sessions whose transcript Claude Code deleted
+
+### Added
+
+- Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.
 
 ### Changed
 
+- The first run after upgrading may take longer while the session index rebuilds.
 - `superfind upgrade` prints the version change and how to undo it, and nothing more. While it works, its progress shows on one line that clears when it's done.
 
 ## [0.13.1] - 2026-10-12

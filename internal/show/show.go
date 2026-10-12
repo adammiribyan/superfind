@@ -20,9 +20,10 @@ import (
 const DefaultMaxBytes = 60000
 
 type Turn struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
-	Cut  bool   `json:"cut,omitempty"`
+	Role string    `json:"role"`
+	Text string    `json:"text"`
+	Cut  bool      `json:"cut,omitempty"`
+	At   time.Time `json:"-"`
 }
 
 type Options struct {
@@ -151,6 +152,9 @@ func fateOf(o blame.Outcome) string {
 
 func WriteText(w io.Writer, r session.Record, c Conversation, outcomes []blame.Outcome) error {
 	fmt.Fprintf(w, "# %s\n%s · %s · %s\n", oneLine(r.Title), oneLine(r.Agent), oneLine(r.Cwd), oneLine(r.ID))
+	if r.TranscriptGone {
+		fmt.Fprintln(w, agent.GoneNote(r.Home))
+	}
 	for _, o := range outcomes {
 		fmt.Fprintln(w, outcomeLine(o))
 	}
@@ -162,7 +166,7 @@ func WriteText(w io.Writer, r session.Record, c Conversation, outcomes []blame.O
 		fmt.Fprintf(w, "\n… %d earlier %s not shown\n", c.Omitted, noun)
 	}
 	for _, t := range c.Turns {
-		if _, err := fmt.Fprintf(w, "\n## %s\n\n%s\n", speaker(t.Role, r), t.Text); err != nil {
+		if _, err := fmt.Fprintf(w, "\n## %s%s\n\n%s\n", speaker(t.Role, r), render.At(t.At), t.Text); err != nil {
 			return err
 		}
 	}

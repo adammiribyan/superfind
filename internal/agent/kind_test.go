@@ -54,7 +54,7 @@ func TestAClaudeSessionDrivenOnlyByAnotherSessionIsShownAsStartedByAnAgent(t *te
 	if !tr.ByAgent || strings.Join(tr.Prompts, "|") != "Review PR 14 please" {
 		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
 	}
-	if len(tr.Turns) != 2 || tr.Turns[0] != (Turn{"user", "Review PR 14 please"}) || tr.Turns[1] != (Turn{"assistant", "Fixed it."}) {
+	if len(tr.Turns) != 2 || tr.Turns[0] != (Turn{Role: "user", Text: "Review PR 14 please"}) || tr.Turns[1] != (Turn{Role: "assistant", Text: "Fixed it."}) {
 		t.Fatalf("turns = %+v", tr.Turns)
 	}
 	if strings.Join(tr.Messages, "|") != "Review PR 14 please|Fixed it." {
@@ -67,7 +67,7 @@ func TestAClaudeSessionWithBothKeepsOnlyWhatYouTyped(t *testing.T) {
 	if tr.ByAgent || tr.PeerDriven || strings.Join(tr.Prompts, "|") != "fix the login bug" {
 		t.Fatalf("got ByAgent=%v prompts=%q", tr.ByAgent, tr.Prompts)
 	}
-	want := []Turn{{"assistant", "Fixed it."}, {"user", "fix the login bug"}, {"assistant", "Fixed it.\n\nFixed it."}}
+	want := []Turn{{Role: "assistant", Text: "Fixed it."}, {Role: "user", Text: "fix the login bug"}, {Role: "assistant", Text: "Fixed it.\n\nFixed it."}}
 	if !slices.Equal(tr.Turns, want) {
 		t.Fatalf("turns = %+v", tr.Turns)
 	}
@@ -98,7 +98,7 @@ func TestAPreviewOfAMixedSessionLooksPastPeerRequestsForWhatYouTyped(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(turns, Turn{"user", "fix the login bug"}) || slices.Contains(turns, Turn{"user", "Review PR 14 please"}) {
+	if !slices.Contains(turns, Turn{Role: "user", Text: "fix the login bug"}) || slices.Contains(turns, Turn{Role: "user", Text: "Review PR 14 please"}) {
 		t.Fatalf("preview turns = %+v", turns)
 	}
 }

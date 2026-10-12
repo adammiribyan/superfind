@@ -2,6 +2,7 @@ package render
 
 import (
 	"database/sql"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -80,9 +81,16 @@ func PreviewBody(req PreviewRequest) ([]string, error) {
 		return []string{req.Secondary + clipText("  Couldn't read this session: "+err.Error(), width) + Reset}, err
 	}
 	var body []string
-	if req.Recent {
+	gone := agent.TranscriptGone(req.Path)
+	if gone {
+		for _, l := range render(agent.GoneNote(filepath.Dir(filepath.Dir(req.Path))), width) {
+			body = append(body, req.Secondary+l+Reset)
+		}
+		body = append(body, "")
+	}
+	if req.Recent || gone {
 		for _, t := range turns[max(len(turns)-recentTurns, 0):] {
-			body = append(body, speaker(t.Role, req.Agent))
+			body = append(body, speaker(t.Role, req.Agent)+req.Secondary+At(t.At)+Reset)
 			body = append(body, render(t.Text, width)...)
 			body = append(body, "")
 		}

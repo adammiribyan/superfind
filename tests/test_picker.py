@@ -558,6 +558,17 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Down", "Enter")
         self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
 
+    def test_enter_on_a_session_whose_transcript_is_gone_explains_and_runs_nothing(self):
+        prompt = line(display="fix the billing retry loop", pastedContents={}, timestamp=int(self.clock * 1000), project="/tmp",
+                      sessionId="aaaaaaaa-1111-4111-8111-111111111111")
+        (self.home / ".claude" / "history.jsonl").write_text(prompt + "\n")
+        self.open_picker()
+        self.wait_for("transcript deleted")
+        self.keys("Enter")
+        self.wait_for("Claude Code deleted this session's transcript, so Claude can't resume it.")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
     def test_the_first_picker_after_an_update_says_whats_new_once_and_prints_what_it_always_did(self):
         version = subprocess.run([str(SUPERFIND), "--version"], capture_output=True, text=True).stdout.split()[1]
         changelog = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text().splitlines()

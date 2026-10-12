@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
@@ -94,6 +95,7 @@ const (
 type Turn struct {
 	Role string
 	Text string
+	At   time.Time
 }
 
 type Transcript struct {
@@ -105,7 +107,7 @@ type Transcript struct {
 	Last                             Event
 	Hidden, Incomplete               bool
 	ByAgent, PeerDriven              bool
-	hear                             func(peer bool, role, text string)
+	hear                             func(peer bool, t Turn)
 	peer                             bool
 	from                             int
 }
@@ -193,7 +195,7 @@ func grow(b []byte, n int) []byte {
 
 func (t *Transcript) say(role, text string) {
 	if t.hear != nil {
-		t.hear(t.peer, role, text)
+		t.hear(t.peer, Turn{Role: role, Text: text})
 		return
 	}
 	if n := len(t.Turns); n == 0 || t.Turns[n-1].Role != role {
@@ -217,15 +219,30 @@ func (t *Transcript) ask(prompt string) {
 	t.say("user", prompt)
 }
 
+func (t *Transcript) prompt(text string, at time.Time) {
+	if t.hear != nil {
+		t.hear(t.peer, Turn{Role: "user", Text: text, At: at})
+		return
+	}
+	t.join()
+	t.Prompts = append(t.Prompts, text)
+	t.Turns = append(t.Turns, Turn{Role: "user", At: at})
+	t.from = len(t.Messages)
+	t.Messages = append(t.Messages, text)
+}
+
 func ReadTranscript(a *Agent, path string) (Transcript, error) {
 	return read(a, path, Transcript{Last: Replied})
 }
 
-func Listen(a *Agent, path string, hear func(peer bool, role, text string)) (Transcript, error) {
+func Listen(a *Agent, path string, hear func(peer bool, t Turn)) (Transcript, error) {
 	return read(a, path, Transcript{Last: Replied, hear: hear})
 }
 
 func read(a *Agent, path string, start Transcript) (Transcript, error) {
+	if a.history && TranscriptGone(path) {
+		return readPrompts(path, start)
+	}
 	r, err := a.reader(path, start)
 	if err != nil {
 		return Transcript{}, err
@@ -251,6 +268,10 @@ func skipLine(r *bufio.Reader) (bool, error) {
 }
 
 func ReadEnding(a *Agent, path string, enough func([]Turn) bool) ([]Turn, error) {
+	if a.history && TranscriptGone(path) {
+		t, err := read(a, path, Transcript{})
+		return t.Turns, err
+	}
 	f, err := openFile(path)
 	if err != nil {
 		return nil, err

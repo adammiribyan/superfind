@@ -19,6 +19,7 @@ type Agent struct {
 	glob     string
 	sidecar  string
 	resume   string
+	history  bool
 	IDOf     func(path string) string
 	Names    func(home string) map[string]string
 	reader   func(path string, start Transcript) (reader, error)
@@ -28,7 +29,7 @@ type Agent struct {
 
 var Agents = []*Agent{
 	{ID: "claude", Label: "Claude", homeVar: "CLAUDE_CONFIG_DIR", dotDir: ".claude", extraVar: "SUPERFIND_CLAUDE_DIRS",
-		glob: "projects/*/*.jsonl", resume: "claude --resume", IDOf: stem,
+		glob: "projects/*/*.jsonl", resume: "claude --resume", history: true, IDOf: stem,
 		reader: func(_ string, start Transcript) (reader, error) { return &parser{t: start}, nil }, trail: claudeTrail, parts: claudeParts},
 	{ID: "codex", Label: "Codex", homeVar: "CODEX_HOME", dotDir: ".codex", extraVar: "SUPERFIND_CODEX_DIRS",
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
@@ -179,6 +180,9 @@ func Locate(path string, in []Place) (Place, bool) {
 	for _, p := range in {
 		rel, under := strings.CutPrefix(path, p.Home+"/")
 		owned, _ := filepath.Match(p.Agent.glob, rel)
+		if !owned && p.Agent.history {
+			owned, _ = filepath.Match(historyFile+"/*", rel)
+		}
 		if under && owned && (!found || len(p.Home) > len(best.Home)) {
 			best, found = p, true
 		}

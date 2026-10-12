@@ -3,6 +3,7 @@ package show
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/mask"
@@ -24,6 +25,7 @@ func (g *group) cleaned() string {
 
 type turn struct {
 	role    string
+	at      time.Time
 	groups  []group
 	open    bool
 	dropped bool
@@ -99,12 +101,15 @@ type keeper struct {
 	since, every int
 }
 
-func (k *keeper) say(role, text string) {
-	if n := len(k.turns); n > 0 && k.turns[n-1].role == role {
+func (k *keeper) say(role, text string) { k.hear(agent.Turn{Role: role, Text: text}) }
+
+func (k *keeper) hear(said agent.Turn) {
+	role, text := said.Role, said.Text
+	if n := len(k.turns); n > 0 && k.turns[n-1].role == role && said.At.IsZero() {
 		k.turns[n-1].add(text)
 	} else {
 		k.total++
-		k.turns = append(k.turns, &turn{role: role})
+		k.turns = append(k.turns, &turn{role: role, at: said.At})
 		k.turns[n].add(text)
 		if k.opt.Tail > 0 && len(k.turns)-k.opt.Tail >= k.opt.Tail {
 			k.turns = slices.Delete(k.turns, 0, len(k.turns)-k.opt.Tail)
@@ -152,11 +157,11 @@ func (k *keeper) conversation() Conversation {
 	if first == len(k.turns) && first > 0 {
 		first--
 		t := k.turns[first]
-		kept = append(kept, Turn{Role: t.role, Text: "…" + lastBytes(t.text(), limit), Cut: true})
+		kept = append(kept, Turn{Role: t.role, Text: "…" + lastBytes(t.text(), limit), Cut: true, At: t.at})
 		c.Truncated = true
 	} else {
 		for _, t := range k.turns[first:] {
-			kept = append(kept, Turn{Role: t.role, Text: t.text()})
+			kept = append(kept, Turn{Role: t.role, Text: t.text(), At: t.at})
 		}
 	}
 	window := 0
@@ -177,11 +182,11 @@ func Read(a *agent.Agent, path string, opt Options) (Conversation, error) {
 
 func read(a *agent.Agent, path string, opt Options, every int) (Conversation, error) {
 	own, peers := &keeper{opt: opt, every: every}, &keeper{opt: opt, every: every}
-	t, err := agent.Listen(a, path, func(peer bool, role, text string) {
+	t, err := agent.Listen(a, path, func(peer bool, t agent.Turn) {
 		if peer {
-			peers.say(role, text)
+			peers.hear(t)
 		} else {
-			own.say(role, text)
+			own.hear(t)
 		}
 	})
 	if t.PeerDriven {
