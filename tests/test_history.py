@@ -1,9 +1,10 @@
 import json
 import os
+import subprocess
 import time
 import unittest
 
-from test_superfind import SuperfindBehavior, claude, tool, user
+from test_superfind import ANSI, SUPERFIND, SuperfindBehavior, claude, tool, user
 
 GONE = "aaaaaaaa-1111-4111-8111-111111111111"
 OTHER = "bbbbbbbb-2222-4222-8222-222222222222"
@@ -15,6 +16,19 @@ class HistoryBehavior(SuperfindBehavior):
     def setUp(self):
         super().setUp()
         self.env["TZ"] = "UTC"
+        self.here = None
+
+    def run_superfind(self, *args):
+        return subprocess.run([str(SUPERFIND), *args], env=self.env, cwd=self.here, capture_output=True, text=True)
+
+    def superfind(self, *args):
+        result = self.run_superfind(*args)
+        result.check_returncode()
+        return ANSI.sub("", result.stdout)
+
+    def go_to(self, folder):
+        self.here = folder
+        self.env["PWD"] = folder
 
     def stamp(self, ago):
         return time.strftime("%Y-%m-%d %H:%M", time.gmtime(int(self.clock - ago)))
@@ -39,7 +53,7 @@ class HistoryBehavior(SuperfindBehavior):
     def test_in_here_and_dates_filter_by_the_folder_and_the_last_prompt(self):
         self.history(GONE, "fix the billing retry loop", project="/tmp")
         self.history(OTHER, "fix the infra retry loop", project="/work/infra")
-        self.env["PWD"] = "/tmp"
+        self.go_to("/tmp")
         self.assertEqual(self.titles("in:here", "retry"), ["fix the billing retry loop"])
         day = time.strftime("%Y-%m-%d", time.localtime(self.clock + 2 * 86400))
         self.assertEqual(self.titles("after:" + day, "retry"), [])
@@ -66,7 +80,7 @@ class HistoryBehavior(SuperfindBehavior):
         self.session("a1", user("rename the invoice PDF files", cwd="/tmp"), tool("Edit"), claude("Renamed them."),
                      title="Invoice names")
         self.history(GONE, "fix the billing retry loop", "and the refund path", "and the receipts", project="/tmp")
-        self.env["PWD"] = "/tmp"
+        self.go_to("/tmp")
         result = self.run_superfind("last")
         self.assertEqual((result.returncode, result.stdout), (0, "Invoice names\ncd /tmp && claude --resume a1\n"))
 
