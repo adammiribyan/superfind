@@ -57,7 +57,10 @@ var (
 )
 
 func Unclosed(text string) bool {
-	text = maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key")))
+	text = maskKeys(maskPrivateKeys(text))
+	if !mayNameSecret(text) {
+		return false
+	}
 	for _, m := range quotedSecret.FindAllStringIndex(text, -1) {
 		quote, closed := text[m[1]-1], false
 		for i := m[1]; i < len(text) && !closed; i++ {
@@ -95,6 +98,9 @@ func secretValue(separator byte, quoted bool, value, after string) bool {
 }
 
 func maskNamedSecrets(text string) string {
+	if !mayNameSecret(text) {
+		return text
+	}
 	var out strings.Builder
 	last := 0
 	for _, m := range namedSecret.FindAllStringSubmatchIndex(text, -1) {
@@ -126,10 +132,45 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 func maskedAs(kind string) string { return "[masked " + kind + "]" }
 
 func Secrets(text string) string {
-	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key"))))
+	return maskNamedSecrets(maskKeys(maskPrivateKeys(text)))
+}
+
+func maskPrivateKeys(text string) string {
+	if !strings.Contains(text, "-----BEGIN ") {
+		return text
+	}
+	return privateKey.ReplaceAllLiteralString(text, maskedAs("private key"))
+}
+
+var keyMarks = []string{"sk-", "xai-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "AKIA", "ASIA", "xox", "tskey-",
+	"_live_", "_test_", "AIza", "phc_", "phx_", "eyJ", "://", "hooks.slack", "discord", "/webhook"}
+
+var longS = strings.NewReplacer("\u017f", "s")
+
+func folded(text string) string { return strings.ToLower(longS.Replace(text)) }
+
+func mayHoldKey(text string) bool {
+	for _, mark := range keyMarks {
+		if strings.Contains(text, mark) {
+			return true
+		}
+	}
+	return strings.Contains(text, "=") && strings.ContainsAny(text, "?&") || strings.Contains(folded(text), "bearer ")
+}
+
+func mayNameSecret(text string) bool {
+	if !strings.ContainsAny(text, ":=") {
+		return false
+	}
+	lower := folded(text)
+	return strings.Contains(lower, "pass") || strings.Contains(lower, "secret") || strings.Contains(lower, "key") ||
+		strings.Contains(lower, "token")
 }
 
 func maskKeys(text string) string {
+	if !mayHoldKey(text) {
+		return text
+	}
 	var out strings.Builder
 	for {
 		m := anySecret.FindStringSubmatchIndex(text)
