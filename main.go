@@ -93,20 +93,23 @@ Add the line for your shell to its startup file:
   superfind init fish | source    # ~/.config/fish/config.fish
 
 Open a new terminal tab. Run superfind or sfd, or press Ctrl-X then c.
-Enter resumes the selected session in its folder. The agent's CLI must be installed.
+Enter resumes the selected session in its folder. Ctrl-O goes to that folder instead.
+The agent's CLI must be installed.
 The resume command appears in your shell history, except in fish before 4.0.
 fish requires version 3.1 or later.
 `,
 	"pick": `superfind pick [--run]
 
 Choose a session in the full-screen picker. Type to search, use Up and Down to select,
-and press Enter. Ctrl-R searches by description. Tab switches the preview. Esc goes back
-or closes the picker. Search filters work here; see superfind help search.
+and press Enter. Ctrl-R searches by description. Tab switches the preview. Ctrl-O goes to
+the session's folder instead of resuming it. Esc goes back or closes the picker.
+Search filters work here; see superfind help search.
 
-By default, print the selected title and resume command on separate lines.
-The shell setup from superfind init runs that command for you.
+By default, print the selected title and resume command on separate lines. After Ctrl-O,
+the second line is cd -- FOLDER. The shell setup from superfind init runs that command for you.
 
-  --run           resume directly, for example from a desktop keyboard shortcut
+  --run           resume directly, for example from a desktop keyboard shortcut.
+                  Ctrl-O opens your shell in the session's folder.
 
 If the session is already open, Enter switches to its tmux pane or Ghostty tab when possible.
 Otherwise, Enter again resumes a second copy and Esc cancels.
@@ -316,7 +319,7 @@ const zshSetup = `superfind() {
   fi
   _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
   [[ -n $_sf_out ]] || return 0
-  print -r -- $'Resuming \e[1m'"${_sf_out%%%%$'\n'*}"$'\e[0m'
+  [[ ${_sf_out#*$'\n'} == 'cd -- '* ]] || print -r -- $'Resuming \e[1m'"${_sf_out%%%%$'\n'*}"$'\e[0m'
   print -s -- "${_sf_out#*$'\n'}"
   eval "${_sf_out#*$'\n'}"
 }
@@ -327,7 +330,7 @@ _superfind_widget() {
   local out
   if out=$(superfind pick); then
     zle -I
-    print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
+    [[ ${out#*$'\n'} == 'cd -- '* ]] || print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
     zle accept-line
   else
@@ -353,7 +356,7 @@ const bashSetup = `superfind() {
   fi
   _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
   [[ -n $_sf_out ]] || return 0
-  printf 'Resuming \e[1m%%s\e[0m\n' "${_sf_out%%%%$'\n'*}"
+  [[ ${_sf_out#*$'\n'} == 'cd -- '* ]] || printf 'Resuming \e[1m%%s\e[0m\n' "${_sf_out%%%%$'\n'*}"
   history -s "${_sf_out#*$'\n'}"
   eval "${_sf_out#*$'\n'}"
 }
@@ -385,7 +388,8 @@ const fishSetup = `function superfind
     set -l _sf_out ($_sf_run $argv); or return
     set -q _sf_out[1]; or return 0
     set -l _sf_resume (string join \n -- $_sf_out[2..-1] | string collect)
-    printf 'Resuming \e[1m%%s\e[0m\n' $_sf_out[1]
+    string match -q -- 'cd -- *' $_sf_resume
+    or printf 'Resuming \e[1m%%s\e[0m\n' $_sf_out[1]
     if test (string split . -- $version)[1] -ge 4
         history append -- $_sf_resume
     end
@@ -563,6 +567,25 @@ func resumeHere(r session.Row) {
 	}
 	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
 	fail("superfind pick --run: couldn't run " + command + ": " + err.Error())
+}
+
+func sessionFolder(r session.Row) string {
+	return agent.SurvivingDir(r.Session.Cwd)
+}
+
+func shellIn(dir string) {
+	if err := os.Chdir(dir); err != nil {
+		fail("superfind pick --run: couldn't go to " + dir + ": " + err.Error())
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	if err := output.Flush(); err != nil {
+		fail("superfind pick --run: couldn't write the output: " + err.Error())
+	}
+	err := syscall.Exec(shell, []string{shell}, os.Environ())
+	fail("superfind pick --run: couldn't run " + shell + ": " + err.Error())
 }
 
 func openWhere(o open.State) string {
@@ -1324,7 +1347,7 @@ func run(args []string) {
 			}
 			resume = true
 		}
-		chosen, err := tui.Pick(build())
+		chosen, folder, err := tui.Pick(build())
 		if err != nil {
 			fail(err.Error())
 		}
@@ -1332,10 +1355,16 @@ func run(args []string) {
 			exit(1)
 			return
 		}
-		if resume {
+		switch {
+		case folder && resume:
+			shellIn(sessionFolder(*chosen))
+		case folder:
+			fmt.Fprint(stdout, render.Flat(chosen.Session.Title)+"\ncd -- "+agent.ShellQuote(sessionFolder(*chosen))+"\n")
+		case resume:
 			resumeHere(*chosen)
+		default:
+			fmt.Fprint(stdout, handoff(*chosen))
 		}
-		fmt.Fprint(stdout, handoff(*chosen))
 	case "last":
 		runLast(args[1:])
 	default:

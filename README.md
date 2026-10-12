@@ -61,6 +61,7 @@ Run `sfd`, or press **Ctrl-X** then **c**. Type to search titles, projects, bran
 | --- | --- |
 | ↑ / ↓ | Select a session |
 | Enter | Resume the selected session |
+| Ctrl-O | Go to the session's folder instead |
 | Ctrl-R | Search by description |
 | Tab | Switch between the last exchange and recent conversation |
 | Esc | Go back or close |

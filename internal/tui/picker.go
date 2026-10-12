@@ -207,6 +207,7 @@ type picker struct {
 	asks     *asks
 	reported *atomic.Bool
 	chosen   *session.Row
+	folder   bool
 	quitting bool
 	reindex  bool
 	indexing bool
@@ -703,6 +704,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "enter":
 			return m.enter(confirming)
+		case "ctrl+o":
+			return m.goToFolder()
 		case "up", "ctrl+p":
 			m.cursor--
 			return m.afterMove()
@@ -797,6 +800,16 @@ func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.chosen, m.quitting = &chosen, true
+	return m, tea.Quit
+}
+
+func (m picker) goToFolder() (tea.Model, tea.Cmd) {
+	r := m.focused()
+	if r == nil {
+		return m, nil
+	}
+	chosen := *r
+	m.chosen, m.folder, m.quitting = &chosen, true, true
 	return m, tea.Quit
 }
 
@@ -938,16 +951,16 @@ func (m picker) hints() [][2]string {
 	case m.phase() == asked && len(m.shown) == 0:
 		return [][2]string{{"esc", "back to search"}}
 	case m.phase() == asked:
-		return [][2]string{{"enter", enter}, {"tab", "view"}, {"esc", "back to search"}}
+		return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-o", "go to folder"}, {"esc", "back to search"}}
 	case len(m.all) == 0:
 		return [][2]string{{"esc", "quit"}}
 	case len(m.shown) == 0:
 		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
-	return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}}
+	return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}, {"ctrl-o", "go to folder"}}
 }
 
-var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "tab": 4}
+var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "tab": 4, "ctrl-o": 5}
 
 func (m picker) footer(width int) string {
 	hints := m.hints()
@@ -1102,7 +1115,7 @@ func pathsOf(rows []session.Row) []string {
 	return paths
 }
 
-func Pick(b news.Build) (*session.Row, error) {
+func Pick(b news.Build) (*session.Row, bool, error) {
 	problem := ""
 	db, err := session.OpenSearch()
 	if err != nil {
@@ -1110,7 +1123,7 @@ func Pick(b news.Build) (*session.Row, error) {
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("superfind pick needs a terminal: %w", err)
+		return nil, false, fmt.Errorf("superfind pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
 	options := []tea.ProgramOption{tea.WithInput(tty), tea.WithOutput(tty)}
@@ -1135,7 +1148,7 @@ func Pick(b news.Build) (*session.Row, error) {
 		tty.WriteString(ansi.ClearProgramStatus)
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return final.(picker).chosen, nil
+	return final.(picker).chosen, final.(picker).folder, nil
 }

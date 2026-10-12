@@ -137,6 +137,22 @@ class PickerBehavior(unittest.TestCase):
         self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), "claude never ran")
         self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
 
+    def test_run_with_ctrl_o_opens_the_shell_in_the_sessions_folder(self):
+        self.fake_claude()
+        folder = self.home / "it's here"
+        folder.mkdir()
+        self.session("app", "Ledger migration", user("migrate the ledger", cwd=str(folder)), tool("Edit"), claude("Done."))
+        shell = self.home / "shell"
+        shell.write_text(f'#!/bin/sh\npwd > {self.out}.shell\n')
+        shell.chmod(0o755)
+        self.env["SHELL"] = str(shell)
+        self.open_picker(pick="pick --run")
+        self.keys("C-o")
+        self.assertEqual(self.result(), (0, ""))
+        self.assertTrue(self.until(Path(f"{self.out}.shell").exists), "the shell never ran")
+        self.assertEqual(Path(f"{self.out}.shell").read_text(), f"{folder}\n")
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+
     def test_run_cancelled_with_escape_runs_nothing(self):
         self.fake_claude()
         self.three_sessions()
@@ -718,6 +734,43 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("Resuming")
         self.assertIn("\n/tmp", self.screen())
 
+    def folder_through_shell(self, shell, open_keys):
+        stub = self.home / "stub"
+        stub.mkdir()
+        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").chmod(0o755)
+        folder = self.home / "it's here"
+        folder.mkdir()
+        self.session("app", "Ledger migration", user("migrate the ledger", cwd=str(folder)), tool("Edit"), claude("Done."))
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in {**self.env, "PATH": f"{stub}:/usr/bin:/bin"}.items())
+        start = {"zsh": "zsh -f -i", "bash": "bash --norc --noprofile -i", "fish": f"{shutil.which('fish')} --no-config -i"}[shell]
+        tmux("new-session", "-d", "-s", self.session_name, "-x", "140", "-y", "32", f"env -i {env} {start}")
+        time.sleep(0.5)
+        setup = f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"'
+        self.keys(setup, "Enter")
+        self.keys(*open_keys)
+        self.wait_for("Claude sessions")
+        self.keys("C-o")
+        self.keys("clear", "Enter")
+        self.keys("echo here:$PWD", "Enter")
+        self.wait_for(f"here:{folder}\n")
+        self.assertNotIn("Resuming", self.screen())
+        self.assertFalse(Path(f"{self.out}.resumed").exists())
+
+    def test_ctrl_o_in_zsh_goes_to_the_sessions_folder(self):
+        self.folder_through_shell("zsh", ["superfind", "Enter"])
+
+    def test_ctrl_o_from_ctrl_x_c_in_zsh_goes_to_the_sessions_folder(self):
+        self.folder_through_shell("zsh", ["C-x", "c"])
+
+    def test_ctrl_o_in_bash_goes_to_the_sessions_folder(self):
+        self.folder_through_shell("bash", ["sfd", "Enter"])
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_ctrl_o_in_fish_goes_to_the_sessions_folder(self):
+        self.folder_through_shell("fish", ["superfind", "Enter"])
+
     def last_through_shell(self, shell):
         stub = self.home / "stub"
         stub.mkdir()
@@ -957,7 +1010,7 @@ class PickerBehavior(unittest.TestCase):
         self.wait_for("1/3")
         self.keys("C-r")
         self.wait_for("Sessions by description")
-        self.assertIn("enter resume · tab view · esc back to search", self.screen())
+        self.assertIn("enter resume · tab view · ctrl-o go to folder · esc back to search", self.screen())
         self.assertEqual(self.titles(), ["Checkout double charge"])
         self.keys("Escape")
         self.wait_for("Claude sessions")

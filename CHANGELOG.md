@@ -9,6 +9,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 ### Added
 
+- Ctrl-O in the picker goes to the selected session's folder instead of resuming it. With the shell setup, your shell changes to that folder. `pick --run` opens your shell there.
 - Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.
 
 ### Changed
