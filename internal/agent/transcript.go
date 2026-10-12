@@ -97,7 +97,7 @@ type Turn struct {
 }
 
 type Transcript struct {
-	Cwd, Branch                      string
+	Cwd, Branch, Parent              string
 	CustomTitle, AITitle, LastPrompt string
 	Prompts, Messages                []string
 	Turns                            []Turn

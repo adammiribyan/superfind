@@ -1,4 +1,4 @@
-package show
+package mask
 
 import (
 	"regexp"
@@ -47,9 +47,33 @@ var secretPatterns = []secretPattern{
 
 var urlPassword = regexp.MustCompile(`^([a-z][a-z0-9+.-]*://[^\s:/@]*:)[^\s@/]+@$`)
 
-var namedSecret = regexp.MustCompile(`(?i)\b[a-z0-9_-]*?(?:password|passwd|passphrase|secret|api[_-]?key|access[_-]?key|` +
-	`access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)["']?([ \t]*)([:=])([ \t]*)` +
-	`(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|([^\s"',;&<>()\[\]{}` + "`" + `]+))`)
+const secretName = `(?i)\b[a-z0-9_-]*?(?:password|passwd|passphrase|secret|api[_-]?key|access[_-]?key|` +
+	`access[_-]?token|auth[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)["']?([ \t]*)([:=])([ \t]*)`
+
+var (
+	namedSecret = regexp.MustCompile(secretName +
+		`(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|([^\s"',;&<>()\[\]{}` + "`" + `]+))`)
+	quotedSecret = regexp.MustCompile(secretName + `["']`)
+)
+
+func Unclosed(text string) bool {
+	text = maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key")))
+	for _, m := range quotedSecret.FindAllStringIndex(text, -1) {
+		quote, closed := text[m[1]-1], false
+		for i := m[1]; i < len(text) && !closed; i++ {
+			switch {
+			case text[i] == '\\':
+				i++
+			case text[i] == quote, text[i] == '\n':
+				closed = true
+			}
+		}
+		if !closed {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	placeholder = regexp.MustCompile(`^(?:[$<{%]|\[masked |\*+$|x+$|\.\.\.$|…$)`)
@@ -101,7 +125,7 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 
 func maskedAs(kind string) string { return "[masked " + kind + "]" }
 
-func Mask(text string) string {
+func Secrets(text string) string {
 	return maskNamedSecrets(maskKeys(privateKey.ReplaceAllLiteralString(text, maskedAs("private key"))))
 }
 
@@ -139,4 +163,23 @@ func maskKeys(text string) string {
 	}
 	out.WriteString(text)
 	return out.String()
+}
+
+func EndsKey(text string) bool { return privateKeyEnd.MatchString(text) }
+
+func OpenKeyAt(text string) int {
+	if !strings.Contains(text, "PRIVATE KEY-----") {
+		return -1
+	}
+	found := privateKey.FindAllStringSubmatchIndex(text, -1)
+	if last := len(found) - 1; last >= 0 && found[last][2] == found[last][3] {
+		return found[last][0]
+	}
+	return -1
+}
+
+func CloseKeys(text string, open int) (string, string) {
+	closed := privateKey.ReplaceAllString(text[:open], maskedAs("private key"))
+	split := strings.LastIndexByte(closed, '\n') + 1
+	return closed[:split], closed[split:] + text[open:]
 }

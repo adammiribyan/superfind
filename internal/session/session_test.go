@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,8 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/adammiribyan/superfind/internal/mask"
 )
 
 func TestASessionIsHereFromItsFolderAndEverySubfolder(t *testing.T) {
@@ -216,6 +219,64 @@ func TestWithoutAKeyASessionThatStoppedPartwayIsMarkedUnfinished(t *testing.T) {
 		for _, r := range Annotate(rows, nil) {
 			if r.Status != want[name(r)] {
 				t.Errorf("with key %q, the %s session is labeled %q, want %q", key, name(r), r.Status, want[name(r)])
+			}
+		}
+	}
+}
+
+func TestMaskingOnlyTheStartOfALongTextClipsItAsMaskingAllOfItWould(t *testing.T) {
+	key := "sk-ant-api03-" + strings.Repeat("k", 40)
+	for _, n := range []int{titleRunes, promptRunes} {
+		for _, at := range []int{0, n - 30, n - 3, n + 2, n * 4, maskWindow - 20, maskWindow + 5} {
+			for _, tail := range []int{0, 100, maskWindow, 5 * maskWindow} {
+				s := strings.Repeat("ab ", at/3) + `password="correct horse battery staple" ` + key + " " + strings.Repeat("é", tail)
+				if got, want := clipMasked(s, n), clip(mask.Secrets(s), n); got != want {
+					t.Fatalf("n=%d at=%d tail=%d: got %q, want %q", n, at, tail, got, want)
+				}
+			}
+		}
+	}
+	for _, s := range []string{
+		`deploy with password="` + strings.Repeat("privatevalue7 ", 500) + `" done ` + strings.Repeat("z ", maskWindow),
+		"token eyJhbGciOiJIUzI1NiJ9.eyJ" + strings.Repeat("a", maskWindow) + ".c2lnbmF0dXJlc2ln " + strings.Repeat("z ", maskWindow),
+		strings.Repeat("ab ", maskWindow/3-5) + "eyJhbGciOiJIUzI1NiJ9.eyJ" + strings.Repeat("a", 2*maskWindow) + ".c2lnbmF0dXJlc2ln done",
+		`password='LEAK ` + strings.Repeat("a ", 1000) + `https://u:foo'bar@example.com ` + strings.Repeat("b ", 2500) + `' tail`,
+		`password="LEAK ` + strings.Repeat("a ", 900) + `-----BEGIN PRIVATE KEY----- " ` + strings.Repeat("b ", 2500) +
+			`-----END PRIVATE KEY-----" tail`,
+		"redis://u:hunter\u00a0two7@host " + strings.Repeat("z ", maskWindow),
+		strings.Repeat("ab\n", maskWindow/3) + "password=hunter\u00a0two7 done " + strings.Repeat("z ", maskWindow),
+	} {
+		for _, n := range []int{titleRunes, promptRunes} {
+			if got, want := clipMasked(s, n), clip(mask.Secrets(s), n); got != want {
+				t.Fatalf("n=%d: got %q, want %q", n, got[:min(len(got), 120)], want[:min(len(want), 120)])
+			}
+		}
+	}
+	long := strings.Repeat("x", 3*maskWindow) + " password=hunter2hunter2 " + strings.Repeat("y ", maskWindow)
+	if got, want := clipMasked(long, promptRunes), clip(mask.Secrets(long), promptRunes); got != want {
+		t.Fatalf("a single word longer than the window: got %q, want %q", got, want)
+	}
+}
+
+func TestMaskingAWindowMatchesMaskingEverythingOnRandomLongTexts(t *testing.T) {
+	pieces := []string{"a ", "word ", "\n", "\t", "\u00a0", `"`, `'`, `\`, "password=", `password="`, `secret: '`, "api_key = ",
+		"https://u:p4ss'w@host ", "redis://:pw\u00a0x9@h ", "Bearer ", "abcdef0123456789abcdef ", "sk-ant-api03-" + strings.Repeat("q", 40) + " ",
+		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlc2lnbmF0dXJl ", "-----BEGIN PRIVATE KEY-----\n", "-----END PRIVATE KEY-----\n",
+		"ghp_" + strings.Repeat("z", 36), "?token=0123456789abcdefgh ", "é", "👩‍💻"}
+	rng := rand.New(rand.NewPCG(16, 2026))
+	for i := range 400 {
+		var b strings.Builder
+		for b.Len() < 2*maskWindow+rng.IntN(6*maskWindow) {
+			if rng.IntN(4) == 0 {
+				b.WriteString(pieces[rng.IntN(len(pieces))])
+			} else {
+				b.WriteString(strings.Repeat("ab ", 1+rng.IntN(200)))
+			}
+		}
+		s := b.String()
+		for _, n := range []int{titleRunes, promptRunes} {
+			if got, want := clipMasked(s, n), clip(mask.Secrets(s), n); got != want {
+				t.Fatalf("text %d, n=%d:\n got %q\nwant %q", i, n, got, want)
 			}
 		}
 	}

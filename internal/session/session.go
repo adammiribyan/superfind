@@ -57,6 +57,8 @@ type Row struct {
 	Status     string
 	FolderGone bool
 	Open       *open.State
+	Commits    int
+	Threads    []string
 }
 
 func Annotate(rows []Row, held map[open.Key]open.State) []Row {
