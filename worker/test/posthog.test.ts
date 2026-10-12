@@ -70,6 +70,19 @@ test("each queued event is forwarded as its own event, timed by hours_ago, with 
   assert.notEqual(JSON.parse(other.posthog()[0].body!).batch[1].uuid, batch[1].uuid);
 });
 
+test("a share event is forwarded with only the install's version, OS, and CPU type", async () => {
+  const w = world();
+  await w.call({ ...GOOD, events: [{ ...UPGRADED, name: "share_started", props: {} }] });
+  await Promise.all(w.waits);
+  assert.deepEqual(JSON.parse(w.posthog()[0].body!).batch[1], {
+    event: "share_started",
+    distinct_id: ID,
+    uuid: "8c0e7ae7-37a6-857f-b681-d06938a5af96",
+    timestamp: "2026-10-11T09:00:00.000Z",
+    properties: { version: "0.12.0", os: "darwin", arch: "arm64", $process_person_profile: false, $geoip_disable: true, $ip: null },
+  });
+});
+
 test("an install keeps one event uuid all day and gets a new one the next UTC day", async () => {
   const w = world();
   const uuids: string[] = [];
