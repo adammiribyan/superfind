@@ -130,9 +130,9 @@ func runShare(args []string) {
 }
 
 func shareOf(r session.Row, t agent.Transcript, maxBytes int, now time.Time) share.Share {
-	home := agent.Home()
+	homes := []string{agent.Home(), agent.Resolve(agent.Home())}
 	for i := range t.Turns {
-		t.Turns[i].Text = share.ScrubHome(t.Turns[i].Text, home)
+		t.Turns[i].Text = share.ScrubHome(t.Turns[i].Text, homes...)
 	}
 	p := briefing.Build(t, briefing.Options{MaxBytes: maxBytes})
 	masked := 0
@@ -144,7 +144,7 @@ func shareOf(r session.Row, t agent.Transcript, maxBytes int, now time.Time) sha
 		sender = os.Getenv("USER")
 	}
 	m := share.Manifest{Version: share.Version, BundleID: share.NewID(), CreatedAt: now.UTC().Truncate(time.Second),
-		SenderName: sender, Agent: r.Agent.ID, AgentLabel: r.Agent.Label, Title: show.Clean(share.ScrubHome(r.Session.Title, home)),
+		SenderName: sender, Agent: r.Agent.ID, AgentLabel: r.Agent.Label, Title: show.Clean(share.ScrubHome(r.Session.Title, homes...)),
 		SourceSessionID: r.Session.ID, Branch: agent.Printable(r.Session.Branch), TurnsTotal: p.Total, TurnsShown: len(p.Turns),
 		MaskedCount: masked, Omissions: share.Omissions}
 	if c, err := share.Inspect(r.Session.Cwd); err == nil {

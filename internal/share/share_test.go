@@ -129,6 +129,9 @@ func TestTheHomeFolderBecomesATilde(t *testing.T) {
 	if got := ScrubHome(text, "/Users/ada/"); got != want {
 		t.Errorf("ScrubHome gave\n%s\nwant\n%s", got, want)
 	}
+	if got := ScrubHome("/private/var/h/a and /var/h/b", "/var/h", "/private/var/h"); got != "~/a and ~/b" {
+		t.Errorf("with a symlinked home ScrubHome gave %q", got)
+	}
 	if got := ScrubHome("/x/y", "/"); got != "/x/y" {
 		t.Errorf("a root home changed %q", got)
 	}

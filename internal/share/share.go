@@ -2,6 +2,7 @@ package share
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -200,12 +202,13 @@ func Remote(raw string) string {
 	return "https://" + host + strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), ".git")
 }
 
-func ScrubHome(text, home string) string {
-	home = filepath.Clean(home)
-	if home == "/" || home == "." || !strings.Contains(text, home) {
-		return text
+func ScrubHome(text string, homes ...string) string {
+	for _, home := range slices.SortedFunc(slices.Values(homes), func(a, b string) int { return cmp.Compare(len(b), len(a)) }) {
+		if home = filepath.Clean(home); home != "/" && home != "." && strings.Contains(text, home) {
+			text = regexp.MustCompile(regexp.QuoteMeta(home)+`\b`).ReplaceAllLiteralString(text, "~")
+		}
 	}
-	return regexp.MustCompile(regexp.QuoteMeta(home)+`\b`).ReplaceAllLiteralString(text, "~")
+	return text
 }
 
 type receipt struct {
