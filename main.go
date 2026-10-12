@@ -431,7 +431,11 @@ func handoff(r session.Row) string {
 		return render.Flat(r.Session.Title) + render.Reset + render.Dim + fmt.Sprintf(" · in tmux session %s, window %d", render.Flat(pane.Session), pane.Window) +
 			"\ntmux switch-client -t " + agent.ShellQuote(pane.ID) + "\n"
 	}
-	return handoffTitle(r) + "\n" + agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID) + "\n"
+	command, err := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd)
+	if err != nil {
+		fail("superfind: " + err.Error())
+	}
+	return handoffTitle(r) + "\n" + command + "\n"
 }
 
 func runLast(args []string) {
@@ -1279,7 +1283,11 @@ func run(args []string) {
 		if !indexed {
 			fail("superfind command: not an indexed session: " + args[1])
 		}
-		fmt.Fprintln(stdout, agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, r.Session.ID))
+		command, err := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd)
+		if err != nil {
+			fail("superfind command: " + err.Error())
+		}
+		fmt.Fprintln(stdout, command)
 	case "show":
 		runShow(args[1:])
 	case "handoff":

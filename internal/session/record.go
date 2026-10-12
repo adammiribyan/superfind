@@ -50,6 +50,7 @@ func StatusName(label string) string {
 
 func RecordOf(r Row, clean func(string) string) Record {
 	s := r.Session
+	resume, _ := agent.ResumeCommand(r.Agent, r.Home, r.Path, s.Cwd)
 	return Record{
 		Schema:     RecordSchema,
 		Agent:      r.Agent.ID,
@@ -66,7 +67,7 @@ func RecordOf(r Row, clean func(string) string) Record {
 		Active:     s.Active(),
 		Open:       r.Open,
 		FolderGone: r.FolderGone,
-		Resume:     agent.ResumeCommand(r.Agent, r.Home, s.Cwd, s.ID),
+		Resume:     resume,
 		Kind:       KindOf(s),
 	}
 }

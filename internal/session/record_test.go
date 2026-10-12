@@ -86,7 +86,7 @@ func TestRecordOfCleansTextFieldsButKeepsPathsExact(t *testing.T) {
 	if rec.Schema != RecordSchema || rec.Agent != "claude" || rec.Updated != "1970-01-01T00:00:00Z" || rec.Prompts != 3 {
 		t.Fatalf("got %+v", rec)
 	}
-	if want := agent.ResumeCommand(r.Agent, r.Home, r.Session.Cwd, "id1"); rec.Resume != want {
+	if want, _ := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd); rec.Resume != want {
 		t.Fatalf("resume = %q, want %q", rec.Resume, want)
 	}
 }

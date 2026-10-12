@@ -177,11 +177,11 @@ func Read(a *agent.Agent, path string, opt Options) (Conversation, error) {
 
 func read(a *agent.Agent, path string, opt Options, every int) (Conversation, error) {
 	own, peers := &keeper{opt: opt, every: every}, &keeper{opt: opt, every: every}
-	t, err := agent.Listen(a, path, func(peer bool, role, text string) {
+	t, err := agent.Listen(a, path, func(peer bool, t agent.Turn) {
 		if peer {
-			peers.say(role, text)
+			peers.say(t.Role, t.Text)
 		} else {
-			own.say(role, text)
+			own.say(t.Role, t.Text)
 		}
 	})
 	if t.PeerDriven {
