@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/blame"
 	"github.com/adammiribyan/superfind/internal/config"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/mask"
@@ -143,13 +144,34 @@ func shareOf(r session.Row, t agent.Transcript, maxBytes int, now time.Time) sha
 		SenderName: sender, Agent: r.Agent.ID, AgentLabel: r.Agent.Label, Title: show.Clean(share.ScrubHome(r.Session.Title, homes...)),
 		SourceSessionID: r.Session.ID, Branch: agent.Printable(r.Session.Branch), TurnsTotal: p.Total, TurnsShown: len(p.Turns),
 		MaskedCount: masked, Omissions: share.Omissions}
-	if c, err := share.Inspect(r.Session.Cwd); err == nil {
-		m.RepoSubdir, m.HeadCommit, m.Branch = c.Subdir, c.Head, cmp.Or(c.Branch, m.Branch)
-		if len(c.Remotes) > 0 {
-			m.RepoRemote = c.Remotes[0]
+	trail, _ := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
+	var made blame.Outcome
+	for _, o := range blame.OutcomesOf(r, trail) {
+		if o.Kind == blame.Made && o.Commit != "" {
+			made = o
 		}
 	}
-	trail, _ := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
+	c, err := share.Inspect(r.Session.Cwd)
+	m.RepoSubdir = c.Subdir
+	remotes := c.Remotes
+	switch {
+	case made.Commit != "":
+		m.HeadCommit = made.Commit
+		if w, err := share.Inspect(made.Repo); err == nil {
+			remotes = w.Remotes
+			if share.OnBranch(w.Root, w.Branch, made.Commit) {
+				m.Branch = w.Branch
+			}
+		}
+	case err == nil:
+		m.Branch = cmp.Or(m.Branch, c.Branch)
+		if m.HeadCommit = share.Tip(c.Root, m.Branch); m.HeadCommit == "" && m.Branch != "" && c.Branch == m.Branch {
+			m.HeadCommit = c.Head
+		}
+	}
+	if len(remotes) > 0 {
+		m.RepoRemote = remotes[0]
+	}
 	for _, pr := range trail.PRs {
 		if ref := "https://github.com/" + pr.Repo + "/pull/" + strconv.Itoa(pr.Number); !slices.Contains(m.PRRefs, ref) {
 			m.PRRefs = append(m.PRRefs, ref)

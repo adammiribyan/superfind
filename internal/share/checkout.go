@@ -60,6 +60,15 @@ func Inspect(dir string) (Checkout, error) {
 	return c, nil
 }
 
+func Tip(dir, branch string) string {
+	tip, _ := git(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+branch+"^{commit}")
+	return tip
+}
+
+func OnBranch(dir, branch, commit string) bool {
+	return branch != "" && ancestor(dir, commit, "refs/heads/"+branch)
+}
+
 type RemoteMatch int
 
 const (

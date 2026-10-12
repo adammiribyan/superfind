@@ -7,6 +7,7 @@ import time
 import unittest
 from pathlib import Path
 
+from test_blame import claude_tool
 from test_picker import tmux
 from test_superfind import SUPERFIND, SuperfindBehavior, claude, uid, user
 
@@ -33,9 +34,9 @@ class Share(SuperfindBehavior):
         self.git(self.work, "checkout", "-q", "-b", "feat/guard")
         self.head = self.commit(self.work, "guard the pay button")
         self.git(self.work, "remote", "add", "origin", "https://zorblax:ghp_" + "t" * 36 + "@github.com/acme/store.git")
-        self.session(uid(1), user("customers get charged twice when they tap Pay again", cwd=str(self.work / "web")),
+        self.session(uid(1), user("customers get charged twice when they tap Pay again", cwd=str(self.work / "web"), branch="feat/guard"),
                      claude(f"The button stays enabled. I read {self.work}/web/pay.ts and the key {KEY}."),
-                     user(f"add a test in {self.home}/work/store/web/pay.test.ts", cwd=str(self.work / "web")),
+                     user(f"add a test in {self.home}/work/store/web/pay.test.ts", cwd=str(self.work / "web"), branch="feat/guard"),
                      claude("Added a test that taps Pay twice. It passes."), title="Checkout double charge")
 
     def git(self, folder, *args):
@@ -93,6 +94,28 @@ class Share(SuperfindBehavior):
         again = self.run_in(self.home, "share", uid(1), "--yes")
         self.assertEqual((again.returncode, again.stdout), (1, ""))
         self.assertEqual(again.stderr, "superfind share: checkout-double-charge.share.md already exists. Pass another --out FILE.\n")
+
+    def front(self, session_id):
+        result = self.run_in(self.home, "share", session_id, "--yes", "--out", "front.share.md")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = (self.home / "front.share.md").read_text()
+        return {k: v.strip('"') for k, v in re.findall(r"^(branch|head_commit|repo_subdir|repo_remote): (.*)$", text, re.M)}
+
+    def test_share_names_the_branch_and_commit_the_session_made_in_another_worktree(self):
+        other = self.home / "work" / "store-retry"
+        self.git(self.work, "worktree", "add", "-q", "-b", "feat/retry", str(other))
+        made = self.commit(other, "retry a failed charge once")
+        self.session(uid(2), user("retry a failed charge once", cwd=str(self.work / "web"), branch="feat/guard"),
+                     claude_tool(time.time(), "b1", "Bash", command=f'cd {other} && git commit -qam "retry a failed charge once"'),
+                     claude("Committed."), title="Retry")
+        self.assertEqual(self.front(uid(2)), {"repo_remote": "https://github.com/acme/store", "repo_subdir": "web",
+                                              "branch": "feat/retry", "head_commit": made})
+
+    def test_share_names_the_sessions_branch_after_the_checkout_moves_on(self):
+        self.git(self.work, "checkout", "-q", "-b", "feat/next")
+        self.commit(self.work, "start the next thing")
+        self.assertEqual(self.front(uid(1)), {"repo_remote": "https://github.com/acme/store", "repo_subdir": "web",
+                                              "branch": "feat/guard", "head_commit": self.head})
 
     def test_receive_refuses_a_changed_file_before_showing_any_of_it(self):
         path = self.shared()
