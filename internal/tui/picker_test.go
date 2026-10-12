@@ -713,6 +713,12 @@ func TestAPickerOpenedWithWordsShowsTheirKeywordMatchesAndAsksAtOnce(t *testing.
 	if want := "invoice | Ask failed: Claude Code didn't answer. | [b]"; got != want {
 		t.Fatalf("after a failed ask the picker shows %q, want %q", got, want)
 	}
+	next, _ = m.Update(indexed{rows: m.rows})
+	m = next.(picker)
+	got = fmt.Sprint(m.shownMessage(), " | ", pathsOf(m.shown))
+	if want := "Ask failed: Claude Code didn't answer. | [b]"; got != want {
+		t.Fatalf("after the sessions refreshed the picker shows %q, want %q", got, want)
+	}
 }
 
 func TestAPickerOpenedWithWordsBeforeAnySessionsAsksOnceTheyArrive(t *testing.T) {

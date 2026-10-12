@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -198,6 +199,7 @@ type picker struct {
 	askSeq      int
 	asking      bool
 	askedFor    string
+	askFailure  string
 	explained   map[string]string
 	message     string
 	notice      string
@@ -367,7 +369,7 @@ func (a *asks) stop() {
 func (m *picker) forgetAsk() {
 	m.asks.stop()
 	m.askSeq++
-	m.asking, m.askedFor, m.explained, m.askFirst = false, "", nil, false
+	m.asking, m.askedFor, m.askFailure, m.explained, m.askFirst = false, "", "", nil, false
 }
 
 func (m *picker) askAbout(query string) {
@@ -389,7 +391,7 @@ func (m *picker) filter() {
 		m.agents = q.Agents
 		m.populate()
 	}
-	m.message = m.problem
+	m.message = cmp.Or(m.askFailure, m.problem)
 	var err error
 	switch {
 	case strings.TrimSpace(query) == "", m.db == nil:
@@ -506,7 +508,7 @@ func (m picker) startAsk() (picker, tea.Cmd) {
 	m.asks.stop()
 	m.asks.ctx, m.asks.cancel = context.WithCancel(context.Background())
 	m.askSeq++
-	m.asking, m.message = true, ""
+	m.asking, m.message, m.askFailure = true, "", ""
 	seq, db, ctx, running := m.askSeq, m.db, m.asks.ctx, &m.asks.running
 	running.Add(1)
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
@@ -690,7 +692,8 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.asking = false
 		if msg.err != nil {
-			m.message = msg.err.Error()
+			m.askFailure = msg.err.Error()
+			m.message = m.askFailure
 			return m, nil
 		}
 		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
