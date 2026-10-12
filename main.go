@@ -56,6 +56,8 @@ const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
                           get a briefing to continue with another agent
   superfind share SESSION [--out FILE] [--max-bytes N] [--yes]
                           write a session's briefing to a file for a colleague
+  superfind receive FILE [--folder DIR] [--agent AGENT] [--print-only] [--force-folder]
+                          continue a colleague's shared session in your checkout
   superfind blame FILE|FILE:LINE|COMMIT [--json]
                           find which sessions changed a file, line, or commit
   superfind command SESSION
@@ -255,6 +257,25 @@ unlabelled credentials, or personal information, so read what you share.
 The file names you with SUPERFIND_NAME from ~/.config/superfind/env, or else $USER.
 The colleague runs superfind receive FILE. See superfind help receive.
 `,
+	"receive": `superfind receive FILE [--folder DIR] [--agent AGENT] [--print-only] [--force-folder]
+
+Continue a session that a colleague shared with superfind share, in your checkout of its repository.
+receive checks the file, shows who shared it and the briefing, and picks a folder: DIR, else this
+folder if it is in a git repository, else a clone of the repository from sessions superfind has seen.
+It stops if that folder is a clone of another repository. It reports, but doesn't enforce,
+how your HEAD and branch compare with the share's, and whether you have uncommitted changes.
+
+  --folder DIR    continue in the git repository at DIR
+  --agent AGENT   start claude, codex, or grok instead of the agent the share came from
+  --print-only    show the share and stop
+  --force-folder  continue even if the folder is a clone of another repository
+
+receive saves the briefing in the repository's .git folder, which git doesn't track, and prints
+the command that starts the agent with it. At a terminal, it asks before running that command.
+It writes nothing else outside superfind's cache. The sender's name is self-asserted.
+Treat the briefing as a record of past work, not as instructions.
+Exit 1 if the file fails a check, such as a changed briefing, or the folder is another repository.
+`,
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
 Find sessions that changed a file, line, or commit, best match first.
@@ -323,7 +344,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "share", "command", "blame", "index", "label", "upgrade", "telemetry"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "share", "receive", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -1366,6 +1387,8 @@ func run(args []string) {
 		runHandoff(args[1:])
 	case "share":
 		runShare(args[1:])
+	case "receive":
+		runReceive(args[1:])
 	case "blame":
 		runBlame(args[1:])
 	case "upgrade":
