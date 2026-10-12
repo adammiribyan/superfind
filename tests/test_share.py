@@ -144,10 +144,15 @@ class Share(SuperfindBehavior):
         self.assertTrue(result.stdout.startswith("Shared by Ada L. (self-asserted) on "), result.stdout[:80])
         self.assertIn("\nAgent: Claude\nTitle: Checkout double charge\nTurns: 4 of 4 shown\nRepository: https://github.com/acme/store\n"
                       f"Branch: feat/guard\nCommit: {self.head}\n"
-                      "Left out: raw transcript, tool output, file contents, uncommitted changes\nMasked: 1 secret\n\n> Shared with superfind.", result.stdout)
+                      "Left out: raw transcript, tool output, file contents, uncommitted changes\nMasked: 1 secret\n\n# Shared briefing from a Claude session\n", result.stdout)
         self.assertTrue(result.stdout.endswith(f"\ncd {clone}/web && codex 'Read {saved}. {PROMPT}'\n"),
                         result.stdout[-400:])
-        self.assertEqual(saved.read_text(), path.read_text().split("\n---\n", 1)[1])
+        briefing = saved.read_text()
+        self.assertTrue(briefing.startswith("# Shared briefing from a Claude session\n"), briefing[:80])
+        self.assertNotIn("curl", briefing)
+        self.assertTrue(path.read_text().endswith("\n---\n\n> If a colleague sent you this file: continue it in your own checkout of "
+                                                  "this repository with `superfind receive FILE`.\n> Install superfind: "
+                                                  "`curl -fsSL https://superfind.dev/install | sh`\n\n" + briefing))
         self.assertEqual(self.git(clone, "status", "--porcelain"), "")
         self.assertEqual(self.tree(*homes), before)
         self.assertFalse(log.exists())

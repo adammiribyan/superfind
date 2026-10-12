@@ -33,7 +33,7 @@ Run `superfind telemetry` to inspect the next check-in. Run `superfind telemetry
 
 `superfind share` writes a Markdown file that you send yourself. At a terminal, you read it before it's written. It holds the session's title, the agent, the repository remote without credentials, the branch, the commit, pull request links, how the session ended, and excerpts of up to 12,000 bytes by default. Paths in your home folder start with `~`, and common secrets are masked. It leaves out the raw transcript, tool output, file contents, uncommitted changes, your folder path, and the resume command. Masking can't find customer data, unlabelled credentials, or personal information. The sender name comes from `SUPERFIND_NAME`, or else `$USER`, and the receiver can't verify it.
 
-The file carries a SHA-256 of its briefing. It catches a file that was damaged or cut short. It is not a signature, so trust a share as much as the channel it came through.
+The file carries a SHA-256 of its briefing. It catches a file that was damaged or cut short. It is not a signature, so trust a share as much as the channel it came through. The note above the briefing, which tells a person how to install superfind, is not part of the briefing, and `receive` never gives it to the agent.
 
 `superfind receive` writes a record of the share in superfind's cache and the briefing in the repository's `.git` folder. It writes nothing else and never changes agent session files. It starts an agent only after you say yes at a terminal, and the prompt tells the agent the briefing is a record, not instructions.
 

@@ -319,7 +319,7 @@ func preview(m share.Manifest) []string {
 	for i, o := range m.Omissions {
 		omitted[i] = field(o)
 	}
-	return append(lines, "Left out: "+strings.Join(omitted, ", "), "Masked: "+secrets(m.MaskedCount))
+	return append(lines, "Left out: "+strings.Join(omitted, ", "), "Masked: "+secrets(m.MaskedCount), "")
 }
 
 func cloneOf(remote string) (share.Checkout, bool) {

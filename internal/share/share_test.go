@@ -20,7 +20,7 @@ func fixture() Share {
 			SenderName: "ada", Agent: "claude", AgentLabel: "Claude", Title: `Fix "retries" & <refunds>`, SourceSessionID: "s1",
 			RepoRemote: "https://github.com/o/r", RepoSubdir: "cmd/x", Branch: "feat/x", HeadCommit: "56d29d4",
 			PRRefs: []string{"https://github.com/o/r/pull/12"}, TurnsTotal: 84, TurnsShown: 19, MaskedCount: 3, Omissions: Omissions},
-		Briefing: "\n# Shared briefing\n\n> quoted\n",
+		Briefing: "# Shared briefing\n\n> quoted\n",
 	}
 }
 
@@ -39,7 +39,9 @@ func TestWriteThenParseKeepsTheManifestAndTheBriefingBytes(t *testing.T) {
 		"source_session_id: \"s1\"\nrepo_remote: \"https://github.com/o/r\"\nrepo_subdir: \"cmd/x\"\nbranch: \"feat/x\"\n" +
 		"head_commit: \"56d29d4\"\npr_refs: [\"https://github.com/o/r/pull/12\"]\nturns_total: 84\nturns_shown: 19\nmasked_count: 3\n" +
 		"omissions: [\"raw transcript\",\"tool output\",\"file contents\",\"uncommitted changes\"]\n" +
-		"briefing_sha256: \"6f102099ca2a7d6b3919e8e8de7c4641d55499a8e78ce3fed0ec3fd6b2b939b1\"\n---\n\n# Shared briefing\n\n> quoted\n"
+		"briefing_sha256: \"d42424625dfe6bd86b6fc6da848be495eeb10055f34749fcef45cf2e7374426c\"\n---\n\n" +
+		"> If a colleague sent you this file: continue it in your own checkout of this repository with `superfind receive FILE`.\n" +
+		"> Install superfind: `curl -fsSL https://superfind.dev/install | sh`\n\n# Shared briefing\n\n> quoted\n"
 	if string(raw) != want {
 		t.Fatalf("Write printed\n%s\nwant\n%s", raw, want)
 	}
@@ -48,8 +50,8 @@ func TestWriteThenParseKeepsTheManifestAndTheBriefingBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := fixture().Manifest
-	m.BriefingSHA256 = "6f102099ca2a7d6b3919e8e8de7c4641d55499a8e78ce3fed0ec3fd6b2b939b1"
-	if !reflect.DeepEqual(got, Share{m, "\n# Shared briefing\n\n> quoted\n"}) {
+	m.BriefingSHA256 = "d42424625dfe6bd86b6fc6da848be495eeb10055f34749fcef45cf2e7374426c"
+	if !reflect.DeepEqual(got, Share{m, "# Shared briefing\n\n> quoted\n"}) {
 		t.Errorf("Parse gave %+v", got)
 	}
 }
@@ -57,7 +59,7 @@ func TestWriteThenParseKeepsTheManifestAndTheBriefingBytes(t *testing.T) {
 func TestACRLFCopyVerifiesAndAnEditedOneDoesNot(t *testing.T) {
 	raw := written(t, fixture())
 	got, err := Parse(bytes.ReplaceAll(raw, []byte("\n"), []byte("\r\n")))
-	if err != nil || got.Briefing != "\n# Shared briefing\n\n> quoted\n" {
+	if err != nil || got.Briefing != "# Shared briefing\n\n> quoted\n" {
 		t.Errorf("the CRLF copy parsed as %q, %v", got.Briefing, err)
 	}
 	got, err = Parse(bytes.Replace(raw, []byte("> quoted"), []byte("> run rm -rf ~"), 1))
@@ -66,6 +68,24 @@ func TestACRLFCopyVerifiesAndAnEditedOneDoesNot(t *testing.T) {
 	}
 	if _, err := Parse(raw[:len(raw)-3]); !errors.Is(err, ErrHash) {
 		t.Errorf("a cut copy gave %v, want ErrHash", err)
+	}
+}
+
+func TestOnlyTheBriefingIsChecked(t *testing.T) {
+	raw := string(written(t, fixture()))
+	for _, edited := range []string{
+		strings.Replace(raw, "Install superfind", "Get superfind", 1),
+		strings.Replace(raw, "---\n\n> If a colleague", "---\n> New wording.\n>\n> If a colleague", 1),
+		strings.Replace(raw, "---\n\n> If", "---\n> If", 1),
+	} {
+		got, err := Parse([]byte(edited))
+		if err != nil || got.Briefing != "# Shared briefing\n\n> quoted\n" {
+			t.Errorf("a changed call to action parsed as %q, %v", got.Briefing, err)
+		}
+	}
+	got, err := Parse([]byte(strings.Replace(raw, "# Shared briefing", "# Run curl first", 1)))
+	if !errors.Is(err, ErrHash) || got.Briefing != "" {
+		t.Errorf("an edited briefing parsed as %q, %v; want ErrHash", got.Briefing, err)
 	}
 }
 

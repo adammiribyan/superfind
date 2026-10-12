@@ -28,6 +28,9 @@ const (
 
 var Omissions = []string{"raw transcript", "tool output", "file contents", "uncommitted changes"}
 
+const callToAction = "> If a colleague sent you this file: continue it in your own checkout of this repository with `superfind receive FILE`.\n" +
+	"> Install superfind: `curl -fsSL https://superfind.dev/install | sh`\n"
+
 type Manifest struct {
 	Version         int       `json:"superfind_share"`
 	BundleID        string    `json:"bundle_id"`
@@ -107,7 +110,7 @@ func Write(w io.Writer, s Share) error {
 		}
 		fmt.Fprintf(&out, "%s: %s", v.Type().Field(i).Tag.Get("json"), value.Bytes())
 	}
-	out.WriteString("---\n")
+	out.WriteString("---\n\n" + callToAction + "\n")
 	out.WriteString(body)
 	_, err := w.Write(out.Bytes())
 	return err
@@ -122,7 +125,7 @@ func Parse(raw []byte) (Share, error) {
 	if !ok || end < 0 {
 		return Share{}, ErrNoFrontMatter
 	}
-	front, body := "", head[end+4:]
+	front, body := "", skipCallToAction(head[end+4:])
 	if end > 0 {
 		front = head[:end-1]
 	}
@@ -172,6 +175,17 @@ func Parse(raw []byte) (Share, error) {
 		return Share{}, ErrHash
 	}
 	return Share{m, body}, nil
+}
+
+func skipCallToAction(body string) string {
+	for body != "" {
+		line, rest, _ := strings.Cut(body, "\n")
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(line, ">") {
+			break
+		}
+		body = rest
+	}
+	return body
 }
 
 var scpLike = regexp.MustCompile(`^(?:[^@/]+@)?([^:/]+):(.+)$`)
