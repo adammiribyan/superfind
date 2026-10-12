@@ -3,9 +3,9 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
-## [Unreleased]
+## [0.13.0] - 2026-10-12
 
-> blame reads every branch; show --json carries commit messages
+> file: finds sessions by file, and blame is instant
 
 ### Added
 
@@ -330,6 +330,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
+[0.13.0]: https://github.com/adammiribyan/superfind/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adammiribyan/superfind/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adammiribyan/superfind/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/adammiribyan/superfind/compare/v0.9.1...v0.10.0
