@@ -150,7 +150,7 @@ func TestUpgradeReplacesTheBinaryKeepsTheOldOneAndRollsBackTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "installed superfind 0.13.0 in place of 0.12.0 at " + f.bin + "/superfind\nthe release is signed with release key F8D8C9C1F5F2C355 and matches its checksums.txt; superfind upgrade --rollback goes back to 0.12.0"
+	want := "superfind 0.12.0 → 0.13.0, signed and verified\nundo with superfind upgrade --rollback"
 	if got != want {
 		t.Fatalf("To = %q\nwant %q", got, want)
 	}
@@ -175,7 +175,7 @@ func TestUpgradeReplacesTheBinaryKeepsTheOldOneAndRollsBackTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "replaced superfind 0.13.0 with 0.12.0 at " + f.bin + "/superfind; superfind upgrade --rollback goes back to 0.13.0"; got != want {
+	if want := "rolled back superfind 0.13.0 → 0.12.0\nundo with superfind upgrade --rollback"; got != want {
 		t.Fatalf("Rollback = %q\nwant %q", got, want)
 	}
 	if f.installed(t) != "0.12.0" || f.previous(t) != "0.13.0" {
@@ -190,7 +190,7 @@ func TestUpgradeReplacesTheBinaryKeepsTheOldOneAndRollsBackTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "replaced superfind 0.12.0 with 0.13.0 at " + f.bin + "/superfind; superfind upgrade --rollback goes back to 0.12.0"; got != want {
+	if want := "rolled back superfind 0.12.0 → 0.13.0\nundo with superfind upgrade --rollback"; got != want {
 		t.Fatalf("second Rollback = %q\nwant %q", got, want)
 	}
 	if f.installed(t) != "0.13.0" || f.previous(t) != "0.12.0" {
@@ -227,7 +227,7 @@ func TestAPinnedOlderReleaseIsADowngradeThatMarksTheVersionLeft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(got, "installed superfind 0.12.0 in place of 0.13.0 at ") {
+	if !strings.HasPrefix(got, "superfind 0.13.0 → 0.12.0, signed and verified\n") {
 		t.Fatalf("To = %q", got)
 	}
 	if f.installed(t) != "0.12.0" || f.previous(t) != "0.13.0" {

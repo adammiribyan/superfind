@@ -22,7 +22,6 @@ TESTDATA = REPO / "internal" / "release" / "testdata"
 MACHINES = {"x86_64": "amd64", "amd64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
 PLATFORM = f"{platform.system().lower()}_{MACHINES[platform.machine()]}"
 OLD, NEW = "0.12.0", "0.13.0"
-KEY_ID = "F8D8C9C1F5F2C355"
 BUILT = {}
 ARCHIVES = {}
 
@@ -180,9 +179,7 @@ class Upgrade(unittest.TestCase):
         self.publish_new()
         result = self.upgrade(SUPERFIND_TELEMETRY="")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertEqual(result.stdout, f"installed superfind {NEW} in place of {OLD} at {self.bin}/superfind\n"
-                         f"the release is signed with release key {KEY_ID} and matches its checksums.txt; "
-                         f"superfind upgrade --rollback goes back to {OLD}\n")
+        self.assertEqual(result.stdout, f"superfind {OLD} → {NEW}, signed and verified\nundo with superfind upgrade --rollback\n")
         self.assertEqual(self.version(), f"superfind {NEW}")
         self.assertEqual((self.bin / "superfind").read_bytes(), built(NEW).read_bytes())
         self.assertEqual((self.state / "previous" / "superfind").read_bytes(), old)
@@ -199,15 +196,13 @@ class Upgrade(unittest.TestCase):
         self.assertEqual(self.upgrade().returncode, 0)
         result = self.upgrade("--rollback")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertEqual(result.stdout, f"replaced superfind {NEW} with {OLD} at {self.bin}/superfind; "
-                         f"superfind upgrade --rollback goes back to {NEW}\n")
+        self.assertEqual(result.stdout, f"rolled back superfind {NEW} → {OLD}\nundo with superfind upgrade --rollback\n")
         self.assertEqual(self.version(), f"superfind {OLD}")
         self.assertEqual(self.version(self.state / "previous" / "superfind"), f"superfind {NEW}")
         self.assertEqual(sorted(p.name for p in (self.state / "skip").iterdir()), [NEW])
         result = self.upgrade("--rollback")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertEqual(result.stdout, f"replaced superfind {OLD} with {NEW} at {self.bin}/superfind; "
-                         f"superfind upgrade --rollback goes back to {OLD}\n")
+        self.assertEqual(result.stdout, f"rolled back superfind {OLD} → {NEW}\nundo with superfind upgrade --rollback\n")
         self.assertEqual(self.version(), f"superfind {NEW}")
         self.assertEqual(self.version(self.state / "previous" / "superfind"), f"superfind {OLD}")
         self.assertEqual(sorted(p.name for p in self.bin.iterdir()), ["superfind"])
@@ -238,7 +233,7 @@ class Upgrade(unittest.TestCase):
         self.publish_new()
         result = self.upgrade("--version=0.12.1")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertTrue(result.stdout.startswith(f"installed superfind 0.12.1 in place of {OLD} at {self.bin}/superfind\n"), result.stdout)
+        self.assertTrue(result.stdout.startswith(f"superfind {OLD} → 0.12.1, signed and verified\n"), result.stdout)
         self.assertEqual(self.version(), "superfind 0.12.1")
         self.assertEqual(self.version(self.state / "previous" / "superfind"), f"superfind {OLD}")
         self.assertFalse((self.state / "skip").exists())
@@ -250,7 +245,7 @@ class Upgrade(unittest.TestCase):
         self.releases.latest = NEW
         result = self.upgrade("--version", "0.12.1")
         self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertTrue(result.stdout.startswith(f"installed superfind 0.12.1 in place of {NEW} at {self.bin}/superfind\n"), result.stdout)
+        self.assertTrue(result.stdout.startswith(f"superfind {NEW} → 0.12.1, signed and verified\n"), result.stdout)
         self.assertEqual(self.version(), "superfind 0.12.1")
         self.assertEqual(self.version(self.state / "previous" / "superfind"), f"superfind {NEW}")
         self.assertEqual(sorted(p.name for p in (self.state / "skip").iterdir()), [NEW])
@@ -413,9 +408,10 @@ class Upgrade(unittest.TestCase):
         os.close(master)
         stdout, _ = proc.communicate()
         self.assertEqual(proc.returncode, 0)
-        self.assertTrue(stdout.startswith(f"installed superfind {NEW} in place of {OLD}"), stdout)
-        self.assertEqual(progress.decode().replace("\r\n", "\n"), "checking the newest release\n"
-                         f"downloading superfind {NEW} for {PLATFORM.replace('_', ' ')}\nchecking that the new superfind runs\n")
+        self.assertTrue(stdout.startswith(f"superfind {OLD} → {NEW}, signed and verified"), stdout)
+        self.assertEqual(progress.decode(), "\r\x1b[Kchecking the newest release…"
+                         f"\r\x1b[Kdownloading superfind {NEW} for {PLATFORM.replace('_', ' ')}…"
+                         "\r\x1b[Kchecking that the new superfind runs…\r\x1b[K")
 
     def test_check_rollback_and_version_are_separate_options(self):
         self.install(OLD)
