@@ -217,3 +217,17 @@ func firstRune(s string) rune {
 	r, _ := utf8.DecodeRuneInString(s)
 	return r
 }
+
+func TestMaskFindsSecretsThatOnlyCaseFoldingNames(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"auth_toKen=Zx9Qw8Er7Ty6Ui5Op4", "auth_toKen=[masked secret]"},
+		{"paſſword=correct7horse", "paſſword=[masked secret]"},
+		{"AUTHORIZATION: BEARER " + strings.Repeat("j7", 15), "AUTHORIZATION: BEARER [masked bearer token]"},
+		{"get /x?TOKEN=" + strings.Repeat("a1", 10), "get /x?TOKEN=[masked token in a URL]"},
+	}
+	for _, c := range cases {
+		if got := Secrets(c.in); got != c.want {
+			t.Errorf("Secrets(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
