@@ -18,7 +18,7 @@ func trailOf(t *testing.T, a *Agent, path string, lines ...string) Trail {
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	tr, err := ReadTrail(a, path, nil)
+	tr, err := ReadTrail(a, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,13 +37,18 @@ func TestAClaudeTrailHasItsEditsCommitsAndPullRequests(t *testing.T) {
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:00Z","message":{"content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/w/a.go","old_string":"a","new_string":"b"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:00:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"The file has been updated"}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:00:30Z","message":{"content":[{"type":"tool_use","id":"e2","name":"Edit","input":{"file_path":"/w/c.go","old_string":"a","new_string":"b"}}]}}`,
-		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","message":{"content":[{"type":"tool_result","tool_use_id":"e2","is_error":true,"content":"String to replace not found"}]}}`,
+		`{"type":"user","timestamp":"2026-10-09T10:00:31Z","toolUseResult":"Error: String to replace not found","message":{"content":[{"type":"tool_result","tool_use_id":"e2","is_error":true,"content":"String to replace not found"}]}}`,
+		`{"type":"assistant","timestamp":"2026-10-09T10:00:40Z","message":{"content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/w/README.md"}}]}}`,
+		`{"type":"user","timestamp":"2026-10-09T10:00:41Z","message":{"content":[{"type":"tool_result","tool_use_id":"r1","content":"# Billing"}]}}`,
+		`{"type":"assistant","timestamp":"2026-10-09T10:00:50Z","message":{"content":[{"type":"tool_use","id":"r2","name":"Read","input":{"file_path":"/w/missing.md"}}]}}`,
+		`{"type":"user","timestamp":"2026-10-09T10:00:51Z","message":{"content":[{"type":"tool_result","tool_use_id":"r2","is_error":true,"content":"File does not exist."}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:01:00Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"go test ./..."}}]}}`,
 		`{"type":"assistant","timestamp":"2026-10-09T10:02:00Z","message":{"content":[{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"`+strings.ReplaceAll(commitCommand, `"`, `\"`)+`"}}]}}`,
 		`{"type":"user","timestamp":"2026-10-09T10:02:01Z","message":{"content":[{"type":"tool_result","tool_use_id":"b2","content":"[main 1a2b3c4d] fix: retry a charge once"}]}}`,
 		`{"type":"pr-link","prRepository":"acme/billing","prNumber":7}`)
 	want := Trail{
-		Edits:   []Edit{{"/w/a.go", 1791540000}, {"/w/b.go", 1791540300}},
+		Edits:   []Edit{{"/w/a.go", 1791540000, false}, {"/w/c.go", 1791540030, true}, {"/w/b.go", 1791540300, false}},
+		Reads:   []Edit{{"/w/README.md", 1791540040, false}},
 		Commits: []Commit{{commitCommand, "1a2b3c4d", 1791540120, ""}},
 		PRs:     []PR{{"acme/billing", 7}},
 	}
@@ -77,7 +82,8 @@ func TestACodexTrailReadsFileChangesPatchesAndCommandsWithTheirOutput(t *testing
 		`{"timestamp":"2026-10-09T10:03:31Z","type":"response_item","payload":{"type":"function_call_output","call_id":"c3","output":"Process exited with code 1\nOutput:\nhook failed"}}`,
 		`{"timestamp":"2026-10-09T10:04:00Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","command":["/bin/zsh","-lc","gh pr create --fill"],"aggregated_output":"https://github.com/acme/billing/pull/12\n"}}}`)
 	want := Trail{
-		Edits:   []Edit{{"/w/src/a.ts", 1791540060}, {"/w/src/old.ts", 1791540060}, {"/w/src/b.ts", 1791540120}},
+		Edits: []Edit{{"/w/src/a.ts", 1791540060, false}, {"/w/src/old.ts", 1791540060, false}, {"/w/src/c.ts", 1791540090, true},
+			{"/w/src/b.ts", 1791540120, false}},
 		Commits: []Commit{{"git commit -m 'feat: add the b module'", "0abc1234", 1791540180, "/w"}},
 		PRs:     []PR{{"acme/billing", 12}},
 	}
@@ -88,11 +94,13 @@ func TestACodexTrailReadsFileChangesPatchesAndCommandsWithTheirOutput(t *testing
 
 func TestAGrokTrailReadsEditsAndTerminalCommits(t *testing.T) {
 	tr := trailOf(t, Named("grok"), filepath.Join(t.TempDir(), "sessions", "%2Fw", "s1", "chat_history.jsonl"),
+		`{"type":"assistant","content":"","tool_calls":[{"id":"t0","name":"read_file","arguments":"{\"target_file\":\"/w/a.rb\",\"limit\":40}"}]}`,
 		`{"type":"assistant","content":"","tool_calls":[{"id":"t1","name":"search_replace","arguments":"{\"file_path\":\"/w/a.rb\",\"old_string\":\"a\",\"new_string\":\"b\"}"}]}`,
 		`{"type":"assistant","content":"","tool_calls":[{"id":"t2","name":"run_terminal_command","arguments":"{\"command\":\"git commit -am 'fix: keep the crumbs on one line'\"}"}]}`,
 		`{"type":"tool_result","tool_call_id":"t2","content":"[main 5d6e7f80] fix: keep the crumbs on one line"}`)
 	want := Trail{
-		Edits:   []Edit{{"/w/a.rb", 0}},
+		Edits:   []Edit{{"/w/a.rb", 0, false}},
+		Reads:   []Edit{{"/w/a.rb", 0, false}},
 		Commits: []Commit{{"git commit -am 'fix: keep the crumbs on one line'", "5d6e7f80", 0, ""}},
 	}
 	if !reflect.DeepEqual(tr, want) {
@@ -123,28 +131,6 @@ func TestOnlyCommandsThatRunGitCommitAreCommits(t *testing.T) {
 		`bash -lc 'git commit -qm "fix: retry a charge once"'`, `git commit -qm "fix: refund; document --dry-run"`}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %q", got)
-	}
-}
-
-func TestATrailIsReadOnlyWhenItsFileMentionsANeedleEvenAcrossChunks(t *testing.T) {
-	dir := t.TempDir()
-	edit := `{"type":"assistant","timestamp":"2026-10-09T10:00:00Z","message":{"content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/w/refund.go"}}]}}`
-	result := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"ok"}]}}`
-	window := 1<<20 + len("refund.go") - 1
-	opening := `{"type":"user","message":{"content":"`
-	padding := opening + strings.Repeat("x", window-4-strings.Index(edit, "refund.go")-1-len(opening)-3) + `"}}`
-	if start := len(padding) + 1 + strings.Index(edit, "refund.go"); start != window-4 {
-		t.Fatalf("the needle starts at %d, not across the first chunk's end at %d", start, window)
-	}
-	path := filepath.Join(dir, "s.jsonl")
-	if err := os.WriteFile(path, []byte(padding+"\n"+edit+"\n"+result+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for needle, want := range map[string]int{"refund.go": 1, "charge.go": 0} {
-		tr, err := ReadTrail(Named("claude"), path, [][]byte{[]byte(needle)})
-		if err != nil || len(tr.Edits) != want {
-			t.Errorf("needle %q: got %d edits, %v; want %d", needle, len(tr.Edits), err, want)
-		}
 	}
 }
 

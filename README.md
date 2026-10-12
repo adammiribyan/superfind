@@ -52,7 +52,7 @@ Run `sfd`, or press **Ctrl-X** then **c**, and start typing.
 | Tab | Switch the preview between the last exchange and the conversation |
 | Esc | Go back or close |
 
-Narrow the list with `agent:codex`, `in:here`, `is:open`, or `after:3d`. `sfd last` resumes the newest session in the current folder.
+Narrow the list with `agent:codex`, `in:here`, `is:open`, `file:main.go`, or `after:3d`. `sfd last` resumes the newest session in the current folder.
 
 Resuming needs the agent that made the session. Search by description uses Claude Code, or a [TypeSafe](https://docs.typesafe.ai) key if you set `TYPESAFE_API_KEY`.
 

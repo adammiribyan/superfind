@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/mask"
 )
 
 const trimEvery = 4 << 20
@@ -16,7 +17,7 @@ type group struct {
 
 func (g *group) cleaned() string {
 	if !g.clean {
-		g.text, g.clean = Mask(g.text), true
+		g.text, g.clean = mask.Secrets(g.text), true
 	}
 	return g.text
 }
@@ -28,40 +29,23 @@ type turn struct {
 	dropped bool
 }
 
-func openKeyAt(text string) int {
-	if !strings.Contains(text, "PRIVATE KEY-----") {
-		return -1
-	}
-	found := privateKey.FindAllStringSubmatchIndex(text, -1)
-	if last := len(found) - 1; last >= 0 && found[last][2] == found[last][3] {
-		return found[last][0]
-	}
-	return -1
-}
-
-func closeKeys(text string, open int) (string, string) {
-	closed := privateKey.ReplaceAllString(text[:open], maskedAs("private key"))
-	split := strings.LastIndexByte(closed, '\n') + 1
-	return closed[:split], closed[split:] + text[open:]
-}
-
 func (t *turn) add(text string) {
 	text = agent.Printable(text)
 	if len(t.groups) > 0 {
 		text = "\n\n" + text
 	}
 	if t.open {
-		if !privateKeyEnd.MatchString(text) {
+		if !mask.EndsKey(text) {
 			return
 		}
 		text = t.groups[len(t.groups)-1].text + text
 		t.groups = t.groups[:len(t.groups)-1]
 	}
-	open := openKeyAt(text)
+	open := mask.OpenKeyAt(text)
 	t.open = open >= 0
 	if t.open {
 		var closed string
-		closed, text = closeKeys(text, open)
+		closed, text = mask.CloseKeys(text, open)
 		if closed != "" {
 			t.groups = append(t.groups, group{text: closed})
 		}

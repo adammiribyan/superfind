@@ -89,12 +89,8 @@ type repo struct {
 
 func bare(s string) string { return plain(pullSuffix.ReplaceAllString(s, "")) }
 
-func Outcomes(r session.Row, rows []session.Row) ([]Outcome, error) {
-	var threads []string
-	if r.Agent.ID == "codex" {
-		threads = threadsOf(rows)[r.Path]
-	}
-	trail, err := agent.ReadTrail(r.Agent, r.Path, nil, threads...)
+func Outcomes(r session.Row) ([]Outcome, error) {
+	trail, err := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
 	found, _ := outcomesOf(r, trail)
 	return found, err
 }

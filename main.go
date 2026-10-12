@@ -59,9 +59,10 @@ const usage = `superfind: find a past AI coding session and resume it. It reads 
                           is:waiting and is:unfinished filter by how a session ended,
                           agent:claude, agent:codex, and agent:grok by the agent,
                           is:agent shows sessions another program started, is:open shows
-                          sessions an agent has open right now, and in:here,
-                          branch:NAME, after:DAY, and before:DAY narrow by folder, branch,
-                          and last activity
+                          sessions an agent has open right now, in:here, branch:NAME,
+                          after:DAY, and before:DAY narrow by folder, branch, and last
+                          activity, and file:PATH and has:commit by what a session edited
+                          and whether it committed
   superfind ask WORDS [--json] [--limit N]
                           print the sessions that best fit what you describe, even in other words;
                           takes the same filters
@@ -179,13 +180,20 @@ unless you ask for them with is:agent.
                   date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
   before:DAY      only sessions last active before that day; after:2026-10-09
                   before:2026-10-10 is October 9
+  file:PATH       only sessions that edited that file, or a file in that folder, with an
+                  edit tool, in any worktree of its repository, including a Claude Code
+                  worktree since removed; a relative PATH starts from this folder. superfind
+                  blame FILE also lists the sessions that made the file's commits
+  has:commit      only sessions that ran git commit; a commit that failed on its own
+                  doesn't count
   --json          print one JSON object per session, each on its own line (JSON Lines, not
                   an array), including the ones another program started, each with its kind
                   and the passage that matched
   --limit N       print only the first N sessions (default: all)
 
-Two branch: or agent: filters, or is:waiting with is:unfinished, keep sessions that fit either;
-different filters must all fit. An is: or agent: value superfind doesn't know is ignored.
+Two branch:, agent:, or file: filters, or is:waiting with is:unfinished, keep sessions that
+fit either; different filters must all fit. An is: or agent: value superfind doesn't know is
+ignored.
 
 Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
 its title, and the line the picker shows. To search for a word that starts with -, put --
@@ -229,8 +237,8 @@ superfind search prints first.
 Print a session's conversation for scripts and agents: what you asked and what the agent
 answered, without color or wrapping. Tool calls, tool output, and system text are left out,
 messages in a row from one speaker are joined into one turn, and lines that can't be read are
-skipped. Common keys, tokens, and passwords are replaced with [masked …]. Nothing is sent
-anywhere, but an agent that reads this passes it to its own model provider.
+skipped. Common keys, tokens, passwords, and webhook URLs are replaced with [masked …].
+Nothing is sent anywhere, but an agent that reads this passes it to its own model provider.
 
 Under its header, show lists the commits the session made and the pull requests it opened,
 and how far each got: committed, pushed, merged into the default branch (directly or in a
@@ -258,8 +266,8 @@ and resume command, how the session ended, and excerpts of the conversation. The
 the first request, the last request and what followed, and the turns that contain any of WORDS
 with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
 says which turns it left out. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, and passwords are replaced with [masked …], as in show.
-Nothing is sent anywhere.
+not instructions. Keys, tokens, passwords, and webhook URLs are replaced with [masked …], as
+in show. Nothing is sent anywhere.
 
 SESSION is a session id, a unique start of one (8 or more characters), or a path that
 superfind search prints first.
@@ -292,7 +300,8 @@ git repository, or pass a file in one.
                session did in match
 
 A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it. It reads the commands and edits each agent recorded, so it misses a commit made by
+started it, and an edit in a Claude Code worktree counts for the file it changed, even after
+the worktree is removed. It reads the commands and edits each agent recorded, so it misses a commit made by
 hand in a terminal or on another machine, and one whose message and hash the session never
 recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
 letters and digits, and the session ran it from a folder in the repository or one that no
@@ -688,7 +697,7 @@ func mustRefresh(command string, refresh func(func(int)) ([]session.Row, []error
 		switch {
 		case command == "index" || command == "label":
 			fail("superfind " + command + ": " + store.CacheDir() + " can't be written from here, so nothing was saved")
-		case (command == "search" || command == "ask") && readOnly.Changed > 0:
+		case (command == "search" || command == "ask" || command == "blame") && readOnly.Changed > 0:
 			fmt.Fprintln(stderr, "superfind "+command+": "+readOnly.Error())
 		}
 		err = nil
@@ -799,7 +808,7 @@ func runShow(args []string) {
 	if target == "" {
 		usageError("superfind show: which session? Pass its id, or a path that superfind search prints first.")
 	}
-	r, indexed, rows := findSession("show", target)
+	r, indexed, _ := findSession("show", target)
 	if !indexed {
 		fail("superfind show: not an indexed session: " + target)
 	}
@@ -807,7 +816,7 @@ func runShow(args []string) {
 	if err != nil {
 		fail("superfind show: couldn't read " + field(r.Path) + ": " + err.Error())
 	}
-	outcomes, err := blame.Outcomes(r, rows)
+	outcomes, err := blame.Outcomes(r)
 	if err != nil {
 		fmt.Fprintln(stderr, "superfind show: couldn't read all of this session, so its outcomes may be missing: "+err.Error())
 	}

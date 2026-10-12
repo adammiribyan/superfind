@@ -10,11 +10,20 @@ All notable changes to superfind are listed here. The format follows [Keep a Cha
 ### Added
 
 - `superfind show --json` gives each commit in `outcomes` a `body`: its message after the subject, masked like the turns and cut to 2,000 bytes. The bodies share 12,000 bytes or half of `--max-bytes`, whichever is less, newest first; `--max-bytes 0` lifts that. A body is empty for a pull request, and for a commit that a squash merge carried after its branch was deleted.
+- `file:PATH` filters the picker, `search`, `ask`, and `last` to sessions that edited a file, or a file in a folder, with an edit tool, in any worktree of its repository, including a Claude Code worktree since removed. `has:commit` keeps sessions that ran `git commit`, leaving out a commit that failed on its own.
 
 ### Changed
 
 - `superfind blame FILE` now also reads the file's commits that only other branches, remotes, and tags hold: up to 30 more, after the last 30 on this branch. A session that committed the file on a branch that was never merged, or that was squash-merged under a message that doesn't list its commits, now shows up with the commit it made. A merge on another branch counts only when it changed the file beyond what its parents had.
 - `superfind show` says "committed, on no branch" for a commit that no branch, tag, stash, or checkout holds any more, such as one whose branch was deleted before it merged, instead of "committed, not pushed". `show --json` gives it the stage `dangling`.
+- `superfind blame FILE` answers from the index instead of reading every transcript again. On about 950 sessions it went from about 9.4 to 0.18 seconds of CPU time.
+- `superfind blame` finds edits a session made in a Claude Code worktree (`.claude/worktrees/…`) after that worktree was removed.
+- Titles and last requests are masked before the index cuts them to length, so a secret that the cut would split, such as a quoted password, is masked whole. The picker and `ask` see the masked text too.
+- The index also records the files each session edited or read and the commits it ran. The first run after upgrading rebuilds the index, which took about 4.5 seconds for 950 sessions.
+
+### Fixed
+
+- `show` and `handoff` mask Slack, Discord, and Microsoft Teams webhook URLs, Tailscale keys (`tskey-auth-…`, `tskey-client-…`, `tskey-api-…`), and tokens, keys, and signatures in a URL's query, such as `&token=…`, `&sig=…`, or `X-Amz-Signature=…`. Before, they printed them whole. A query value with no digit, such as a placeholder, is left as it is.
 
 ## [0.12.0] - 2026-10-11
 
