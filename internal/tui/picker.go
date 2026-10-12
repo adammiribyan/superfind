@@ -159,6 +159,8 @@ type indexed struct {
 
 type labelsTick struct{}
 
+type askNow struct{}
+
 type heldMsg map[open.Key]open.State
 
 type picker struct {
@@ -210,6 +212,7 @@ type picker struct {
 	quitting bool
 	reindex  bool
 	indexing bool
+	askFirst bool
 }
 
 type phase int
@@ -291,6 +294,9 @@ func (m picker) Init() tea.Cmd {
 		cmds = append(cmds, tea.Sequence(tea.RequestBackgroundColor, tea.RequestForegroundColor,
 			tea.Raw(ansi.RequestPrimaryDeviceAttributes)))
 	}
+	if m.askFirst {
+		cmds = append(cmds, func() tea.Msg { return askNow{} })
+	}
 	return tea.Batch(cmds...)
 }
 
@@ -361,7 +367,13 @@ func (a *asks) stop() {
 func (m *picker) forgetAsk() {
 	m.asks.stop()
 	m.askSeq++
-	m.asking, m.askedFor, m.explained = false, "", nil
+	m.asking, m.askedFor, m.explained, m.askFirst = false, "", nil, false
+}
+
+func (m *picker) askAbout(query string) {
+	m.input.SetValue(query)
+	m.search()
+	m.askFirst = query != ""
 }
 
 func (m *picker) search() {
@@ -622,7 +634,24 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = i
 		}
 		spawnLabeler()
+		if m.askFirst {
+			m.askFirst = false
+			started, ask := m.startAsk()
+			moved, load := started.afterMove()
+			return moved, tea.Batch(ask, load)
+		}
 		return m.afterMove()
+	case askNow:
+		if !m.askFirst {
+			return m, nil
+		}
+		started, ask := m.startAsk()
+		started.askFirst = !started.asking
+		if started.reindex {
+			started.reindex = false
+			ask = tea.Batch(ask, rebuild)
+		}
+		return started, ask
 	case labelsTick:
 		next := tea.Batch(tea.Tick(labelsInterval, func(time.Time) tea.Msg { return labelsTick{} }), findHeld)
 		if line, changed := m.feed.Poll(); changed {
@@ -1098,7 +1127,7 @@ func pathsOf(rows []session.Row) []string {
 	return paths
 }
 
-func Pick(b news.Build) (*session.Row, error) {
+func Pick(b news.Build, query string) (*session.Row, error) {
 	problem := ""
 	db, err := session.OpenSearch()
 	if err != nil {
@@ -1114,6 +1143,7 @@ func Pick(b news.Build) (*session.Row, error) {
 		options = append(options, tea.WithColorProfile(colorprofile.Ascii))
 	}
 	start := newPicker(session.CachedRows(), db, problem)
+	start.askAbout(query)
 	start.feed = news.Open(b)
 	start.notice = start.feed.Line()
 	final, err := tea.NewProgram(start, options...).Run()

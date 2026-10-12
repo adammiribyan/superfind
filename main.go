@@ -1325,7 +1325,7 @@ func run(args []string) {
 			}
 			resume = true
 		}
-		chosen, err := tui.Pick(build())
+		chosen, err := tui.Pick(build(), "")
 		if err != nil {
 			fail(err.Error())
 		}

@@ -695,3 +695,50 @@ func TestACompactPickerGivesTheNoticeALineOnlyWhenThereIsOne(t *testing.T) {
 		t.Errorf("with a notice line 3 reads %q, want the first session", got)
 	}
 }
+
+func TestAPickerOpenedWithWordsShowsTheirKeywordMatchesAndAsksAtOnce(t *testing.T) {
+	m := testPicker(t)
+	t.Setenv("TYPESAFE_API_KEY", "")
+	m.db = searchDB(t, map[string]string{"a": "Ledger migration", "b": "Invoice layout"})
+	m.askAbout("invoice")
+	if got := pathsOf(m.shown); !slices.Equal(got, []string{"b"}) {
+		t.Fatalf("before the ask, the list shows %q, want the keyword match [b]", got)
+	}
+	next, _ := m.Update(askNow{})
+	if m := next.(picker); m.phase() != asking {
+		t.Fatalf("a picker opened with words is in phase %d, want asking", m.phase())
+	}
+	m = settle(m, askNow{})
+	got := fmt.Sprint(m.input.Value(), " | ", m.shownMessage(), " | ", pathsOf(m.shown))
+	if want := "invoice | Ask failed: Claude Code didn't answer. | [b]"; got != want {
+		t.Fatalf("after a failed ask the picker shows %q, want %q", got, want)
+	}
+}
+
+func TestAPickerOpenedWithWordsBeforeAnySessionsAsksOnceTheyArrive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newPicker(nil, searchDB(t, map[string]string{"a": "Ledger migration"}), "")
+	m.askAbout("ledger")
+	m = settle(m, askNow{})
+	if m.phase() != searching {
+		t.Fatalf("with no sessions yet the picker is in phase %d, want still searching", m.phase())
+	}
+	rows := []session.Row{{Path: "a", Agent: agent.Agents[0], Session: session.Session{Title: "Ledger migration", Cwd: "/tmp", Mtime: 2, Prompts: 5}}}
+	next, _ := m.Update(indexed{rows: rows})
+	if m := next.(picker); m.phase() != asking {
+		t.Fatalf("once sessions arrived the picker is in phase %d, want asking", m.phase())
+	}
+}
+
+func TestTypingBeforeTheSessionsArriveCancelsTheAskTheOpeningWordsWouldStart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newPicker(nil, searchDB(t, map[string]string{"a": "Ledger migration"}), "")
+	m.askAbout("ledger")
+	m = settle(m, askNow{})
+	m = settle(m, tea.KeyPressMsg{Code: 's', Text: "s"})
+	rows := []session.Row{{Path: "a", Agent: agent.Agents[0], Session: session.Session{Title: "Ledger migration", Cwd: "/tmp", Mtime: 2, Prompts: 5}}}
+	next, _ := m.Update(indexed{rows: rows})
+	if m := next.(picker); m.phase() != searching || m.input.Value() != "ledgers" {
+		t.Fatalf("after typing, the picker is in phase %d with %q, want searching for \"ledgers\"", m.phase(), m.input.Value())
+	}
+}
