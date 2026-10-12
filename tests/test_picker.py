@@ -124,9 +124,51 @@ class PickerBehavior(unittest.TestCase):
     def fake_claude(self):
         stub = self.home / "stub"
         stub.mkdir()
-        (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
+        (stub / "claude").write_text(f'#!/bin/sh\n[ "$1" = -p ] && exit 1\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
         self.env["PATH"] = f"{stub}:{self.env['PATH']}"
+
+    def at_terminal(self, args):
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
+        tmux("new-session", "-d", "-s", self.session_name, "-c", str(self.here), "-x", "140", "-y", "32",
+             f"env -i {env} {SUPERFIND} {args}; echo $? > {self.out}.code; sleep 60")
+
+    def test_resume_with_words_opens_the_picker_on_them_and_enter_prints_the_chosen_one(self):
+        self.three_sessions()
+        self.open_picker(pick="resume Invoice")
+        self.wait_for("Ask failed: Claude Code didn't answer.")
+        self.assertIn(" │ Invoice ", self.screen())
+        self.assertEqual(self.titles(), ["Invoice layout"])
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
+    def test_resume_with_an_id_at_a_terminal_runs_the_session(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("resume mid")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+        self.wait_for("Resuming Invoice layout")
+
+    def test_pick_at_a_terminal_runs_the_chosen_session(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("pick")
+        self.wait_for("Claude sessions")
+        self.keys("Down", "Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+
+    def test_resume_with_words_at_a_terminal_runs_the_session_chosen_in_the_picker(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("resume Invoice")
+        self.wait_for("Ask failed: Claude Code didn't answer.")
+        self.assertFalse(Path(f"{self.out}.resumed").exists(), "the top hit ran before Enter")
+        self.keys("Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
 
     def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
         self.fake_claude()

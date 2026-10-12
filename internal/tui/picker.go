@@ -1138,7 +1138,7 @@ func Pick(b news.Build, query string) (*session.Row, error) {
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("superfind pick needs a terminal: %w", err)
+		return nil, fmt.Errorf("the picker needs a terminal: %w", err)
 	}
 	defer tty.Close()
 	options := []tea.ProgramOption{tea.WithInput(tty), tea.WithOutput(tty)}

@@ -34,7 +34,6 @@ import (
 	"github.com/adammiribyan/superfind/internal/show"
 	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/telemetry"
-	"github.com/adammiribyan/superfind/internal/tui"
 	"github.com/adammiribyan/superfind/internal/typesafe"
 	"github.com/adammiribyan/superfind/internal/upgrade"
 )
@@ -44,6 +43,8 @@ var version = "0.13.1"
 const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
 
   superfind               open the session picker; sfd is the shortcut
+  superfind resume [SESSION | WORDS] [--run]
+                          resume a session, or choose one from the best matches
   superfind last [FILTERS] [--json]
                           resume the newest session for this folder
   superfind search WORDS [--json] [--limit N]
@@ -60,7 +61,7 @@ const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
                           get the shell command to resume a session
   superfind preview SESSION [--width N] [--recent] [--query Q]
                           see where a session left off
-  superfind pick [--run]   choose a session; print its resume command, or run it with --run
+  superfind pick          another name for superfind resume
   superfind init zsh|bash|fish
                           set up your shell; see superfind help init
   superfind index          refresh the session index
@@ -72,7 +73,7 @@ const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
   superfind help COMMAND  explain one command
   superfind --version     print the version
 
-Set up your shell with superfind init to resume from the picker or with last.
+Set up your shell with superfind init to resume in the session's folder.
 Filters include agent:codex, in:here, after:yesterday, and is:open.
 Run superfind help search for all filters and examples.
 
@@ -98,21 +99,41 @@ Enter resumes the selected session in its folder. The agent's CLI must be instal
 The resume command appears in your shell history, except in fish before 4.0.
 fish requires version 3.1 or later.
 `,
-	"pick": `superfind pick [--run]
+	"resume": `superfind resume [SESSION | WORDS] [--run]
 
-Choose a session in the full-screen picker. Type to search, use Up and Down to select,
-and press Enter. Ctrl-R searches by description. Tab switches the preview. Esc goes back
-or closes the picker. Search filters work here; see superfind help search.
+Resume a session.
 
-By default, print the selected title and resume command on separate lines.
-The shell setup from superfind init runs that command for you.
+  superfind resume                    choose one in the full-screen picker
+  superfind resume 01990001           resume this session now
+  superfind resume invoice layout     open the picker on the sessions ask ranks best,
+                                      the best one selected; Enter resumes it
+  superfind ask --json WORDS | superfind resume -
+                                      print how to resume the first session in a pipe
 
-  --run           resume directly, for example from a desktop keyboard shortcut
+SESSION is an id, a unique id prefix of at least 8 characters, a transcript path,
+or - to read one from a pipe. Any other word is a search, with filters, as in ask.
+If ask can't run, the picker keeps the keyword matches and says why.
 
-If the session is already open, Enter switches to its tmux pane or Ghostty tab when possible.
-Otherwise, Enter again resumes a second copy and Esc cancels.
-Exit 1 when cancelled or after switching to a Ghostty tab. With --run, a resumed agent's
-exit code becomes superfind's exit code.
+In the picker, type to search and use Up and Down to select. Ctrl-R searches by description.
+Tab switches the preview. Esc goes back or closes the picker.
+
+At a terminal, the agent runs in place of superfind; with shell setup from superfind init,
+your shell runs it in the session's folder. When the output goes to a pipe or a file,
+resume prints the title and resume command on separate lines instead. With no terminal,
+as in scripts and agents, it never opens the picker or runs anything: WORDS print the
+best match, or the best keyword match if ask can't run.
+
+  --run           resume directly even when the output is captured, for example from a
+                  desktop keyboard shortcut
+
+If the session is already open, resume switches to its tmux pane or Ghostty tab when possible.
+Otherwise, Enter resumes a second copy and Esc cancels; with no terminal, resume exits 1.
+Exit 1 when cancelled, when nothing matches, or after the picker switches to a Ghostty tab.
+With --run, a resumed agent's exit code becomes superfind's exit code.
+`,
+	"pick": `superfind pick [SESSION | WORDS] [--run]
+
+Another name for superfind resume. See superfind help resume.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
@@ -297,7 +318,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
+var commandNames = []string{"init", "resume", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -457,7 +478,7 @@ func runLast(args []string) {
 	case asJSON:
 		writeRecords([]session.Row{r}, nil, "", false)
 	default:
-		resumeLast(r)
+		deliver("last", r, false)
 	}
 }
 
@@ -483,7 +504,7 @@ func lastStep(s *open.State, inTmux bool, focus func(open.State) bool, terminal 
 	return sayWhereItIs
 }
 
-func resumeLast(r session.Row) {
+func deliver(command string, r session.Row, exec bool) {
 	title := render.Flat(r.Session.Title)
 	var tty *os.File
 	if r.Open != nil {
@@ -491,14 +512,21 @@ func resumeLast(r session.Row) {
 	}
 	switch lastStep(r.Open, os.Getenv("TMUX") != "", ghostty.Focus, tty != nil) {
 	case switchedTab:
-		fmt.Fprintln(stderr, "superfind last: "+title+" is open in another Ghostty tab; switched to it.")
+		fmt.Fprintln(stderr, "superfind "+command+": "+title+" is open in another Ghostty tab; switched to it.")
 		return
 	case askFirst:
 		if code := answer(tty, title+" is open in another window. Enter resumes a copy; Esc cancels."); code != 0 {
 			exit(code)
 		}
 	case sayWhereItIs:
-		fail(alreadyOpen("last", r))
+		fail(alreadyOpen(command, r))
+	}
+	finish(command, r, exec)
+}
+
+func finish(command string, r session.Row, exec bool) {
+	if exec {
+		resumeHere(command, r)
 	}
 	fmt.Fprint(stdout, handoff(r))
 }
@@ -549,14 +577,14 @@ func alreadyOpen(command string, r session.Row) string {
 		". superfind " + command + " doesn't start a second copy."
 }
 
-func resumeHere(r session.Row) {
-	title, command, _ := strings.Cut(strings.TrimSuffix(handoff(r), "\n"), "\n")
+func resumeHere(command string, r session.Row) {
+	title, resume, _ := strings.Cut(strings.TrimSuffix(handoff(r), "\n"), "\n")
 	fmt.Fprintln(stdout, "Resuming "+render.Bold+title+render.Reset)
 	if err := output.Flush(); err != nil {
-		fail("superfind pick --run: couldn't write the output: " + err.Error())
+		fail("superfind " + command + ": couldn't write the output: " + err.Error())
 	}
-	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", command}, os.Environ())
-	fail("superfind pick --run: couldn't run " + command + ": " + err.Error())
+	err := syscall.Exec("/bin/sh", []string{"/bin/sh", "-c", resume}, os.Environ())
+	fail("superfind " + command + ": couldn't run " + resume + ": " + err.Error())
 }
 
 func openWhere(o open.State) string {
@@ -687,7 +715,7 @@ func findSession(command, arg string) (session.Row, bool, []session.Row) {
 			arg = unquoted
 		}
 	}
-	if strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
+	if session.LooksLikePath(arg) {
 		return sessionAt(command, arg)
 	}
 	rows := annotated(command, session.Index)
@@ -1126,6 +1154,17 @@ func searchWords(command string, args []string) (string, bool, int) {
 	return strings.Join(words, " "), asJSON, limit
 }
 
+func askOrder(db *sql.DB, words string, eligible, all []session.Row) ([]session.Row, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	paths, err := ask.Ask(ctx, db, words, eligible)
+	interrupted := ctx.Err() != nil
+	stop()
+	if interrupted {
+		exit(130)
+	}
+	return session.InOrder(all, paths), err
+}
+
 func atMost(rows []session.Row, limit int) []session.Row {
 	if limit > 0 && len(rows) > limit {
 		return rows[:limit]
@@ -1224,18 +1263,11 @@ func run(args []string) {
 			printRows(atMost(session.RecentFirst(eligible), limit), shown)
 			return
 		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-		paths, err := ask.Ask(ctx, db, query, eligible)
-		interrupted := ctx.Err() != nil
-		stop()
-		if interrupted {
-			exit(130)
+		ranked, err := askOrder(db, query, eligible, rows)
+		if err != nil {
+			fail(err.Error())
 		}
-		var failure ask.Failure
-		if errors.As(err, &failure) {
-			fail(failure.Error())
-		}
-		ranked := atMost(session.InOrder(rows, paths), limit)
+		ranked = atMost(ranked, limit)
 		if asJSON {
 			writeRecords(ranked, db, query, true)
 			return
@@ -1317,26 +1349,8 @@ func run(args []string) {
 		if news.Told() {
 			telemetry.Checkin(context.Background(), telemetryBuild())
 		}
-	case "pick":
-		resume := false
-		for _, arg := range args[1:] {
-			if arg != "--run" {
-				usageError("superfind pick: there is no " + arg + " option. See superfind help pick.")
-			}
-			resume = true
-		}
-		chosen, err := tui.Pick(build(), "")
-		if err != nil {
-			fail(err.Error())
-		}
-		if chosen == nil {
-			exit(1)
-			return
-		}
-		if resume {
-			resumeHere(*chosen)
-		}
-		fmt.Fprint(stdout, handoff(*chosen))
+	case "resume", "pick":
+		runResume(args[0], args[1:])
 	case "last":
 		runLast(args[1:])
 	default:
