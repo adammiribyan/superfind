@@ -124,9 +124,51 @@ class PickerBehavior(unittest.TestCase):
     def fake_claude(self):
         stub = self.home / "stub"
         stub.mkdir()
-        (stub / "claude").write_text(f'#!/bin/sh\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
+        (stub / "claude").write_text(f'#!/bin/sh\n[ "$1" = -p ] && exit 1\nprintf "%s\\n" "$(pwd)" "$@" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
         self.env["PATH"] = f"{stub}:{self.env['PATH']}"
+
+    def at_terminal(self, args):
+        subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
+        env = " ".join(f"{k}='{v}'" for k, v in self.env.items())
+        tmux("new-session", "-d", "-s", self.session_name, "-c", str(self.here), "-x", "140", "-y", "32",
+             f"env -i {env} {SUPERFIND} {args}; echo $? > {self.out}.code; sleep 60")
+
+    def test_resume_with_words_opens_the_picker_on_them_and_enter_prints_the_chosen_one(self):
+        self.three_sessions()
+        self.open_picker(pick="resume Invoice")
+        self.wait_for("Ask failed: Claude Code didn't answer.")
+        self.assertIn(" │ Invoice ", self.screen())
+        self.assertEqual(self.titles(), ["Invoice layout"])
+        self.keys("Enter")
+        self.assertEqual(self.result(), (0, "Invoice layout\ncd /tmp && claude --resume mid\n"))
+
+    def test_resume_with_an_id_at_a_terminal_runs_the_session(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("resume mid")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+        self.wait_for("Resuming Invoice layout")
+
+    def test_pick_at_a_terminal_runs_the_chosen_session(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("pick")
+        self.wait_for("Claude sessions")
+        self.keys("Down", "Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
+
+    def test_resume_with_words_at_a_terminal_runs_the_session_chosen_in_the_picker(self):
+        self.fake_claude()
+        self.three_sessions()
+        self.at_terminal("resume Invoice")
+        self.wait_for("Ask failed: Claude Code didn't answer.")
+        self.assertFalse(Path(f"{self.out}.resumed").exists(), "the top hit ran before Enter")
+        self.keys("Enter")
+        self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), f"claude never ran:\n{self.screen()}")
+        self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp\n--resume\nmid\n")
 
     def test_run_resumes_the_chosen_session_in_place_of_the_picker(self):
         self.fake_claude()
@@ -685,10 +727,10 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Up")
         self.wait_for("Added a test that taps Pay twice")
 
-    def resume_through_shell(self, shell, open_keys):
+    def resume_through_shell(self, shell, open_keys, ready="Claude sessions", choose=("Down", "Enter")):
         stub = self.home / "stub"
         stub.mkdir()
-        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").write_text(f'#!/bin/sh\n[ "$1" = -p ] && exit 1\necho "$(pwd) $*" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
@@ -699,8 +741,10 @@ class PickerBehavior(unittest.TestCase):
         setup = f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"'
         self.keys(setup, "Enter")
         self.keys(*open_keys)
-        self.wait_for("Claude sessions")
-        self.keys("Down", "Enter")
+        if ready:
+            self.wait_for(ready)
+        if choose:
+            self.keys(*choose)
         self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
         self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp --resume mid\n")
         self.keys("pwd", "Enter")
@@ -748,6 +792,29 @@ class PickerBehavior(unittest.TestCase):
     @unittest.skipUnless(shutil.which("fish"), "needs fish")
     def test_typing_superfind_last_in_fish_resumes_the_newest_session_here_in_that_shell(self):
         self.last_through_shell("fish")
+
+    def test_typing_sfd_resume_with_an_id_in_zsh_resumes_it_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    def test_typing_sfd_resume_with_an_id_in_bash_resumes_it_in_that_shell(self):
+        self.resume_through_shell("bash", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_resume_with_an_id_in_fish_resumes_it_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    def test_typing_sfd_resume_with_words_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    def test_typing_sfd_resume_with_words_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_resume_with_words_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    def test_typing_sfd_pick_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd pick", "Enter"])
 
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])

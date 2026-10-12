@@ -1352,7 +1352,7 @@ class SuperfindBehavior(unittest.TestCase):
             self.assertIn("superfind help COMMAND", result.stdout, flag)
 
     def test_every_command_explains_itself(self):
-        for command in ("init", "pick", "last", "search", "ask", "preview", "command", "index", "label", "upgrade", "telemetry",
+        for command in ("init", "resume", "pick", "last", "search", "ask", "preview", "command", "index", "label", "upgrade", "telemetry",
                         "version"):
             for args in (("help", command), (command, "--help"), (command, "-h")):
                 result = self.run_superfind(*args)
@@ -1366,7 +1366,7 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, label, upgrade, and telemetry",
+            self.assertIn("init, resume, pick, last, search, ask, preview, show, handoff, command, blame, index, label, upgrade, and telemetry",
                           result.stderr)
 
     def test_pick_refuses_options_it_does_not_understand(self):
@@ -1904,7 +1904,7 @@ class SuperfindBehavior(unittest.TestCase):
                 strict = subprocess.run([*shell, "-c", f"set -u; source {snapshot}; superfind"], env={"PATH": "/usr/bin:/bin",
                                         "HOME": str(self.home)}, stdin=subprocess.DEVNULL, capture_output=True, text=True)
                 self.assertEqual((strict.returncode, strict.stdout), (1, ""), (name, strict.stderr))
-                self.assertIn("superfind pick needs a terminal", strict.stderr, name)
+                self.assertIn("superfind pick: the picker needs a terminal", strict.stderr, name)
             moved = self.home / "bin" / name
             moved.mkdir(parents=True)
             shutil.copy(SUPERFIND, moved / "superfind")

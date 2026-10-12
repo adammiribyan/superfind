@@ -89,6 +89,10 @@ func KindOf(s Session) string {
 	return "interactive"
 }
 
+func LooksLikePath(arg string) bool {
+	return strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~")
+}
+
 func ByID(rows []Row, id string) (matches []Row, exact bool) {
 	for _, r := range rows {
 		if strings.EqualFold(r.Session.ID, id) {

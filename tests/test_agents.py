@@ -206,6 +206,13 @@ class ScriptsAndAgents(SuperfindBehavior):
             self.assertEqual(result.returncode, 1, arg)
             self.assertIn(f"{arg} is not inside a Claude, Codex, or Grok home", result.stderr)
 
+    def test_a_json_quoted_id_or_path_works_like_a_bare_one(self):
+        self.session(uid(9), user("start", cwd="/w"), claude("done"), title="Quoted")
+        bare = self.show(uid(9), "--json")
+        self.assertEqual(self.show(f'"{uid(9)}"', "--json"), bare)
+        path = json.loads(bare)["path"]
+        self.assertEqual(json.loads(self.show(f'"{path}"', "--json"))["path"], path)
+
     def test_an_unknown_id_says_so(self):
         self.checkout()
         result = self.run_superfind("show", "deadbeef-0000")
