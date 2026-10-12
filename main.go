@@ -178,6 +178,8 @@ Use jq -s to turn JSON Lines into an array.
 Find sessions by description, even when you don't remember the exact words.
 Requires Claude Code installed and logged in, or a TYPESAFE_API_KEY.
 Your query and session excerpts go to TypeSafe when you set a key, or to Anthropic otherwise.
+To choose, set SUPERFIND_ASK in your environment or ~/.config/superfind/env: jev for TypeSafe,
+or a Claude model such as haiku, sonnet, or opus. The default is jev with a key, haiku without.
 
 Filters, options, and output formats are the same as search. Results are ranked best first.
 The match field contains a keyword excerpt, not a relevance score.

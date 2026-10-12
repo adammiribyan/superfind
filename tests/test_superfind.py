@@ -144,7 +144,7 @@ class SuperfindBehavior(unittest.TestCase):
         self.projects.mkdir(parents=True)
         self.env = {**os.environ, "HOME": str(self.home), "XDG_CACHE_HOME": str(self.home / ".cache"),
                     "PWD": "/elsewhere", "TYPESAFE_API_KEY": "", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
-        for name in ("CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
+        for name in ("SUPERFIND_ASK", "CLAUDE_CONFIG_DIR", "SUPERFIND_CLAUDE_DIRS", "CODEX_HOME", "GROK_HOME", "SUPERFIND_CODEX_DIRS", "SUPERFIND_GROK_DIRS",
                      "NO_COLOR", "SUPERFIND_SECONDARY"):
             self.env.pop(name, None)
         no_ghostty = Path(tempfile.mkdtemp())
@@ -1497,6 +1497,28 @@ class SuperfindBehavior(unittest.TestCase):
         self.assertEqual(entries, "0")
         self.assertIn("--setting-sources= --strict-mcp-config", args)
         self.assertNotIn("--bare", args)
+
+    def test_superfind_ask_picks_claude_and_its_model_over_a_typesafe_key(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        requests = self.record_typesafe()
+        log = self.logging_claude()
+        config = self.home / ".config" / "superfind"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "env").write_text("SUPERFIND_ASK=sonnet\n")
+        result = self.run_superfind("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, [r.split("\t")[4] for r in result.stdout.splitlines()]), (0, ["Ledger migration"]))
+        [(_, _, args, _)] = [l.split("\t") for l in log.read_text().splitlines()]
+        self.assertEqual((args.split()[:3], len(requests)), (["-p", "--model", "sonnet"], 0))
+
+    def test_superfind_ask_jev_without_a_key_says_what_is_missing(self):
+        self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")
+        self.superfind("index")
+        log = self.logging_claude()
+        self.env["SUPERFIND_ASK"] = "jev"
+        result = self.run_superfind("ask", "where did we migrate the ledger")
+        self.assertEqual((result.returncode, result.stdout, result.stderr.strip(), log.exists()),
+                         (1, "", "Ask failed: SUPERFIND_ASK is jev, but there is no TYPESAFE_API_KEY.", False))
 
     def test_ask_with_no_eligible_sessions_asks_no_one(self):
         self.session("a1", user("deploy the ledger migration"), tool("Bash"), claude("Done."), title="Ledger migration")

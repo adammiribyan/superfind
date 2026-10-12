@@ -11,7 +11,7 @@ Update with `superfind upgrade`. It saves the previous version for rollback. For
 Scripts and agents use these commands without a terminal:
 
 - `superfind search --json WORDS`: keyword matches as JSON Lines, one object per session. Use `jq -s` for an array. JSON includes automated sessions, marked `"kind": "agent"`. Filter for `"kind": "interactive"` to find a person's sessions.
-- `superfind ask --json WORDS`: description matches. Requires Claude Code installed and logged in, or a `TYPESAFE_API_KEY`. Sends the query and session excerpts to Anthropic or TypeSafe.
+- `superfind ask --json WORDS`: description matches. Requires Claude Code installed and logged in, or a `TYPESAFE_API_KEY`. Sends the query and session excerpts to Anthropic or TypeSafe. `SUPERFIND_ASK` chooses: `jev`, or a Claude model such as `sonnet`.
 - `superfind show ID --json --tail 6`: the last six conversation turns, without tool output and with common secrets masked.
 - `superfind command ID`: the shell command to resume a session.
 - `superfind handoff ID WORDS`: a briefing for another agent, including the session ending, resume command, and matching excerpts with turn numbers.

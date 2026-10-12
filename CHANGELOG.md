@@ -11,6 +11,8 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 - Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.
 
+- `SUPERFIND_ASK` chooses who ranks `ask` and the picker's Ctrl-R: `jev` for TypeSafe, or a Claude model such as `haiku`, `sonnet`, or `opus`. Set it in your environment or `~/.config/superfind/env`. Without it, ask uses Jev when you have a TypeSafe key and Haiku otherwise. With a Claude model, the picker doesn't send its top matches to TypeSafe for explanations.
+
 ### Changed
 
 - The first run after upgrading may take longer while the session index rebuilds.

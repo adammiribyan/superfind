@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/adammiribyan/superfind/internal/config"
 	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/typesafe"
@@ -178,13 +179,13 @@ var errNoAnswer = errors.New("no answer")
 
 var rankList = regexp.MustCompile(`\[[\d,\s]*\]`)
 
-func claudeRank(ctx context.Context, query string, kept []session.Row, cards []string) ([]string, error) {
+func claudeRank(ctx context.Context, model, query string, kept []session.Row, cards []string) ([]string, error) {
 	var request strings.Builder
 	request.WriteString("Search: " + query + "\n\nSessions:\n")
 	for i, c := range cards {
 		fmt.Fprintf(&request, "%d. %s\n", i, c)
 	}
-	out, err := runClaude(ctx, []string{"-p", "--model", "haiku", "--no-session-persistence", "--tools", "",
+	out, err := runClaude(ctx, []string{"-p", "--model", model, "--no-session-persistence", "--tools", "",
 		"--setting-sources=", "--strict-mcp-config", "--output-format", "json", "--system-prompt", askPrompt}, request.String())
 	if err != nil {
 		return nil, err
@@ -235,18 +236,36 @@ func Ask(ctx context.Context, db *sql.DB, query string, rows []session.Row) ([]s
 	if len(cards) == 0 {
 		return nil, nil
 	}
-	if key := typesafe.Key(); key != "" {
+	key, model := Ranker()
+	switch {
+	case strings.HasPrefix(model, "-"):
+		return nil, Failure{"SUPERFIND_ASK is " + model + "; set it to jev or a Claude model such as sonnet"}
+	case model == "jev" && key == "":
+		return nil, Failure{"SUPERFIND_ASK is jev, but there is no TYPESAFE_API_KEY"}
+	case model == "jev":
 		ranked, err := jevRank(ctx, key, query, kept, cards)
 		if err != nil && ctx.Err() == nil {
 			return nil, Failure{err.Error()}
 		}
 		return ranked, ctx.Err()
 	}
-	paths, err := claudeRank(ctx, query, kept, cards)
+	paths, err := claudeRank(ctx, model, query, kept, cards)
 	if err != nil && ctx.Err() == nil {
 		return nil, Failure{"Claude Code didn't answer"}
 	}
 	return paths, ctx.Err()
+}
+
+func Ranker() (key, model string) {
+	key = typesafe.Key()
+	model, _ = config.Lookup("SUPERFIND_ASK")
+	switch model = strings.TrimSpace(model); {
+	case model == "" && key != "":
+		model = "jev"
+	case model == "":
+		model = "haiku"
+	}
+	return key, model
 }
 
 var paragraphBreak = regexp.MustCompile(`\n\s*\n`)

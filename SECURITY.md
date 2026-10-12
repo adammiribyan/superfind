@@ -23,7 +23,7 @@ Check that minisign's trusted comment names the version you downloaded, such as 
 
 ## What leaves your machine
 
-Keyword search, `show`, `handoff`, `command`, `last`, and `blame` run locally. Description search sends your query and session excerpts to TypeSafe if you set a key, or to Anthropic through Claude Code otherwise. With a TypeSafe key, session labeling also sends recent session endings to TypeSafe.
+Keyword search, `show`, `handoff`, `command`, `last`, and `blame` run locally. Description search sends your query and session excerpts to TypeSafe if you set a key, or to Anthropic through Claude Code otherwise. `SUPERFIND_ASK=sonnet`, or another Claude model, sends them to Anthropic even with a key. With a TypeSafe key, session labeling also sends recent session endings to TypeSafe.
 
 Opening the picker checks for updates and sends an anonymous check-in to superfind.dev at most once a day. It includes a random install id, version, OS, CPU type, install method, and upgrade results. It never includes searches, paths, project names, or session text. superfind.dev forwards the check-in to PostHog without your IP address. Scripts and `--json` never check in.
 
