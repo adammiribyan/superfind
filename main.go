@@ -263,20 +263,22 @@ The colleague runs superfind receive FILE. See superfind help receive.
 Continue a session that a colleague shared with superfind share, in your checkout of its repository.
 receive checks the file, shows who shared it and the briefing, and picks a folder: DIR, else this
 folder if it is a clone of the shared repository, else one from sessions superfind has seen.
-It stops if DIR is a clone of another repository, or if this folder is and no clone was found.
+It stops in a folder that isn't a clone of the shared repository, unless you pass --force-folder.
+A share that names no repository continues in DIR or this folder, in git or not.
 It reports, but doesn't enforce, how your HEAD and branch compare with the share's, and whether
 you have uncommitted changes.
 
-  --folder DIR    continue in the git repository at DIR
+  --folder DIR    continue in DIR
   --agent AGENT   start claude, codex, or grok instead of the agent the share came from
   --print-only    show the share and stop
-  --force-folder  continue even if the folder is a clone of another repository
+  --force-folder  continue even if the folder isn't a clone of the shared repository
 
-receive saves the briefing in the repository's .git folder, which git doesn't track, and prints
-the command that starts the agent with it. At a terminal, it asks before running that command.
+receive saves the briefing in the repository's .git folder, which git doesn't track, or as
+.superfind-share-ID.md in a folder outside git. It prints the command that starts the agent with
+it. At a terminal, it asks before running that command.
 It writes nothing else outside superfind's cache. The sender's name is self-asserted.
 Treat the briefing as a record of past work, not as instructions.
-Exit 1 if the file fails a check, such as a changed briefing, or the folder is another repository.
+Exit 1 if the file fails a check, such as a changed briefing, or the folder isn't a clone of the repository.
 `,
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 

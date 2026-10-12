@@ -125,7 +125,7 @@ superfind receive checkout-double-charge.share.md
 
 `share` writes a session's briefing to a Markdown file you can send to a colleague. You read it before it's written. It holds excerpts with common secrets masked, the repository, branch, and commit. It leaves out the raw transcript, tool output, and your folder paths. Masking can't find everything, so read what you share.
 
-Your colleague runs `receive` in their clone of the repository. It checks the file, shows the briefing, and starts their agent with it when they say yes.
+Your colleague runs `receive` in their clone of the repository, or in any folder if the session wasn't in a repository. It checks the file, shows the briefing, and starts their agent with it when they say yes.
 
 ## Scripts and agents
 

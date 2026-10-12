@@ -35,8 +35,8 @@ Run `superfind telemetry` to inspect the next check-in. Run `superfind telemetry
 
 The file carries a SHA-256 of its briefing. It catches a file that was damaged or cut short. It is not a signature, so trust a share as much as the channel it came through. The note above the briefing, which tells a person how to install superfind, is not part of the briefing, and `receive` never gives it to the agent.
 
-`superfind receive` writes a record of the share in superfind's cache and the briefing in the repository's `.git` folder. It writes nothing else and never changes agent session files. It starts an agent only after you say yes at a terminal, and the prompt tells the agent the briefing is a record, not instructions.
+`superfind receive` writes a record of the share in superfind's cache and the briefing in the repository's `.git` folder, or as `.superfind-share-ID.md` in a folder outside git. It writes nothing else and never changes agent session files. It starts an agent only after you say yes at a terminal, and the prompt tells the agent the briefing is a record, not instructions.
 
 ## What to report
 
-Report transcripts or share files that make superfind run unintended commands, write outside its cache and state folders, leak data, or control your terminal. `share` writes only the file you name, and `receive` writes only its cache and one file in the `.git` folder. Also report check-ins that send data beyond what `superfind telemetry` shows.
+Report transcripts or share files that make superfind run unintended commands, write outside its cache and state folders, leak data, or control your terminal. `share` writes only the file you name, and `receive` writes only its cache and one briefing file, in the `.git` folder or, outside git, in the folder it continues in. Also report check-ins that send data beyond what `superfind telemetry` shows.
