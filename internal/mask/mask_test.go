@@ -231,3 +231,13 @@ func TestMaskFindsSecretsThatOnlyCaseFoldingNames(t *testing.T) {
 		}
 	}
 }
+
+func TestCountSaysHowManySecretsWereMaskedNotHowManyMarkersThereAre(t *testing.T) {
+	text := "keys sk-ant-api03-" + strings.Repeat("Q", 40) + " and password=hunter22, quoting [masked secret] from before"
+	if got := Count(text); got != 2 {
+		t.Errorf("Count = %d, want 2", got)
+	}
+	if got := Count("nothing here"); got != 0 {
+		t.Errorf("Count of plain text = %d", got)
+	}
+}
