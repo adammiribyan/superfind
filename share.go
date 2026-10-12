@@ -271,7 +271,7 @@ func runReceive(args []string) {
 	if err := os.WriteFile(path, []byte(s.Briefing), 0o600); err != nil {
 		fail("superfind receive: couldn't save the briefing in " + c.GitDir + ": " + err.Error())
 	}
-	argv := share.Start(a, share.Prompt(path, a))
+	argv := share.Start(a, share.Prompt(path, cmp.Or(agent.Named(m.Agent), a)))
 	fmt.Fprintln(stdout, "\n"+share.Command(dir, argv))
 	if tty == nil {
 		return
