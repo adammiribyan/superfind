@@ -664,6 +664,11 @@ func sessionAt(command, arg string) (r session.Row, indexed bool, rows []session
 }
 
 func findSession(command, arg string) (session.Row, bool, []session.Row) {
+	if len(arg) >= 2 && arg[0] == '"' && arg[len(arg)-1] == '"' {
+		if unquoted, err := strconv.Unquote(arg); err == nil {
+			arg = unquoted
+		}
+	}
 	if strings.Contains(arg, "/") || strings.HasPrefix(arg, ".") || strings.HasPrefix(arg, "~") {
 		return sessionAt(command, arg)
 	}

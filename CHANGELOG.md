@@ -2,6 +2,13 @@
 
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
+## [Unreleased]
+
+> Quoted session ids work in show, handoff, command, and preview
+
+### Fixed
+
+- `show`, `handoff`, `command`, and `preview` accept a session id or path in double quotes, as `jq .id` prints it without `-r`. Before, they said there was no such session.
 
 ## [0.13.1] - 2026-10-12
 
