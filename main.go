@@ -254,7 +254,8 @@ SESSION is an id, a unique id prefix of at least 8 characters, or a transcript p
 At a terminal, share shows the file in your pager and asks before writing it.
 It never replaces an existing file. Common secrets are masked. Masking can't find customer data,
 unlabelled credentials, or personal information, so read what you share.
-The file names you with SUPERFIND_NAME from ~/.config/superfind/env, or else $USER.
+The file includes your name. It is your login name ($USER) unless you set SUPERFIND_NAME in your
+environment or ~/.config/superfind/env. An empty SUPERFIND_NAME leaves it out.
 The colleague runs superfind receive FILE. See superfind help receive.
 `,
 	"receive": `superfind receive FILE [--folder DIR] [--agent AGENT] [--print-only] [--force-folder]
