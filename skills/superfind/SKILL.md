@@ -7,7 +7,7 @@ description: Find, recall, and brief from past Claude Code, Codex, and Grok codi
 
 superfind reads the session files that Claude Code, Codex, and Grok keep on this machine, and finds, quotes, and resumes those sessions. Run it through the shell; the recipes below need `jq`. If `command -v superfind` finds nothing, tell the user it installs with `curl -fsSL https://superfind.dev/install | sh` or `brew install --cask adammiribyan/tap/superfind`, and don't install it yourself without asking.
 
-Never run bare `superfind`, `sfd`, or `superfind pick`: they open an interactive picker that needs a person at a terminal.
+Never run bare `superfind`, `sfd`, `superfind pick`, or `superfind resume`: they open an interactive picker or start an agent, which needs a person at a terminal.
 
 ## Rules
 
@@ -38,7 +38,7 @@ Never run bare `superfind`, `sfd`, or `superfind pick`: they open an interactive
 
 Two `agent:`, `branch:`, or `file:` filters, or `is:waiting` with `is:unfinished`, keep sessions that fit either; other filters must all fit.
 
-A session is named by its `path` from `--json`, its id, or a unique start of an id with 8 or more characters. The recipes use the path, which is never ambiguous.
+A session is named by its `path` from `--json`, its id, or a unique start of an id with 8 or more characters. The recipes use the path, which is never ambiguous. `-` takes the first session from a pipe, so `jq -c` can choose which one comes first.
 
 ## Recipes
 
@@ -90,9 +90,9 @@ The other way around, `superfind show SESSION --json --tail 1 | jq -c '.outcomes
 Give the user the command that resumes a session:
 
 ```sh
-session=$(superfind search --json webhook retry |
-  jq -sr 'map(select(.kind == "interactive" and (.active | not))) | .[0].path // empty')
-superfind command "${session:?no session matched}"
+superfind search --json webhook retry |
+  jq -c 'select(.kind == "interactive" and (.active | not))' |
+  superfind command -
 ```
 
 `superfind last --json FILTERS` prints the newest session started in this folder, with its `resume` command, but doesn't skip an active one.

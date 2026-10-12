@@ -4,10 +4,20 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 ## [Unreleased]
 
-> Quoted session ids work in show, handoff, command, and preview
+> sfd resume takes an id or a few words
+
+### Added
+
+- `superfind resume ID` resumes a session by id or path. `superfind resume WORDS` opens the picker on the sessions that best fit your words, the best one selected, and Enter resumes it. With no terminal, as in scripts and agents, it prints the title and resume command of that session or of the best match, and never runs it.
+- `-` takes the first session from a pipe in `show`, `handoff`, `command`, `preview`, and `resume`, as in `superfind search --json webhook | superfind handoff -`. It reads the session's path or id and never runs a `resume` field.
+
+### Changed
+
+- `superfind pick` is another name for `superfind resume`. At a terminal, bare `pick` now resumes the session you choose instead of printing its command, as `pick --run` does. With shell setup, `sfd resume` and `sfd pick` resume in the session's folder.
 
 ### Fixed
 
+- When ask fails in the picker, the reason stays on screen after the session list refreshes. Before, it could disappear.
 - `show`, `handoff`, `command`, and `preview` accept a session id or path in double quotes, as `jq .id` prints it without `-r`. Before, they said there was no such session.
 
 ## [0.13.1] - 2026-10-12

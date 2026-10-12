@@ -174,7 +174,8 @@ class Skill(SuperfindBehavior):
         for recipe in (recipes()[1], recipes()[2], recipes()[5]):
             result = self.run_recipe(recipe, work)
             self.assertNotIn(result.returncode, (0, 2), recipe)
-            self.assertRegex(result.stderr, r"session: no (Codex )?session (matched|here)\n$", recipe)
+            self.assertRegex(result.stderr, r"(session: no (Codex )?session (matched|here)|superfind command: no session came in on standard input)\n$",
+                             recipe)
 
 
 def line_from_program(cwd):

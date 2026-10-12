@@ -78,7 +78,13 @@ Use `is:open` to find open sessions. With a TypeSafe key, `is:waiting` and `is:u
 
 If the session is already open, Enter switches to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
 
-To pick up where you left off in the current folder, run `superfind last`.
+To resume a session you can name, skip the search:
+
+```sh
+sfd resume 22fa4000        # by id, or the first 8 characters of one
+sfd resume webhook retry   # the picker opens on the best matches; Enter resumes
+sfd last                   # the newest session started in this folder
+```
 
 <details>
 <summary>Find sessions waiting on you</summary>
@@ -120,10 +126,10 @@ Find the sessions behind a line, file, or commit, best match first. It reads wha
 ```sh
 superfind search --json retry webhook | jq -r .title
 superfind show ID --tail 6
-superfind handoff ID
+superfind search --json retry webhook | superfind handoff -
 ```
 
-Use `show` to read a conversation and `handoff` to get a briefing for another agent. `search --json` returns one JSON object per line.
+Use `show` to read a conversation and `handoff` to get a briefing for another agent. `search --json` returns one JSON object per line, and `-` takes the first one from a pipe.
 
 Install [the agent skill](skills/README.md) to let your agent find past sessions when you ask. Run `superfind help <command>` for command help, or see the [full reference](https://superfind.dev/llms-full.txt).
 
