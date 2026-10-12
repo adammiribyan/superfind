@@ -3,6 +3,16 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
+## [0.13.1] - 2026-10-12
+
+> file: finds sessions by file, and blame is instant
+
+0.13.0 was tagged but never released. 0.13.1 is the first release with the changes listed under 0.13.0.
+
+### Fixed
+
+- Indexing sessions with very long prompts uses about as much CPU as 0.12.0 did. 0.13.0 used up to six times more.
+
 ## [0.13.0] - 2026-10-12
 
 > file: finds sessions by file, and blame is instant
@@ -330,6 +340,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
+[0.13.1]: https://github.com/adammiribyan/superfind/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/adammiribyan/superfind/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adammiribyan/superfind/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/adammiribyan/superfind/compare/v0.10.0...v0.11.0
