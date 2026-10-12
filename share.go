@@ -242,12 +242,18 @@ func runReceive(args []string) {
 		fail("superfind receive: this superfind can't start " + field(m.Agent) + ". Pass --agent claude, codex, or grok.")
 	}
 	c, err := share.Inspect(cmp.Or(folder, "."))
-	switch {
-	case err != nil && folder != "":
+	if err != nil && folder != "" {
 		fail("superfind receive: " + folder + " is not in a git repository. Pass --folder with a clone of " + cmp.Or(m.RepoRemote, "its repository") + ".")
-	case err != nil:
-		var found bool
-		if c, found = cloneOf(m.RepoRemote); !found {
+	}
+	moved := ""
+	if folder == "" && (err != nil || share.Check(c, m).Stops() && !force) {
+		clone, found := cloneOf(m.RepoRemote)
+		switch {
+		case found && err == nil:
+			c, moved = clone, "This folder is from another repository, so superfind uses your clone of "+m.RepoRemote+"."
+		case found:
+			c = clone
+		case err != nil:
 			fail("superfind receive: cd into a clone of " + cmp.Or(m.RepoRemote, "the shared repository") + ", or pass --folder DIR.")
 		}
 	}
@@ -261,6 +267,9 @@ func runReceive(args []string) {
 		dir = sub
 	}
 	fmt.Fprintln(stdout, "\nContinuing in "+dir+".")
+	if moved != "" {
+		fmt.Fprintln(stdout, moved)
+	}
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}

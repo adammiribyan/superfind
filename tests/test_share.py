@@ -172,6 +172,27 @@ class Share(SuperfindBehavior):
         self.assertEqual((alone.returncode, alone.stderr),
                          (1, "superfind receive: cd into a clone of https://github.com/acme/store, or pass --folder DIR.\n"))
 
+    def test_receive_in_another_repository_moves_to_a_clone_from_the_index(self):
+        path = self.shared()
+        clone = self.clone()
+        other = self.clone("other", "https://github.com/acme/other")
+        self.session(uid(2), user("tidy the readme", cwd=str(clone)), claude("Tidied."), title="Readme")
+        self.superfind("index")
+        result = self.run_in(other, "receive", str(path))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"\nContinuing in {clone}/web.\nThis folder is from another repository, so superfind uses your clone of "
+                      f"https://github.com/acme/store.\nHEAD is at the shared commit {self.head[:12]}.\n", result.stdout)
+        forced = self.run_in(other, "receive", str(path), "--force-folder")
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertIn(f"\nContinuing in {other}/web.\nThis checkout is from https://github.com/acme/other, not "
+                      "https://github.com/acme/store.\n", forced.stdout)
+        shutil.rmtree(self.home / ".cache" / "superfind")
+        alone = self.run_in(other, "receive", str(path))
+        self.assertEqual(alone.returncode, 1)
+        self.assertEqual(alone.stderr, "superfind receive: This checkout is from https://github.com/acme/other, not "
+                                       "https://github.com/acme/store. Pass --folder with a clone of https://github.com/acme/store, "
+                                       "or --force-folder to continue here anyway.\n")
+
     def test_receiving_twice_keeps_one_record_and_counts_once(self):
         for name in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "JENKINS_URL", "TF_BUILD", "TEAMCITY_VERSION",
                      "DO_NOT_TRACK"):

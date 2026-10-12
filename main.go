@@ -261,9 +261,10 @@ The colleague runs superfind receive FILE. See superfind help receive.
 
 Continue a session that a colleague shared with superfind share, in your checkout of its repository.
 receive checks the file, shows who shared it and the briefing, and picks a folder: DIR, else this
-folder if it is in a git repository, else a clone of the repository from sessions superfind has seen.
-It stops if that folder is a clone of another repository. It reports, but doesn't enforce,
-how your HEAD and branch compare with the share's, and whether you have uncommitted changes.
+folder if it is a clone of the shared repository, else one from sessions superfind has seen.
+It stops if DIR is a clone of another repository, or if this folder is and no clone was found.
+It reports, but doesn't enforce, how your HEAD and branch compare with the share's, and whether
+you have uncommitted changes.
 
   --folder DIR    continue in the git repository at DIR
   --agent AGENT   start claude, codex, or grok instead of the agent the share came from
