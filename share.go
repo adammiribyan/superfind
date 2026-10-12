@@ -264,29 +264,23 @@ func runReceive(args []string) {
 	if a == nil {
 		fail("superfind receive: this superfind can't start " + field(m.Agent) + ". Pass --agent claude, codex, or grok.")
 	}
-	c, err := share.Inspect(cmp.Or(folder, "."))
-	if err != nil && folder != "" {
-		fail("superfind receive: " + folder + " is not in a git repository. Pass --folder with a clone of " + cmp.Or(m.RepoRemote, "its repository") + ".")
+	here, err := share.Open(cmp.Or(folder, "."))
+	if err != nil {
+		fail("superfind receive: can't continue in " + cmp.Or(folder, "this folder") + ": " + err.Error() + ". Pass --folder DIR.")
 	}
 	moved := ""
-	if folder == "" && (err != nil || share.Check(c, m).Stops() && !force) {
-		clone, found := cloneOf(m.RepoRemote)
-		switch {
-		case found && err == nil:
-			c, moved = clone, "This folder is from another repository, so superfind uses your clone of "+m.RepoRemote+"."
-		case found:
-			c = clone
-		case err != nil:
-			fail("superfind receive: cd into a clone of " + cmp.Or(m.RepoRemote, "the shared repository") + ", or pass --folder DIR.")
+	if folder == "" && !force && share.Check(here, m).Stops() {
+		if clone, found := cloneOf(m.RepoRemote); found {
+			here, moved = clone, "This folder isn't a clone of "+m.RepoRemote+", so superfind uses your clone of it."
 		}
 	}
-	report := share.Check(c, m)
+	report := share.Check(here, m)
 	lines := report.Lines(m)
 	if report.Stops() && !force {
 		fail("superfind receive: " + lines[0] + " Pass --folder with a clone of " + m.RepoRemote + ", or --force-folder to continue here anyway.")
 	}
-	dir := c.Root
-	if sub := filepath.Join(c.Root, m.RepoSubdir); m.RepoSubdir != "" && dirExists(sub) {
+	dir := here.Root
+	if sub := filepath.Join(here.Root, m.RepoSubdir); m.RepoSubdir != "" && dirExists(sub) {
 		dir = sub
 	}
 	fmt.Fprintln(stdout, "\nContinuing in "+dir+".")
@@ -296,11 +290,11 @@ func runReceive(args []string) {
 	for _, line := range lines {
 		fmt.Fprintln(stdout, line)
 	}
-	path := filepath.Join(c.GitDir, "superfind-share-"+m.BundleID+".md")
+	path := here.BriefingPath(m.BundleID)
 	if err := os.WriteFile(path, []byte(s.Briefing), 0o600); err != nil {
-		fail("superfind receive: couldn't save the briefing in " + c.GitDir + ": " + err.Error())
+		fail("superfind receive: couldn't save the briefing in " + filepath.Dir(path) + ": " + err.Error())
 	}
-	argv := share.Start(a, share.Prompt(path, cmp.Or(from, a)))
+	argv := share.Start(a, share.Prompt(path, cmp.Or(from, a), here))
 	fmt.Fprintln(stdout, "\n"+share.Command(dir, argv))
 	if tty == nil {
 		return
@@ -354,9 +348,9 @@ func preview(m share.Manifest) []string {
 	return append(lines, "Left out: "+strings.Join(omitted, ", "), "Masked: "+secrets(m.MaskedCount), "")
 }
 
-func cloneOf(remote string) (share.Checkout, bool) {
+func cloneOf(remote string) (share.Folder, bool) {
 	if remote == "" {
-		return share.Checkout{}, false
+		return share.Folder{}, false
 	}
 	rows := session.CachedRows()
 	slices.SortFunc(rows, func(a, b session.Row) int { return cmp.Compare(b.Session.Mtime, a.Session.Mtime) })
@@ -371,11 +365,11 @@ func cloneOf(remote string) (share.Checkout, bool) {
 			continue
 		}
 		if slices.Contains(c.Remotes, remote) {
-			return c, true
+			return share.InCheckout(c), true
 		}
 		checked = append(checked, c.Root)
 	}
-	return share.Checkout{}, false
+	return share.Folder{}, false
 }
 
 func dirExists(path string) bool {
