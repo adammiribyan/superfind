@@ -227,6 +227,21 @@ func TestTheQueueKeepsTheNewest200AndRecordKeepsNothingWhenOff(t *testing.T) {
 	}
 }
 
+func TestShareEventsQueueWithNoProperties(t *testing.T) {
+	dir := home(t)
+	Record(ShareWritten{})
+	Record(ShareReceived{})
+	Record(ShareStarted{})
+	Flush()
+	var got []string
+	for _, e := range NextPing(Build{Version: "0.14.0", Method: Script}, time.Now()).Events {
+		got = append(got, e.Name+" "+string(e.Props))
+	}
+	if want := []string{"share_written {}", "share_received {}", "share_started {}"}; !reflect.DeepEqual(got, want) || len(queue(t, dir)) != 3 {
+		t.Errorf("the ping lists %q, want %q", got, want)
+	}
+}
+
 type worker struct {
 	status   int
 	body     string

@@ -10,7 +10,7 @@ type Event interface {
 	event()
 }
 
-var Events = []Event{Upgraded{}}
+var Events = []Event{Upgraded{}, ShareWritten{}, ShareReceived{}, ShareStarted{}}
 
 type Upgraded struct {
 	Method  Method  `json:"method"`
@@ -19,6 +19,21 @@ type Upgraded struct {
 
 func (Upgraded) Name() string { return "upgraded" }
 func (Upgraded) event()       {}
+
+type ShareWritten struct{}
+
+func (ShareWritten) Name() string { return "share_written" }
+func (ShareWritten) event()       {}
+
+type ShareReceived struct{}
+
+func (ShareReceived) Name() string { return "share_received" }
+func (ShareReceived) event()       {}
+
+type ShareStarted struct{}
+
+func (ShareStarted) Name() string { return "share_started" }
+func (ShareStarted) event()       {}
 
 type enum interface{ names() []string }
 
