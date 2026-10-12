@@ -27,7 +27,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/store"
 )
 
-const cacheVersion = 16
+const cacheVersion = 17
 
 const (
 	titleRunes  = 200
@@ -80,7 +80,7 @@ func clipMasked(s string, n int) string {
 }
 
 func parse(f found) (parsed, bool, error) {
-	t, trail, err := agent.ReadSession(f.Agent, f.path)
+	t, trail, err := f.read()
 	var unread *agent.PartUnread
 	if err != nil && !errors.As(err, &unread) {
 		return parsed{}, false, err
@@ -379,6 +379,32 @@ type found struct {
 	id    agent.FileID
 	mtime float64
 	name  string
+	read  func() (agent.Transcript, agent.Trail, error)
+}
+
+func transcriptsWin(all []found) []found {
+	kept := map[string]int{}
+	for _, f := range all {
+		if !agent.TranscriptGone(f.path) {
+			kept[f.Agent.ID+":"+f.Agent.IDOf(f.path)] = -1
+		}
+	}
+	out := all[:0:0]
+	for _, f := range all {
+		key := f.Agent.ID + ":" + f.Agent.IDOf(f.path)
+		if !agent.TranscriptGone(f.path) {
+			out = append(out, f)
+			continue
+		}
+		switch at, seen := kept[key]; {
+		case !seen:
+			kept[key] = len(out)
+			out = append(out, f)
+		case at >= 0 && f.mtime > out[at].mtime:
+			out[at] = f
+		}
+	}
+	return out
 }
 
 type parsed struct {
@@ -450,10 +476,26 @@ func index(announce func(stale int), rebuild bool) ([]Row, []error, error) {
 				continue
 			}
 			if id, mtime, err := p.Agent.Stat(path); err == nil {
-				all = append(all, found{p, path, id, mtime, names[p.Agent.IDOf(path)]})
+				all = append(all, found{p, path, id, mtime, names[p.Agent.IDOf(path)], func() (agent.Transcript, agent.Trail, error) {
+					return agent.ReadSession(p.Agent, path)
+				}})
 			}
 		}
 	}
+	for _, p := range places {
+		lost, err := p.Agent.PromptsOnly(p.Home)
+		if err != nil {
+			problems = append(problems, err)
+			var e *fs.PathError
+			if errors.As(err, &e) {
+				blocked = append(blocked, e.Path+"/")
+			}
+		}
+		for _, l := range lost {
+			all = append(all, found{p, l.Path, l.ID, l.Mtime, "", l.Read})
+		}
+	}
+	all = transcriptsWin(all)
 	var stale []found
 	for _, f := range all {
 		e, known := old[f.path]
