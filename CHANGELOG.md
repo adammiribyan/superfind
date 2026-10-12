@@ -4,7 +4,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 ## [Unreleased]
 
-> sfd resume takes an id or a few words
+> superfind resume takes an id or a few words
 
 ### Added
 
@@ -14,6 +14,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 ### Changed
 
 - `superfind pick` is another name for `superfind resume`. At a terminal, bare `pick` now resumes the session you choose instead of printing its command, as `pick --run` does. With shell setup, `sfd resume` and `sfd pick` resume in the session's folder.
+- On Omarchy, the install script binds Super-Shift-Ctrl-F to `superfind resume --run`. A key already bound to `superfind pick --run` is left as it is.
 
 ### Fixed
 

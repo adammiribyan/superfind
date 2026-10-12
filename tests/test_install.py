@@ -39,14 +39,22 @@ class Installer(unittest.TestCase):
         result = self.install("bash")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(path.read_text(), 'o.bind("SUPER + SHIFT + CTRL + A", "Agent", "omarchy-launch-tui claude")\n\n'
-                         f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n')
+                         f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind resume --run")\n')
+        self.assertNotIn("Super-Shift-Ctrl-F", result.stdout)
+
+    def test_on_omarchy_an_older_pick_binding_counts_as_the_superfind_binding(self):
+        older = f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n'
+        path = self.omarchy("bindings.lua", older)
+        result = self.install("bash")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(path.read_text(), older)
         self.assertNotIn("Super-Shift-Ctrl-F", result.stdout)
 
     def test_on_omarchy_with_only_bindings_conf_the_binding_goes_there(self):
         path = self.omarchy("bindings.conf", "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n")
         result = self.install("bash")
         self.assertEqual(path.read_text(), "bindd = SUPER SHIFT CTRL, A, Agent, exec, omarchy-launch-tui claude\n\n"
-                         f"bindd = SUPER SHIFT CTRL, F, Superfind, exec, omarchy-launch-tui {self.home}/.local/bin/superfind pick --run\n")
+                         f"bindd = SUPER SHIFT CTRL, F, Superfind, exec, omarchy-launch-tui {self.home}/.local/bin/superfind resume --run\n")
         self.assertIn(f"added Super-Shift-Ctrl-F to {path} (run hyprctl reload to use it now)\n", result.stdout)
 
     def test_on_omarchy_a_key_already_bound_is_left_alone_with_a_hint(self):
@@ -55,7 +63,7 @@ class Installer(unittest.TestCase):
         result = self.install("bash")
         self.assertEqual(path.read_text(), taken)
         self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: "
-                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n',
+                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui {self.home}/.local/bin/superfind resume --run")\n',
                       result.stdout)
 
     def test_on_omarchy_a_home_with_a_space_gets_a_hint_instead_of_a_broken_binding(self):
@@ -64,7 +72,7 @@ class Installer(unittest.TestCase):
         result = self.install("bash")
         self.assertEqual(path.read_text(), "")
         self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, add this line to {path}: "
-                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui \'{self.home}/.local/bin/superfind\' pick --run")\n',
+                      f'o.bind("SUPER + SHIFT + CTRL + F", "Superfind", "omarchy-launch-tui \'{self.home}/.local/bin/superfind\' resume --run")\n',
                       result.stdout)
 
     def test_on_omarchy_a_home_with_a_quote_is_told_what_to_bind(self):
@@ -73,7 +81,7 @@ class Installer(unittest.TestCase):
         result = self.install("bash")
         self.assertEqual(path.read_text(), "")
         self.assertIn(f"to open superfind with Super-Shift-Ctrl-F, bind that key in {path} to run "
-                      f"{self.home}/.local/bin/superfind pick --run through omarchy-launch-tui\n", result.stdout)
+                      f"{self.home}/.local/bin/superfind resume --run through omarchy-launch-tui\n", result.stdout)
 
     def test_omarchy_is_found_through_omarchy_path_alone(self):
         packaged = self.home / "usr-share-omarchy"
@@ -347,7 +355,7 @@ class ReleaseInstaller(unittest.TestCase):
             self.assertIn('  eval "$("$HOME/.local/bin/superfind" init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS\n',
                           result.stdout)
             self.assertIn('  "$HOME/.local/bin/superfind" init fish | source      # in ~/.config/fish/config.fish\n', result.stdout)
-            self.assertEqual(result.stdout.splitlines()[-1], f"Installed. Run {self.home}/.local/bin/superfind pick --run to choose and resume a session.")
+            self.assertEqual(result.stdout.splitlines()[-1], f"Installed. Run {self.home}/.local/bin/superfind resume --run to choose and resume a session.")
             self.assertEqual(sorted(p.name for p in self.home.iterdir()), [".local"])
 
     def test_on_omarchy_the_release_install_binds_super_shift_ctrl_f(self):
@@ -358,7 +366,7 @@ class ReleaseInstaller(unittest.TestCase):
         result = self.install(stdin=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(bindings.read_text(), '\no.bind("SUPER + SHIFT + CTRL + F", "Superfind", '
-                         f'"omarchy-launch-tui {self.home}/.local/bin/superfind pick --run")\n')
+                         f'"omarchy-launch-tui {self.home}/.local/bin/superfind resume --run")\n')
 
     def test_piped_to_sh_inside_a_superfind_clone_it_still_installs_the_release(self):
         clone = self.root / "clone"

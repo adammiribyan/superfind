@@ -120,10 +120,10 @@ main() {
   done
   if [ -n "$omarchy" ]; then
     hypr="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
-    launch="omarchy-launch-tui $bin/superfind pick --run" unsafe=""
+    launch="omarchy-launch-tui $bin/superfind resume --run" unsafe=""
     case "$bin" in
       *[\"\'\\\$\`]*) launch="" ;;
-      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' pick --run" unsafe=1 ;;
+      *[!A-Za-z0-9/._-]*) launch="omarchy-launch-tui '$bin/superfind' resume --run" unsafe=1 ;;
     esac
     if [ -f "$hypr/bindings.conf" ] && [ ! -f "$hypr/bindings.lua" ]; then
       bindings="$hypr/bindings.conf" chord='SUPER SHIFT CTRL, F,' binding="bindd = SUPER SHIFT CTRL, F, Superfind, exec, $launch"
@@ -131,8 +131,8 @@ main() {
       bindings="$hypr/bindings.lua" chord='"SUPER + SHIFT + CTRL + F"' binding="o.bind(\"SUPER + SHIFT + CTRL + F\", \"Superfind\", \"$launch\")"
     fi
     if [ -z "$launch" ]; then
-      echo "to open superfind with Super-Shift-Ctrl-F, bind that key in $bindings to run $bin/superfind pick --run through omarchy-launch-tui"
-    elif grep -qF "$binding" "$bindings" 2>/dev/null; then
+      echo "to open superfind with Super-Shift-Ctrl-F, bind that key in $bindings to run $bin/superfind resume --run through omarchy-launch-tui"
+    elif grep -qF "$binding" "$bindings" 2>/dev/null || grep -qF "$(printf '%s' "$binding" | sed 's/ resume --run/ pick --run/')" "$bindings" 2>/dev/null; then
       :
     elif [ -n "$unsafe" ] || [ ! -f "$bindings" ] || grep -qF "$chord" "$bindings"; then
       echo "to open superfind with Super-Shift-Ctrl-F, add this line to $bindings: $binding"
@@ -156,7 +156,7 @@ main() {
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init zsh)\"     # in ~/.zshrc"
     echo "  eval \"\$(\"\$HOME/.local/bin/superfind\" init bash)\"    # in ~/.bashrc, or ~/.bash_profile on macOS"
     echo "  \"\$HOME/.local/bin/superfind\" init fish | source      # in ~/.config/fish/config.fish"
-    echo "Installed. Run $bin/superfind pick --run to choose and resume a session."
+    echo "Installed. Run $bin/superfind resume --run to choose and resume a session."
     return
   fi
   if grep -Eq '^[^#]*superfind"? init' "$rc" 2>/dev/null; then
