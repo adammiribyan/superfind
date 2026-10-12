@@ -325,7 +325,7 @@ const zshSetup = `superfind() {
   local -a _sf_run
   _sf_run=(command superfind)
   [[ -x %[1]s ]] && _sf_run=(%[1]s)
-  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
+  if [[ ( ${1-} == last || ${1-} == resume || ${1-} == pick ) && -t 0 && -t 1 ]]; then
     for _sf_arg in "${@:2}"; do
       [[ $_sf_arg == -* ]] && { "${_sf_run[@]}" "$@"; return; }
     done
@@ -362,7 +362,7 @@ const bashSetup = `superfind() {
   local -a _sf_run
   _sf_run=(command superfind)
   [[ -x %[1]s ]] && _sf_run=(%[1]s)
-  if [[ ${1-} == last && -t 0 && -t 1 ]]; then
+  if [[ ( ${1-} == last || ${1-} == resume || ${1-} == pick ) && -t 0 && -t 1 ]]; then
     for _sf_arg in "${@:2}"; do
       [[ $_sf_arg == -* ]] && { "${_sf_run[@]}" "$@"; return; }
     done
@@ -396,7 +396,7 @@ const fishSetup = `function superfind
     if not set -q argv[1]
         set argv pick
     else if not begin
-            test "$argv[1]" = last; and test -t 0; and test -t 1; and not string match -q -- '-*' $_sf_rest
+            contains -- "$argv[1]" last resume pick; and test -t 0; and test -t 1; and not string match -q -- '-*' $_sf_rest
         end
         $_sf_run $argv
         return

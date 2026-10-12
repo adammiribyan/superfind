@@ -727,10 +727,10 @@ class PickerBehavior(unittest.TestCase):
         self.keys("Up")
         self.wait_for("Added a test that taps Pay twice")
 
-    def resume_through_shell(self, shell, open_keys):
+    def resume_through_shell(self, shell, open_keys, ready="Claude sessions", choose=("Down", "Enter")):
         stub = self.home / "stub"
         stub.mkdir()
-        (stub / "claude").write_text(f'#!/bin/sh\necho "$(pwd) $*" > {self.out}.resumed\n')
+        (stub / "claude").write_text(f'#!/bin/sh\n[ "$1" = -p ] && exit 1\necho "$(pwd) $*" > {self.out}.resumed\n')
         (stub / "claude").chmod(0o755)
         self.three_sessions()
         subprocess.run([str(SUPERFIND), "index"], env=self.env, capture_output=True, check=True)
@@ -741,8 +741,10 @@ class PickerBehavior(unittest.TestCase):
         setup = f"{SUPERFIND} init fish | source" if shell == "fish" else f'eval "$({SUPERFIND} init {shell})"'
         self.keys(setup, "Enter")
         self.keys(*open_keys)
-        self.wait_for("Claude sessions")
-        self.keys("Down", "Enter")
+        if ready:
+            self.wait_for(ready)
+        if choose:
+            self.keys(*choose)
         self.assertTrue(self.until(Path(f"{self.out}.resumed").exists), self.screen())
         self.assertEqual(Path(f"{self.out}.resumed").read_text(), "/tmp --resume mid\n")
         self.keys("pwd", "Enter")
@@ -790,6 +792,29 @@ class PickerBehavior(unittest.TestCase):
     @unittest.skipUnless(shutil.which("fish"), "needs fish")
     def test_typing_superfind_last_in_fish_resumes_the_newest_session_here_in_that_shell(self):
         self.last_through_shell("fish")
+
+    def test_typing_sfd_resume_with_an_id_in_zsh_resumes_it_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    def test_typing_sfd_resume_with_an_id_in_bash_resumes_it_in_that_shell(self):
+        self.resume_through_shell("bash", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_resume_with_an_id_in_fish_resumes_it_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd resume mid", "Enter"], ready=None, choose=())
+
+    def test_typing_sfd_resume_with_words_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    def test_typing_sfd_resume_with_words_in_bash_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("bash", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    @unittest.skipUnless(shutil.which("fish"), "needs fish")
+    def test_typing_sfd_resume_with_words_in_fish_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("fish", ["sfd resume Invoice", "Enter"], ready="Ask failed", choose=("Enter",))
+
+    def test_typing_sfd_pick_in_zsh_resumes_the_chosen_session_in_that_shell(self):
+        self.resume_through_shell("zsh", ["sfd pick", "Enter"])
 
     def test_typing_superfind_in_zsh_resumes_the_chosen_session_in_that_shell(self):
         self.resume_through_shell("zsh", ["superfind", "Enter"])
