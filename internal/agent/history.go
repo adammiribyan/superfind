@@ -52,8 +52,8 @@ func (e NoResume) Error() string {
 
 func keepLonger(home string) string {
 	settings := filepath.Join(home, "settings.json")
-	if rel, ok := strings.CutPrefix(settings, Home()+"/"); ok {
-		settings = "~/" + rel
+	if rel, err := filepath.Rel(Resolve(Home()), Resolve(home)); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+		settings = filepath.Join("~", rel, "settings.json")
 	}
 	return "To keep future transcripts longer, set cleanupPeriodDays in " + settings + "."
 }

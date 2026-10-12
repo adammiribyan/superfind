@@ -9,10 +9,12 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/render"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/show"
 )
@@ -35,6 +37,7 @@ type Turn struct {
 	Matches []string `json:"matches,omitempty"`
 	Cut     bool     `json:"cut,omitempty"`
 	kept    string
+	at      time.Time
 }
 
 type Packet struct {
@@ -211,7 +214,7 @@ func Build(t agent.Transcript, opt Options) Packet {
 			order[i] = keepMatch
 			text, kept, shortened = shorten(clean[i], limit, keepMatch, m)
 		}
-		return Turn{Number: i + 1, Role: t.Turns[i].Role, Text: text, Cut: shortened, kept: strings.Join(kept, "\n")}
+		return Turn{Number: i + 1, Role: t.Turns[i].Role, Text: text, Cut: shortened, kept: strings.Join(kept, "\n"), at: t.Turns[i].At}
 	}
 	add := func(i, limit int, how keep) bool {
 		if i < 0 || i >= n {
@@ -353,6 +356,7 @@ var endings = map[agent.Event]string{
 	agent.CalledTool:  "It ended after a tool call, before {agent} replied, so that step may be unfinished.",
 	agent.Prompted:    "It ended on a request that {agent} never answered.",
 	agent.Interrupted: "The user interrupted {agent} while it was working, so the last step may be unfinished.",
+	agent.Deleted:     "Claude Code deleted the transcript, so only the user's prompts are left. What {agent} replied or did is unknown.",
 }
 
 func Ending(a *agent.Agent, e agent.Event) string {
@@ -393,7 +397,11 @@ func WriteMarkdown(w io.Writer, a *agent.Agent, r session.Record, p Packet) erro
 	}
 	fmt.Fprintf(w, "- Folder: %s\n", folder)
 	fmt.Fprintf(w, "- Last active: %s\n", r.Updated)
-	fmt.Fprintf(w, "- Resume the original: %s\n", code(r.Resume))
+	if r.TranscriptGone {
+		fmt.Fprintf(w, "- Resume the original: can't. %s\n", agent.GoneNote(r.Home))
+	} else {
+		fmt.Fprintf(w, "- Resume the original: %s\n", code(r.Resume))
+	}
 	fmt.Fprintf(w, "- Shown: %d of %s\n", len(p.Turns), plural(p.Total, "turn", "turns"))
 	if len(p.Words) > 0 {
 		verb := "match"
@@ -421,7 +429,7 @@ func WriteMarkdown(w io.Writer, a *agent.Agent, r session.Record, p Packet) erro
 	for _, t := range p.Turns {
 		gap(w, next, t.Number-1)
 		next = t.Number + 1
-		notes := []string{speaker(t.Role, r)}
+		notes := []string{speaker(t.Role, r) + render.At(t.at)}
 		if t.Number-1 == p.FirstRequest {
 			notes = append(notes, "first request")
 		}
@@ -437,8 +445,12 @@ func WriteMarkdown(w io.Writer, a *agent.Agent, r session.Record, p Packet) erro
 		fmt.Fprintf(w, "\n### Turn %d · %s\n\n%s\n", t.Number, strings.Join(notes, " · "), quote(t.Text))
 	}
 	gap(w, next, p.Total)
-	_, err := fmt.Fprintf(w, "\n---\n\nEnd of the excerpts. %s prints the whole conversation.\n",
-		code("superfind show "+agent.ShellQuote(r.Path)+" --max-bytes 0"))
+	whole := "the whole conversation"
+	if r.TranscriptGone {
+		whole = "every prompt that is left"
+	}
+	_, err := fmt.Fprintf(w, "\n---\n\nEnd of the excerpts. %s prints %s.\n",
+		code("superfind show "+agent.ShellQuote(r.Path)+" --max-bytes 0"), whole)
 	return err
 }
 

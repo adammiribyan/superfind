@@ -232,6 +232,17 @@ class SuperfindBehavior(unittest.TestCase):
         os.utime(path, (self.clock, self.clock))
         return path.resolve()
 
+    def history(self, session_id, *prompts, project="/work/billing", home=None, pasted=None):
+        home = Path(home) if home else self.home / ".claude"
+        with open(home / "history.jsonl", "a") as f:
+            for text in prompts:
+                self.clock += 60
+                entry = {"display": text, "pastedContents": pasted or {}, "timestamp": int(self.clock * 1000), "project": project}
+                if session_id:
+                    entry["sessionId"] = session_id
+                f.write(line(**entry) + "\n")
+        return home.resolve() / "history.jsonl" / (session_id or "")
+
     def superfind(self, *args):
         result = subprocess.run([str(SUPERFIND), *args], env=self.env, capture_output=True, text=True, check=True)
         return ANSI.sub("", result.stdout)

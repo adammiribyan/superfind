@@ -49,6 +49,8 @@ FIELDS = {
             "as `{\"pane\": \"%3\", \"session\": \"work\", \"window\": 1}`, or `null` when superfind can't see the pane. "
             "Codex counts as open only when it was started with `codex resume <id>`.",
     "folder_gone": "True when the session's folder no longer exists. `resume` then moves to the nearest parent that does.",
+    "transcript_gone": "True when Claude Code deleted the session's transcript and only your prompts in its "
+                       "`history.jsonl` are left. `resume` is then empty, and `show` and `handoff` print the prompts.",
     "resume": "The shell command that resumes the session, with every value quoted for the shell.",
     "kind": "`agent` when another program started the session, such as `codex exec` or `claude -p`, and "
             "`interactive` otherwise.",

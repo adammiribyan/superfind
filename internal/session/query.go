@@ -282,7 +282,7 @@ func inside(path, folder string) bool {
 
 func Last(q Query, rows []Row) (Row, bool) {
 	q.Here = true
-	kept := q.Rows(rows, false)
+	kept := slices.DeleteFunc(q.Rows(rows, false), func(r Row) bool { return agent.TranscriptGone(r.Path) })
 	if len(kept) == 0 {
 		return Row{}, false
 	}
