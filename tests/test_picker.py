@@ -21,7 +21,7 @@ from test_superfind import (ANSI, SUPERFIND, claude, codex_call, codex_meta, cod
                             grok_reply, grok_user, line, serve, tool, uid, user)
 
 
-ASK_FIRST = "Open in another window; Enter again resumes a copy. Esc goes back."
+ASK_FIRST = "Already open. Enter again resumes a copy. Esc cancels."
 GHOSTTY = 'if application "Ghostty" is running then tell application "Ghostty" to '
 AGE = re.compile(r"now|\d+[mhd]|[A-Z][a-z]{2} \d{1,4}")
 CELL_GAP = r" {2,}"
@@ -331,12 +331,12 @@ class PickerBehavior(unittest.TestCase):
                                                      message={"role": "user", "content": "score the ledger answers"}),
                      tool("Bash"), claude("Scored 40 answers."))
         self.open_picker()
-        self.wait_for("Only sessions other programs started. Type is:agent to see them.")
+        self.wait_for("Only automated sessions found. Type is:agent to see them.")
         self.assertNotIn("0/", self.screen())
         self.keys("is:agent")
         self.assertTrue(self.until(lambda: self.titles() == ["Nightly eval run"]), self.screen())
         self.assertIn("1/1", self.screen())
-        self.assertNotIn("Only sessions other programs started", self.screen())
+        self.assertNotIn("Only automated sessions found", self.screen())
 
     def test_typing_narrows_the_list_and_shows_the_matching_passage(self):
         self.three_sessions()
@@ -539,7 +539,7 @@ class PickerBehavior(unittest.TestCase):
         self.three_sessions()
         self.open_picker()
         self.keys("kubernetes")
-        self.wait_for("No session contains these words. ctrl-r asks by description.")
+        self.wait_for("No keyword matches. Ctrl-R searches by description.")
         self.assertIn("ctrl-u clear search", self.screen())
         self.keys("C-u")
         self.wait_for("3/3")

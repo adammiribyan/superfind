@@ -29,7 +29,7 @@ const (
 	UpdateOut
 )
 
-const TelemetryNotice = "Daily update check and anonymous usage · superfind telemetry"
+const TelemetryNotice = "Daily anonymous check-ins are on · superfind telemetry"
 
 type due struct {
 	telemetry, whatsNew, update bool

@@ -258,7 +258,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
 	if len(rows) == 0 && problem == "" {
-		m.problem, m.indexing = "Indexing your sessions…", true
+		m.problem, m.indexing = "Loading sessions…", true
 	}
 	m.filter()
 	if info, err := os.Stat(store.CachePath("status.json")); err == nil {
@@ -383,7 +383,7 @@ func (m *picker) filter() {
 	case strings.TrimSpace(query) == "", m.db == nil:
 		m.shown = q.Rows(m.all, false)
 		if len(m.all) == 0 && len(m.rows) > 0 && m.problem == "" && strings.TrimSpace(query) == "" {
-			m.message = "Only sessions other programs started. Type is:agent to see them."
+			m.message = "Only automated sessions found. Type is:agent to see them."
 		}
 	default:
 		m.shown, err = session.Search(m.db, query, m.all)
@@ -395,7 +395,7 @@ func (m *picker) filter() {
 		case err != nil:
 			m.message = "Search failed: " + err.Error()
 		case len(m.shown) == 0 && len(m.all) > 0 && q.Words != "":
-			m.message = "No session contains these words. ctrl-r asks by description."
+			m.message = "No keyword matches. Ctrl-R searches by description."
 		case len(m.shown) == 0 && len(m.all) > 0:
 			m.message = "No sessions match “" + query + "”"
 		}
@@ -666,7 +666,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.shown, m.cursor, m.offset, m.askedFor = session.InOrder(m.all, msg.paths), 0, 0, msg.query
 		if len(m.shown) == 0 {
-			m.message = "Ask found nothing for “" + msg.query + "”"
+			m.message = "No sessions match “" + msg.query + "”"
 		}
 		updated, load := m.loadPreview()
 		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
@@ -740,7 +740,7 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.editInput(msg)
 }
 
-const confirmCopy = "Open in another window; Enter again resumes a copy. Esc goes back."
+const confirmCopy = "Already open. Enter again resumes a copy. Esc cancels."
 
 func freshest(cached, fresh *open.State) *open.State {
 	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {

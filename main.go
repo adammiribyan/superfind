@@ -41,327 +41,250 @@ import (
 
 var version = "0.12.0"
 
-const usage = `superfind: find a past AI coding session and resume it. It reads Claude Code, Codex, and Grok sessions.
+const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
 
-  superfind               open the picker (after shell setup; see superfind init); sfd is short for it
-  superfind init zsh|bash|fish
-                          print the shell setup; add  eval "$(superfind init zsh)"  to ~/.zshrc,
-                          eval "$(superfind init bash)"  to ~/.bashrc, or
-                          superfind init fish | source  to ~/.config/fish/config.fish
-  superfind pick [--run]  open the picker; prints the chosen session's title, then the command
-                          that resumes it, or with --run, runs that command
+  superfind               open the session picker; sfd is the shortcut
   superfind last [FILTERS] [--json]
-                          resume the newest session from this folder (after shell setup);
-                          without the shell setup, or in a script, print its title and the
-                          command that resumes it
+                          resume the newest session for this folder
   superfind search WORDS [--json] [--limit N]
-                          print sessions whose title or conversation contains every word;
-                          is:waiting and is:unfinished filter by how a session ended,
-                          agent:claude, agent:codex, and agent:grok by the agent,
-                          is:agent shows sessions another program started, is:open shows
-                          sessions an agent has open right now, in:here, branch:NAME,
-                          after:DAY, and before:DAY narrow by folder, branch, and last
-                          activity, and file:PATH and has:commit by what a session edited
-                          and whether it committed
+                          find sessions by keyword
   superfind ask WORDS [--json] [--limit N]
-                          print the sessions that best fit what you describe, even in other words;
-                          takes the same filters
-  superfind preview SESSION [--width N] [--recent] [--query Q]
-                          print where a session left off, or its recent conversation
+                          find sessions by description
   superfind show SESSION [--json] [--tail N] [--max-bytes N]
-                          print a session's conversation as plain text, for scripts and agents
+                          read a session's conversation
   superfind handoff SESSION [WORDS] [--json] [--max-bytes N]
-                          print excerpts of a session for another agent to continue from:
-                          where it left off, and the turns that mention WORDS
-  superfind command SESSION
-                          print the shell command that resumes a session
+                          get a briefing to continue with another agent
   superfind blame FILE|FILE:LINE|COMMIT [--json]
-                          print the sessions that made a commit, or that edited a file
-  superfind index         build or refresh the index
-  superfind label         mark sessions waiting on you (needs a TypeSafe key)
+                          find which sessions changed a file, line, or commit
+  superfind command SESSION
+                          get the shell command to resume a session
+  superfind preview SESSION [--width N] [--recent] [--query Q]
+                          see where a session left off
+  superfind pick [--run]   choose a session; print its resume command, or run it with --run
+  superfind init zsh|bash|fish
+                          set up your shell; see superfind help init
+  superfind index          refresh the session index
+  superfind label          label sessions waiting on you; needs a TypeSafe key
   superfind upgrade [--check] [--version X] [--rollback]
-                          install the newest release in place of this one; a copy from
-                          Homebrew, go install, or a clone is left alone, with its command
-  superfind telemetry [off|on]
-                          show whether superfind checks for updates and sends anonymous
-                          usage once a day, and exactly what it sends; off stops it
+                          update superfind or restore the previous version
+  superfind telemetry [off|on] [--json]
+                          inspect or disable anonymous check-ins and update checks
   superfind help COMMAND  explain one command
-  superfind --version
+  superfind --version     print the version
 
-SESSION is a session id, a unique start of one (8 or more characters), or a path that
-superfind search prints first.
+Set up your shell with superfind init to resume from the picker or with last.
+Filters include agent:codex, in:here, after:yesterday, and is:open.
+Run superfind help search for all filters and examples.
 
-search --json and ask --json print JSON Lines: one object per session, one per line, best
-first. Not an array: jq -r .id prints every id, --limit 1 keeps the first, and jq -s makes
-an array.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
+search --json and ask --json print JSON Lines, one object per session. Use jq -s for an array.
 
-Exit codes: 0 done, even when nothing matches; 1 failed, or the picker was cancelled;
-2 a usage mistake, or an id that matches more than one session; 130 interrupted.
+Exit codes: 0 success, including no search matches; 1 failure or picker cancelled;
+2 invalid arguments or ambiguous id; 130 interrupted.
 `
 
 var helps = map[string]string{
 	"init": `superfind init zsh|bash|fish
 
-Print the shell setup that lets superfind change your shell's folder when you resume a session.
-Add one line to your shell's startup file:
+Add the line for your shell to its startup file:
 
-  eval "$(superfind init zsh)"     # in ~/.zshrc
-  eval "$(superfind init bash)"    # in ~/.bashrc, or ~/.bash_profile on macOS
-  superfind init fish | source     # in ~/.config/fish/config.fish
+  eval "$(superfind init zsh)"     # ~/.zshrc
+  eval "$(superfind init bash)"    # ~/.bashrc, or ~/.bash_profile on macOS
+  superfind init fish | source    # ~/.config/fish/config.fish
 
-Then superfind with no arguments, sfd, or Ctrl-X c opens the picker. Choosing a session cds
-into its folder and runs its agent's resume command, which lands in your shell history
-(in fish, from version 4.0). fish needs version 3.1 or later.
+Open a new terminal tab. Run superfind or sfd, or press Ctrl-X then c.
+Enter resumes the selected session in its folder. The agent's CLI must be installed.
+The resume command appears in your shell history, except in fish before 4.0.
+fish requires version 3.1 or later.
 `,
 	"pick": `superfind pick [--run]
 
-Open the picker full screen. When you choose a session, print its title on the first line and
-the command that resumes it on the second, then exit 0. Exit 1 if you cancel.
+Choose a session in the full-screen picker. Type to search, use Up and Down to select,
+and press Enter. Ctrl-R searches by description. Tab switches the preview. Esc goes back
+or closes the picker. Search filters work here; see superfind help search.
+
+By default, print the selected title and resume command on separate lines.
 The shell setup from superfind init runs that command for you.
 
-When an agent already has the session open, Enter doesn't start a second copy. If the agent
-runs in a pane of the tmux server you're in, the second line is tmux switch-client to that
-pane. If it runs in a Ghostty tab and your Ghostty can say which terminal each tab uses,
-superfind switches to that tab and exits 1, so the shell does nothing. Otherwise the picker
-asks first: Enter again resumes a copy, Esc goes back.
+  --run           resume directly, for example from a desktop keyboard shortcut
 
-  --run           run the command in place of superfind instead of printing it, for a terminal
-                  with no shell to hand it to, such as one a desktop keybinding opens. The exit
-                  status is then the agent's. On a session an agent already has open, it runs
-                  what Enter chose: the switch to its tmux pane, or a copy after you pressed
-                  Enter again.
-
-Type filters in the search box to narrow the list, such as in:here, branch:main,
-after:yesterday, or agent:codex; superfind help search lists them all.
+If the session is already open, Enter switches to its tmux pane or Ghostty tab when possible.
+Otherwise, Enter again resumes a second copy and Esc cancels.
+Exit 1 when cancelled or after switching to a Ghostty tab. With --run, a resumed agent's
+exit code becomes superfind's exit code.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
-Resume the newest session started in this folder or in a folder that holds it, with no keys to
-press. Sessions started in a folder inside this one don't count. Your home folder and / count
-only for sessions started right there.
-Very short sessions count only when nothing else fits, and sessions another program started
-are left out unless you add is:agent.
+Resume the newest session from this folder or a parent folder. Sessions from subfolders
+are excluded. Your home folder and / match only sessions started in those folders.
+Very short sessions are a fallback. Sessions another program started need is:agent.
 
-With the shell setup from superfind init, when its input and output are a terminal and no
-option starting with - is given, superfind last cds into the session's folder and resumes it,
-as choosing it in the picker does. Otherwise, such as in a pipe, a script, or an agent's shell,
-it prints the session's title on the first line and the command that resumes it on the second,
-as superfind pick does. Exit 1 when no session fits. An agent: or is: value superfind doesn't
-know, such as agent:codx, is a usage mistake (exit 2) instead of resuming any session.
+With shell setup and a terminal, last resumes directly. In scripts or without shell setup,
+it prints the title and resume command on separate lines. An already-open session switches
+to its tmux pane or Ghostty tab when possible. Otherwise, last asks before resuming a copy
+at a terminal, or exits 1 in a script.
 
-When an agent already has the newest session open, superfind last doesn't start a second copy.
-If the agent runs in a pane of the tmux server you're in, the second line is tmux switch-client
-to that pane. Otherwise, without a terminal, it says where the session is open and exits 1.
-At a terminal, if the agent runs in a Ghostty tab and your Ghostty can say which terminal each
-tab uses, superfind last switches to that tab, prints nothing, and exits 0; if not, it asks
-first: Enter resumes a copy, any other key cancels (exit 1).
+  --json          print one session object instead of resuming
+  FILTERS         any search filters; see superfind help search
 
-  agent:codex     only Codex sessions; every search filter works, such as branch:main or
-                  after:yesterday
-  --json          print the session as one JSON object, as search --json does
+  superfind last agent:codex
+  superfind last after:yesterday --json
+
+Exit 1 if no session matches. Unknown agent: or is: values exit 2.
 `,
 	"search": `superfind search WORDS [--json] [--limit N]
 
-Print the sessions whose title, project, branch, or conversation contains every word, titles
-that match first. With no words, print every session: the ones from this folder or a folder
-that holds it first, then newest first, and very short ones last. Sessions that another
-program started, such as codex exec, claude -p, or another Claude Code session, are left out
-unless you ask for them with is:agent.
+Find sessions whose title, project, branch, or conversation contains every word.
+Title matches come first. Without words, sessions for this folder come first, then newer
+sessions, with very short sessions last.
 
-  is:waiting      only sessions waiting on you; is:unfinished works the same way
-  is:open         only sessions an agent has open right now
-  is:agent        only sessions another program started
-  agent:codex     only Codex sessions; agent:claude and agent:grok work the same way
-  in:here         only sessions from this folder or a folder that holds it, not from folders
-                  inside it; your home folder and / count only for sessions started right there
-  branch:main     only sessions that ended on that branch, in any letter case; several
-                  branch: filters mean any of them
-  after:DAY       only sessions last active on or after that day, in your time zone; DAY is a
-                  date like 2026-10-09, or today, yesterday, or a time ago like 12h, 3d, or 2w
-  before:DAY      only sessions last active before that day; after:2026-10-09
-                  before:2026-10-10 is October 9
-  file:PATH       only sessions that edited that file, or a file in that folder, with an
-                  edit tool, in any worktree of its repository, including a Claude Code
-                  worktree since removed; a relative PATH starts from this folder. superfind
-                  blame FILE also lists the sessions that made the file's commits
-  has:commit      only sessions that ran git commit; a commit that failed on its own
-                  doesn't count
-  --json          print one JSON object per session, each on its own line (JSON Lines, not
-                  an array), including the ones another program started, each with its kind
-                  and the passage that matched
-  --limit N       print only the first N sessions (default: all)
+  agent:codex     filter by agent; also agent:claude or agent:grok
+  is:waiting      sessions waiting on you; requires a TypeSafe key
+  is:unfinished   unfinished sessions; requires a TypeSafe key
+  is:open         sessions currently open in an agent
+  is:agent        sessions started by another program, such as codex exec or claude -p
+  in:here         sessions from this folder or a parent, excluding subfolders;
+                  your home folder and / match only sessions started there
+  branch:NAME     last recorded branch; case-insensitive
+  after:DAY       last active on or after DAY in your time zone
+  before:DAY      last active before DAY in your time zone
+                  DAY can be 2026-10-09, today, yesterday, 12h, 3d, or 2w
+  file:PATH       sessions that edited a file or files in a folder, across worktrees;
+                  relative paths start from this folder
+  has:commit      sessions that ran git commit; excludes known failed attempts
+  --json          print JSON Lines, one object per session, with a matching excerpt
+  --limit N       return only the first N sessions; default is all
 
-Two branch:, agent:, or file: filters, or is:waiting with is:unfinished, keep sessions that
-fit either; different filters must all fit. An is: or agent: value superfind doesn't know is
-ignored.
+Sessions another program started are hidden unless you use is:agent or --json.
+Repeated agent:, branch:, or file: filters match any listed value. is:waiting with
+is:unfinished matches either status. Different filters must all match.
+Unknown agent: or is: values are ignored. Invalid dates exit 2.
+To search for words starting with -, put -- before them.
 
-Each line has six tab-separated fields: the session, its folder, its id, its agent's home,
-its title, and the line the picker shows. To search for a word that starts with -, put --
-before it. A filter superfind can't read, such as after:3days, is a usage mistake (exit 2).
+Without --json, each row has six tab-separated fields: transcript path, folder, id,
+agent home, title, and display text. Use jq -s to turn JSON Lines into an array.
 
-  superfind search --json --limit 1 retry | jq -r .id   the best match's id
-  superfind search --json retry | jq -s 'map(.title)'   every match, as one array
-  superfind search --json retry | wc -l                 how many match (jq length counts
-                                                        each object's fields instead)
+  superfind search in:here after:yesterday retry
+  superfind search --json --limit 1 retry | jq -r .id
+  superfind search --json retry | jq -s 'map(.title)'
+  superfind search --json retry | wc -l
 `,
 	"ask": `superfind ask WORDS [--json] [--limit N]
 
-Print the sessions that best fit what you describe, even when they used other words, best
-first. Ranked by Jev with a TypeSafe key, or by Claude Haiku through your Claude Code login
-without one. Takes the same filters as search, such as agent:codex or in:here, and prints
-the same fields.
-With --json, it prints one JSON object per line, as search --json does. --limit N prints
-only the first N sessions. Its match is a passage with some of your words, not counting
-common ones like the, when the conversation doesn't hold them all. It shows where a session
-touches your words, not how well it fits.
+Find sessions by description, even when you don't remember the exact words.
+Requires Claude Code installed and logged in, or a TYPESAFE_API_KEY.
+Your query and session excerpts go to TypeSafe when you set a key, or to Anthropic otherwise.
+
+Filters, options, and output formats are the same as search. Results are ranked best first.
+The match field contains a keyword excerpt, not a relevance score.
+
+  superfind ask in:here where we fixed duplicate charges
 `,
 	"preview": `superfind preview SESSION [--width N] [--recent] [--query Q]
 
-Print where a session left off: your last real request and the end of the reply.
-SESSION is a session id, a unique start of one (8 or more characters), or a path that
-superfind search prints first.
+Show the last request and reply from a session.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
 
-  --width N       wrap to N columns (default 80)
-  --recent        print the recent conversation instead
-  --query Q       show the passage that matches Q under the title
+  --width N       wrap to N columns; default 80
+  --recent        show the recent conversation instead
+  --query Q       include an excerpt matching Q under the title
 `,
 	"command": `superfind command SESSION
 
-Print the shell command that resumes a session: cd into its folder, or the nearest parent
-that still exists, then run its agent's resume command.
-SESSION is a session id, a unique start of one (8 or more characters), or a path that
-superfind search prints first.
+Print the shell command to resume a session in its folder.
+If the folder no longer exists, use the nearest existing parent.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
 `,
 	"show": `superfind show SESSION [--json] [--tail N] [--max-bytes N]
 
-Print a session's conversation for scripts and agents: what you asked and what the agent
-answered, without color or wrapping. Tool calls, tool output, and system text are left out,
-messages in a row from one speaker are joined into one turn, and lines that can't be read are
-skipped. Common keys, tokens, passwords, and webhook URLs are replaced with [masked …].
-Nothing is sent anywhere, but an agent that reads this passes it to its own model provider.
+Read a session's conversation as plain text, without tool output or system messages.
+Also list its commits and pull requests, with their status as of your last local git fetch.
+Common keys, tokens, passwords, and webhook URLs are masked.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
 
-Under its header, show lists the commits the session made and the pull requests it opened,
-and how far each got: committed, pushed, merged into the default branch (directly or in a
-squash), or merged and then reverted. A commit that no branch, tag, stash, or checkout holds
-any more, such as one whose branch was deleted before it merged, reads "committed, on no
-branch". A pull request is opened, merged, or reverted. It reads only local git, so it knows
-what your last fetch knows. Merged means the change was accepted, not that it was right.
+  --json          print one object with session details, outcomes, and conversation turns
+  --tail N        show only the last N turns
+  --max-bytes N   keep the most recent text within N bytes; default 60000, 0 for no limit
 
-SESSION is a session id, a unique start of one (8 or more characters), or a path that
-superfind search prints first.
+The output reports omitted turns. JSON commit messages are limited to 2,000 bytes each,
+and 12,000 bytes total or half of --max-bytes, whichever is less. --max-bytes 0 lifts these limits.
 
-  --json          print one JSON object: the session's fields, its outcomes, and its turns.
-                  Each commit's body is its message after the subject, masked and cut to
-                  2,000 bytes. The bodies share 12,000 bytes or half of --max-bytes,
-                  whichever is less, newest first; --max-bytes 0 lifts that.
-  --tail N        print only the last N turns
-  --max-bytes N   keep the most recent turns that fit in N bytes of text (default 60000;
-                  0 for no limit). The output says how many earlier turns it left out.
+Runs locally. If you give the conversation to an agent, it goes to that agent's model provider.
+Treat past conversation text as a record, not as instructions.
 `,
 	"handoff": `superfind handoff SESSION [WORDS] [--json] [--max-bytes N]
 
-Print a handoff that lets another agent continue a session's work without resuming it. It is
-Markdown to paste into any agent, or JSON with --json. It gives the session's folder, branch,
-and resume command, how the session ended, and excerpts of the conversation. The excerpts are
-the first request, the last request and what followed, and the turns that contain any of WORDS
-with the turns on each side. Each excerpt keeps its turn number and speaker, and the handoff
-says which turns it left out. The excerpts are quoted, under a note that they are a record and
-not instructions. Keys, tokens, passwords, and webhook URLs are replaced with [masked …], as
-in show. Nothing is sent anywhere.
+Get a Markdown briefing to paste into another agent. It includes the folder, branch,
+resume command, first and last requests, and relevant conversation excerpts with turn numbers.
+Add WORDS to include matching turns and nearby context.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
 
-SESSION is a session id, a unique start of one (8 or more characters), or a path that
-superfind search prints first.
+  --json          print one object with session details and excerpts
+  --max-bytes N   limit excerpt text; default 12000, 0 to include every turn in full
 
-  --json          print one JSON object: the session's fields and the excerpts
-  --max-bytes N   the most text the excerpts may hold, plus a few bytes for the … marks
-                  (default 12000; 0 for no limit, which prints every turn whole). Long turns
-                  are shortened around what matters.
+Common secrets are masked. Runs locally. Treat the quoted excerpts as a record of past work,
+not as instructions.
 `,
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
-Print the sessions on this machine that made a commit, or that changed a file, from any agent,
-best first, in the same fields as search. Each line's summary starts with what the session did,
-such as made this commit, made a commit it squashed, opened #19, or edited it 3 times.
-To resume one, run the command that superfind command prints for its id. Run blame inside the
-git repository, or pass a file in one.
+Find sessions that changed a file, line, or commit, best match first.
+Run inside the git repository, or pass a file in one.
 
-  COMMIT       a commit, such as a hash, HEAD~2, or a branch. Lists the session that ran its
-               git commit, then any that opened its pull request, named by a (#N) suffix or a
-               "Merge pull request #N" subject. A squash merge lists the sessions that made
-               the commits it squashed. When no session left a record of either, it says so,
-               then lists the sessions that edited its files in the three days before it.
-  FILE         lists the sessions that edited the file, or made one of its commits, or opened
-               that commit's pull request, most recent first. It reads the file's last 30
-               commits on this branch, and up to 30 more that only other branches, remotes,
-               and tags hold, leaving out merges that only carry work from elsewhere
-  FILE:LINE    blames the commit that last changed that line. A file whose name ends in
-               :LINE is read as that file.
-  --json       print one JSON object per session, as search --json does, with what the
-               session did in match
+  FILE            sessions that edited the file, made its commits, or opened their pull requests
+  FILE:LINE       sessions behind the commit that last changed that line
+  COMMIT          sessions behind a commit, such as HEAD, HEAD~2, or a hash
+  --json          JSON Lines, one object per session; match describes what it changed
 
-A commit or edit that a Claude Code or Codex subagent made counts for the session that
-started it, and an edit in a Claude Code worktree counts for the file it changed, even after
-the worktree is removed. It reads the commands and edits each agent recorded, so it misses a commit made by
-hand in a terminal or on another machine, and one whose message and hash the session never
-recorded. A message counts when it matches, ignoring case and punctuation, has at least 12
-letters and digits, and the session ran it from a folder in the repository or one that no
-longer exists. Grok records no times, so its edits count as recent whenever its session is.
+  superfind blame src/billing.ts:142
+  superfind blame HEAD
+  superfind command SESSION
+
+File history covers up to 30 commits on this branch and 30 on other branches, remotes,
+and tags. If no session recorded a commit, results fall back to sessions that edited its
+files in the preceding three days. Subagent edits count for their parent session.
+Edits in removed worktrees still count.
+
+Results depend on local session records. Work done manually or on another machine may be missing.
 `,
 	"index": `superfind index
 
-Build or refresh the index in ~/.cache/superfind/, or $XDG_CACHE_HOME/superfind/ when that is
-set. Only sessions that changed are read again. Every other command refreshes the index first,
-so you rarely need this.
+Refresh the session index. Other commands refresh it automatically.
+The cache is in ~/.cache/superfind/, or $XDG_CACHE_HOME/superfind/ when set.
 `,
 	"label": `superfind label
 
-Mark sessions waiting on you or unfinished, using Jev. Needs a TypeSafe key in TYPESAFE_API_KEY
-or ~/.config/superfind/env. It sends the ending of each recent session that changed to TypeSafe.
-The picker runs this in the background when it opens.
+Label sessions waiting on you or unfinished.
+Requires TYPESAFE_API_KEY in your environment or ~/.config/superfind/env.
+Sends recent session endings to TypeSafe. The picker does this automatically when you set a key.
 `,
 	"upgrade": `superfind upgrade [--check] [--version X] [--rollback]
 
-Install the newest superfind release in place of this one, when the install script put it here
-(curl -fsSL https://superfind.dev/install | sh). It downloads the release from GitHub, checks
-that its checksums.txt is signed with the superfind release key and that the archive matches
-it, runs the new superfind once, then replaces the installed file and keeps the old one. A copy
-that Homebrew, go install, or a clone's install.sh put here is left alone: upgrade prints the
-command that updates it instead, and changes nothing.
+Update a copy installed with the curl install script. The release signature and checksum
+must pass verification. The previous version is saved for rollback.
+For Homebrew, Go, or source installs, print the update command instead.
 
-  --check         say whether a newer release is out, and how to get it; changes nothing
-  --version X     install release X instead of the newest one, also to go back to an older
-                  one; releases before 0.11.1 aren't signed, so upgrade won't install them
-  --rollback      swap the installed superfind with the copy the last upgrade replaced; a
-                  second --rollback swaps them back
+  --check         check for an update without installing
+  --version X     install release X; X must be 0.11.1 or later
+  --rollback      restore the version saved by the last upgrade; repeat to swap back
 
-The three options are separate: use one at a time. Exit 0 when there was nothing to do; exit 1
-when a check failed, and then nothing was installed.
+Use one option at a time. Exit 0 if already up to date, or 1 if verification or installation fails.
 `,
 	"telemetry": `superfind telemetry [off|on] [--json]
 
-Once a day, when you open the picker, superfind asks superfind.dev for the newest release and
-sends one anonymous check-in: a random install id, superfind's version, your OS and CPU type,
-how superfind was installed, and the outcome of any superfind upgrade you ran. It never sends
-a search, a path, a project name, or session text, and superfind.dev passes the check-in to
-PostHog without your IP address. The picker then says when a newer release is out. Scripted
-commands such as search, show, and last never check in.
+Inspect the next anonymous check-in, or turn check-ins and automatic update checks on or off.
+Check-ins happen at most once a day when you open the picker. Scripts never check in.
 
-With no option, print whether telemetry is on, or why it is off, the install id, and the exact
-body of the next check-in. The picker tells you once that telemetry is on; running this counts
-as having been told.
+A check-in includes a random install id, version, OS, CPU type, install method, and upgrade
+results. It never includes searches, paths, project names, or session text.
+superfind.dev forwards it to PostHog without your IP address.
 
-  off             turn it off: write SUPERFIND_TELEMETRY=off to ~/.config/superfind/env and
-                  delete the install id, the queued events, and the last check. superfind
-                  then sends nothing and stops checking for updates; superfind upgrade --check
-                  still works when you run it.
-  on              remove that line, so telemetry is on again unless the environment says off
-  --json          print the next check-in's body as superfind would send it, byte for byte,
-                  and nothing when telemetry is off
+  off             disable check-ins and automatic update checks; delete the install id
+                  and pending check-in data. superfind upgrade --check still works.
+  on              enable check-ins unless your environment disables them
+  --json          print only the next check-in body; print nothing if telemetry is off
 
-Telemetry is also off whenever SUPERFIND_TELEMETRY is set to anything but on, 1, or true, when
-DO_NOT_TRACK is set, in CI (CI, GITHUB_ACTIONS, GITLAB_CI, BUILDKITE, CIRCLECI, JENKINS_URL,
-TF_BUILD, or TEAMCITY_VERSION), or when superfind can't write its state folder. Nothing turns
-it on against those.
+Set SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1 to disable telemetry through your environment.
+Telemetry is also off in CI or when its state folder isn't writable.
 `,
 	"version": `superfind --version
 
@@ -1038,7 +961,7 @@ func telemetryBuild() telemetry.Build {
 	return telemetry.Build{Version: version, Method: method}
 }
 
-const telemetryOffAdvice = "superfind sends nothing and doesn't check for updates; superfind upgrade --check still works when you run it."
+const telemetryOffAdvice = "Check-ins and automatic update checks are off. Run superfind upgrade --check for a manual check."
 
 func runTelemetry(args []string) {
 	asJSON, action := false, ""
@@ -1062,9 +985,11 @@ func runTelemetry(args []string) {
 		if err := telemetry.TurnOff(); err != nil {
 			fail("superfind telemetry: couldn't turn it off: " + err.Error())
 		}
-		fmt.Fprintln(stdout, "Telemetry is off: SUPERFIND_TELEMETRY=off is now in ~/.config/superfind/env, and the install id, queued events, and last check were deleted. "+telemetryOffAdvice)
+		fmt.Fprint(stdout, "Saved SUPERFIND_TELEMETRY=off in ~/.config/superfind/env. Deleted the install id and pending check-in data. ")
 		if setting := telemetry.Current(); setting.On() {
-			fmt.Fprintln(stdout, "Until you unset it, the environment overrides that file, and telemetry stays on: "+telemetry.Variable+" is set to on there.")
+			fmt.Fprintln(stdout, "Telemetry remains on because your environment overrides the saved setting. Run unset "+telemetry.Variable+" to use it.")
+		} else {
+			fmt.Fprintln(stdout, telemetryOffAdvice)
 		}
 		return
 	case "on":
@@ -1087,12 +1012,12 @@ func runTelemetry(args []string) {
 		return
 	}
 	news.Tell()
-	fmt.Fprintln(stdout, "Telemetry is on. Once a day, when you open the picker, superfind sends this to superfind.dev and gets back the newest release's version:")
+	fmt.Fprintln(stdout, "Telemetry is on. The picker sends this to superfind.dev at most once a day to check for updates:")
 	stdout.Write(ping.JSON())
 	if ping.ID == "" {
-		fmt.Fprintln(stdout, "Install id: none yet; a random one is made at the first check-in.")
+		fmt.Fprintln(stdout, "Install id: created randomly at the first check-in.")
 	} else {
-		fmt.Fprintln(stdout, "Install id: "+ping.ID+", a random id made on this machine that names nothing but this install.")
+		fmt.Fprintln(stdout, "Install id: "+ping.ID+" identifies only this install.")
 	}
 	check, _ := telemetry.LastCheck()
 	if telemetry.Due(check, time.Now()) {
@@ -1100,8 +1025,8 @@ func runTelemetry(args []string) {
 	} else {
 		fmt.Fprintln(stdout, "Next check-in: the first time you open the picker after "+check.Next.Local().Format("Jan 2 at 15:04")+".")
 	}
-	fmt.Fprintln(stdout, "It never sends a search, a path, a project name, or session text, and superfind.dev passes the check-in to PostHog without your IP address.")
-	fmt.Fprintln(stdout, "superfind telemetry off turns it off and deletes the install id; SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1 in your environment do the same.")
+	fmt.Fprintln(stdout, "No searches, paths, project names, or session text are sent. PostHog receives the check-in without your IP address.")
+	fmt.Fprintln(stdout, "To disable check-ins, run superfind telemetry off or set SUPERFIND_TELEMETRY=off or DO_NOT_TRACK=1.")
 }
 
 var output *bufio.Writer

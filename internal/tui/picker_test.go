@@ -346,7 +346,7 @@ func TestANarrowNoMatchMessageKeepsItsFirstSentence(t *testing.T) {
 	m.db = searchDB(t, map[string]string{m.rows[0].Path: "Ledger migration"})
 	m.input.SetValue("zebra")
 	m.filter()
-	if got := strings.TrimRight(frame(m, 40, 10)[2], " "); got != "  No session contains these words." {
+	if got := strings.TrimRight(frame(m, 40, 10)[2], " "); got != "  No keyword matches." {
 		t.Fatalf("the message line at 40 columns reads %q", got)
 	}
 }
@@ -463,7 +463,7 @@ func openPicker(t *testing.T) picker {
 	return m
 }
 
-const confirmLine = "Open in another window; Enter again resumes a copy. Esc goes back."
+const confirmLine = "Already open. Enter again resumes a copy. Esc cancels."
 
 func screenOf(m picker) string { return ansi.Strip(m.View().Content) }
 
@@ -636,17 +636,17 @@ func TestTheQuestionKeepsItsFirstSentenceWhereTheWholeLineDoesNotFit(t *testing.
 	openedByThisProcess(t, "id-a")
 	t.Setenv("TMUX", "")
 	m, _ := press(openPicker(t), tea.KeyEnter)
-	first := "Open in another window; Enter again resumes a copy."
+	first := "Already open. Enter again resumes a copy."
 	cases := []struct {
 		width      int
 		want, gone string
 	}{
 		{160, confirmLine, ""},
 		{130, confirmLine, ""},
-		{125, first, "Esc goes back"},
-		{110, first, "Esc goes back"},
+		{125, confirmLine, ""},
+		{110, confirmLine, ""},
 		{96, confirmLine, ""},
-		{50, "Open in another window; Enter again resumes a …", "copy."},
+		{50, first, "Esc cancels"},
 	}
 	for _, c := range cases {
 		next, _ := m.Update(tea.WindowSizeMsg{Width: c.width, Height: 36})
@@ -672,7 +672,7 @@ func TestTheNoticeStaysUnderTheSearchBoxAndGivesWayToASearchMessage(t *testing.T
 		t.Errorf("after typing a search that matches it reads %q, want the notice", got)
 	}
 	m = settle(m, tea.KeyPressMsg{Code: 'z', Text: "z"})
-	if got := line(m); got != "  No session contains these words. ctrl-r asks by description." {
+	if got := line(m); got != "  No keyword matches. Ctrl-R searches by description." {
 		t.Errorf("with no match it reads %q, want the no-match hint", got)
 	}
 	m = settle(m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
