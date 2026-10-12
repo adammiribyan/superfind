@@ -83,7 +83,7 @@ func TestEachFailedCheckHasItsOwnError(t *testing.T) {
 		{strings.Replace(raw, "agent: \"claude\"\n", "", 1), ErrMissingKey, "its header has no agent"},
 		{strings.Replace(raw, "superfind_share: 1\n", "superfind_share: 2\nnew_key: true\n", 1), ErrVersion,
 			"it is a newer share format than this superfind reads: format 2, and this superfind reads format 1"},
-		{strings.Replace(raw, "turns_total: 84", "turns_total: \"84\"", 1), ErrFrontMatter, "its header can't be read: turns_total should be a int"},
+		{strings.Replace(raw, "turns_total: 84", "turns_total: \"84\"", 1), ErrFrontMatter, "its header can't be read: turns_total has the wrong type"},
 		{strings.Replace(raw, "title: ", "title = ", 1), ErrFrontMatter, "its header can't be read: line 9 isn't a key and a JSON value"},
 		{strings.Replace(raw, "branch: \"feat/x\"\n", "branch: \"feat/x\"\nbranch: \"main\"\n", 1), ErrFrontMatter, "its header can't be read: branch appears twice"},
 		{strings.Replace(raw, "9f2c0e1a3b4f4b8e9a520c7d6e2b9f11", "../../escape", 1), ErrFrontMatter, "its header can't be read: bundle_id isn't valid"},

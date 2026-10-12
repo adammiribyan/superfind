@@ -150,7 +150,7 @@ func Parse(raw []byte) (Share, error) {
 	if err := json.Unmarshal(object, &m); err != nil {
 		var wrongType *json.UnmarshalTypeError
 		if errors.As(err, &wrongType) {
-			return Share{}, fmt.Errorf("%w: %s should be a %s", ErrFrontMatter, wrongType.Field, wrongType.Type)
+			return Share{}, fmt.Errorf("%w: %s has the wrong type", ErrFrontMatter, wrongType.Field)
 		}
 		return Share{}, fmt.Errorf("%w: %v", ErrFrontMatter, err)
 	}

@@ -94,12 +94,8 @@ func runShare(args []string) {
 	if err := share.Write(&file, s); err != nil {
 		fail("superfind share: " + err.Error())
 	}
-	secrets := "secrets"
-	if s.Manifest.MaskedCount == 1 {
-		secrets = "secret"
-	}
-	warning := fmt.Sprintf("Masked %d %s in known formats. Masking can't find customer data, unlabelled credentials, "+
-		"or personal information. You are sharing what you reviewed.", s.Manifest.MaskedCount, secrets)
+	warning := "Masked " + secrets(s.Manifest.MaskedCount) + " in known formats. Masking can't find customer data, " +
+		"unlabelled credentials, or personal information. You are sharing what you reviewed."
 	if tty != nil && !yes {
 		page(tty, file.String())
 		fmt.Fprintln(stderr, warning)
@@ -240,7 +236,8 @@ func runReceive(args []string) {
 	if printOnly {
 		return
 	}
-	a := cmp.Or(chosen, agent.Named(m.Agent))
+	from := agent.Named(m.Agent)
+	a := cmp.Or(chosen, from)
 	if a == nil {
 		fail("superfind receive: this superfind can't start " + field(m.Agent) + ". Pass --agent claude, codex, or grok.")
 	}
@@ -271,7 +268,7 @@ func runReceive(args []string) {
 	if err := os.WriteFile(path, []byte(s.Briefing), 0o600); err != nil {
 		fail("superfind receive: couldn't save the briefing in " + c.GitDir + ": " + err.Error())
 	}
-	argv := share.Start(a, share.Prompt(path, cmp.Or(agent.Named(m.Agent), a)))
+	argv := share.Start(a, share.Prompt(path, cmp.Or(from, a)))
 	fmt.Fprintln(stdout, "\n"+share.Command(dir, argv))
 	if tty == nil {
 		return
@@ -299,11 +296,14 @@ func runReceive(args []string) {
 	fail("superfind receive: couldn't run " + argv[0] + ": " + err.Error())
 }
 
-func preview(m share.Manifest) []string {
-	secrets := "secrets"
-	if m.MaskedCount == 1 {
-		secrets = "secret"
+func secrets(n int) string {
+	if n == 1 {
+		return "1 secret"
 	}
+	return strconv.Itoa(n) + " secrets"
+}
+
+func preview(m share.Manifest) []string {
 	lines := []string{
 		"Shared by " + cmp.Or(field(m.SenderName), "someone") + " (self-asserted) on " + m.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"),
 		"Agent: " + field(cmp.Or(m.AgentLabel, m.Agent)),
@@ -319,7 +319,7 @@ func preview(m share.Manifest) []string {
 	for i, o := range m.Omissions {
 		omitted[i] = field(o)
 	}
-	return append(lines, "Left out: "+strings.Join(omitted, ", "), fmt.Sprintf("Masked: %d %s", m.MaskedCount, secrets))
+	return append(lines, "Left out: "+strings.Join(omitted, ", "), "Masked: "+secrets(m.MaskedCount))
 }
 
 func cloneOf(remote string) (share.Checkout, bool) {
