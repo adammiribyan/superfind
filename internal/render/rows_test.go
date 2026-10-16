@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,40 @@ func TestALabeledRowGivesUpItsAgentThenItsProjectBeforeItsTitleGetsUnderSixteenC
 		if got := fit.For(c.cells, c.width); got != c.want {
 			t.Errorf("at width %d with status %q the row keeps %+v, want %+v", c.width, c.cells.Status, got, c.want)
 		}
+	}
+}
+
+func TestARowSaysWhenLittleContextIsLeftAndThePreviewAlwaysDoes(t *testing.T) {
+	old := session.Now() - 3*86400
+	claude := &agent.Agent{ID: "claude"}
+	row := func(used int) session.Row {
+		return session.Row{Agent: claude, Session: session.Session{Title: "t", Cwd: "/work/shop", Mtime: old, Prompts: 2, Context: used, Window: 1_000_000}}
+	}
+	cases := []struct {
+		row          session.Row
+		cell, inMeta string
+	}{
+		{row(880_000), "12% context left", "12% context left"},
+		{row(710_000), "29% context left", "29% context left"},
+		{row(700_000), "", "30% context left"},
+		{row(0), "", ""},
+	}
+	for _, c := range cases {
+		if got := CellsOf(c.row, Tags{}).Status; got != c.cell {
+			t.Errorf("used %d: row status %q, want %q", c.row.Session.Context, got, c.cell)
+		}
+		text := RowContext(RowTextOf(c.row, Tags{}), "")
+		if c.cell != "" && !strings.Contains(text, c.cell) || c.cell == "" && strings.Contains(text, "context left") {
+			t.Errorf("used %d: plain row %q", c.row.Session.Context, text)
+		}
+		meta := strings.Join(metaParts(c.row, Tags{}), " · ")
+		if c.inMeta != "" && !strings.Contains(meta, "3d ago · "+c.inMeta+" · 2 prompts") || c.inMeta == "" && strings.Contains(meta, "context") {
+			t.Errorf("used %d: preview line %q", c.row.Session.Context, meta)
+		}
+	}
+	waiting := row(880_000)
+	waiting.Status = session.WaitingLabel
+	if got := CellsOf(waiting, Tags{}).Status; got != session.WaitingLabel {
+		t.Errorf("waiting and low on context: status %q, want waiting first", got)
 	}
 }

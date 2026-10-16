@@ -22,6 +22,11 @@ type grokSummary struct {
 	SessionKind    string `json:"session_kind"`
 }
 
+type grokSignals struct {
+	Used   int `json:"contextTokensUsed"`
+	Window int `json:"contextWindowTokens"`
+}
+
 type grokLine struct {
 	Type            string            `json:"type"`
 	Content         json.RawMessage   `json:"content"`
@@ -40,6 +45,12 @@ func newGrokReader(path string, start Transcript) (reader, error) {
 	dir := filepath.Dir(path)
 	folder, _ := url.PathUnescape(filepath.Base(filepath.Dir(dir)))
 	g.t.Cwd = folder
+	if raw, err := readSmall(filepath.Join(dir, "signals.json")); err == nil {
+		var sig grokSignals
+		if json.Unmarshal(raw, &sig) == nil && sig.Window > 0 {
+			g.t.ContextUsed, g.t.ContextWindow = sig.Used, sig.Window
+		}
+	}
 	raw, err := readSmall(filepath.Join(dir, "summary.json"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return g, nil

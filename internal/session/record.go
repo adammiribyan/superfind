@@ -34,6 +34,7 @@ type Record struct {
 	TranscriptGone bool        `json:"transcript_gone"`
 	Resume         string      `json:"resume"`
 	Kind           string      `json:"kind"`
+	ContextLeft    *int        `json:"context_left"`
 	Match          string      `json:"match"`
 }
 
@@ -71,7 +72,15 @@ func RecordOf(r Row, clean func(string) string) Record {
 		TranscriptGone: agent.TranscriptGone(r.Path),
 		Resume:         resume,
 		Kind:           KindOf(s),
+		ContextLeft:    contextLeft(s),
 	}
+}
+
+func contextLeft(s Session) *int {
+	if left, known := s.ContextLeft(); known {
+		return &left
+	}
+	return nil
 }
 
 func AsksForAgents(query string) bool { return Parse(query).Agents }

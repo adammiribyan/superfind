@@ -32,6 +32,8 @@ type contentBlock struct {
 
 type logLine struct {
 	Type         string `json:"type"`
+	Subtype      string `json:"subtype"`
+	IsSidechain  bool   `json:"isSidechain"`
 	Cwd          string `json:"cwd"`
 	GitBranch    string `json:"gitBranch"`
 	IsMeta       bool   `json:"isMeta"`
@@ -46,7 +48,21 @@ type logLine struct {
 	} `json:"origin"`
 	Message struct {
 		Content json.RawMessage `json:"content"`
+		Model   string          `json:"model"`
+		Usage   *claudeUsage    `json:"usage"`
 	} `json:"message"`
+	CompactMetadata struct {
+		Trigger    string `json:"trigger"`
+		PreTokens  int    `json:"preTokens"`
+		PostTokens int    `json:"postTokens"`
+	} `json:"compactMetadata"`
+}
+
+type claudeUsage struct {
+	Input       int `json:"input_tokens"`
+	CacheCreate int `json:"cache_creation_input_tokens"`
+	CacheRead   int `json:"cache_read_input_tokens"`
+	Output      int `json:"output_tokens"`
 }
 
 type content struct {
@@ -89,6 +105,8 @@ type parser struct {
 	typed      bool
 	peers      *Transcript
 	before     Event
+
+	autoCompactedAt int
 }
 
 var (
@@ -165,6 +183,11 @@ func (p *parser) feed(raw []byte) bool {
 			p.typed, p.peers = true, nil
 		}
 	case "assistant":
+		if u := l.Message.Usage; u != nil && !l.IsSidechain {
+			if window := claudeWindow(l.Message.Model); window > 0 {
+				t.ContextUsed, t.ContextWindow = u.Input+u.CacheCreate+u.CacheRead, window
+			}
+		}
 		c := decodeContent(l.Message.Content)
 		t.ToolCalls += c.toolUses
 		t.Last, p.before = Replied, ""
@@ -175,6 +198,15 @@ func (p *parser) feed(raw []byte) bool {
 			t.say("assistant", text)
 			if p.peers != nil {
 				p.peers.say("assistant", text)
+			}
+		}
+	case "system":
+		if l.Subtype == "compact_boundary" {
+			if m := l.CompactMetadata; m.Trigger == "auto" && m.PreTokens > 0 {
+				p.autoCompactedAt = m.PreTokens
+			}
+			if t.ContextWindow > 0 {
+				t.ContextUsed = l.CompactMetadata.PostTokens
 			}
 		}
 	case "custom-title":
@@ -190,6 +222,9 @@ func (p *parser) feed(raw []byte) bool {
 }
 
 func (p *parser) done() Transcript {
+	if p.autoCompactedAt > 0 && p.autoCompactedAt < smallWindowCompaction && p.t.ContextWindow == millionTokens {
+		p.t.ContextWindow = olderWindow
+	}
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
 	}

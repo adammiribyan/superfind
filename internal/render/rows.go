@@ -89,6 +89,23 @@ func NoSessions() string {
 
 const GoneMark = "transcript deleted"
 
+const LowContext = 30
+
+func contextNote(s session.Session) string {
+	left, known := s.ContextLeft()
+	if !known {
+		return ""
+	}
+	return fmt.Sprintf("%d%% context left", left)
+}
+
+func lowContextNote(s session.Session) string {
+	if left, known := s.ContextLeft(); known && left < LowContext {
+		return contextNote(s)
+	}
+	return ""
+}
+
 type RowText struct {
 	Title, Waiting string
 	Context        []string
@@ -108,6 +125,9 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	if agent.TranscriptGone(r.Path) {
 		t.Context = append(t.Context, GoneMark)
 	}
+	if note := lowContextNote(r.Session); note != "" {
+		t.Context = append(t.Context, note)
+	}
 	t.Context = append(t.Context, shown.of(r)...)
 	return t
 }
@@ -119,6 +139,9 @@ func metaParts(r session.Row, shown Tags) []string {
 		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(r))
+	if note := contextNote(s); note != "" {
+		parts = append(parts, note)
+	}
 	if s.Branch != "" && s.Branch != "HEAD" {
 		parts = append(parts, Flat(s.Branch))
 	}
@@ -179,6 +202,8 @@ func CellsOf(r session.Row, t Tags) Cells {
 		c.Status = "active now"
 	case r.FolderGone:
 		c.Status = "folder removed"
+	default:
+		c.Status = lowContextNote(r.Session)
 	}
 	if session.IsHere(r.Session) {
 		c.Project = ""

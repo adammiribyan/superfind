@@ -57,6 +57,10 @@ FIELDS = {
               "Empty when `transcript_gone` is true.",
     "kind": "`agent` when another program started the session, such as `codex exec` or `claude -p`, and "
             "`interactive` otherwise.",
+    "context_left": "How much of the agent's context window the session had left after its last reply, as a whole "
+                    "percent from 0 to 100, counted the way the agent itself counts it, or `null` when the transcript "
+                    "doesn't say. For Claude Code, superfind assumes a 1M-token window for current models unless the "
+                    "session compacted itself well before that.",
     "match": "On search and ask results, the passage that holds your words, or empty. Always empty in `show --json`.",
     "outcomes": "In `show --json`: the commits the session made and the pull requests it opened, in the order it made "
                 "them, judged from local git as of your last fetch. Commits the repository no longer has are left out. "
