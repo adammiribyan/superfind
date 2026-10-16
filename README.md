@@ -77,7 +77,7 @@ superfind search in:here file:main.go
 
 Use `is:open` to find open sessions. With a TypeSafe key, `is:waiting` and `is:unfinished` find sessions that need attention. Run `superfind help search` for all filters.
 
-The preview shows how much context a session has left. Rows under 30% say so, so you can compact or start fresh before you resume.
+A small bar on each row fills as the session uses its context window. It turns amber when less than 30% is left and red under 15%, so you can compact or start fresh before you resume. The preview shows the exact percentage.
 
 If the session is already open, Enter switches to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
 

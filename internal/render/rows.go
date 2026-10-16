@@ -89,7 +89,30 @@ func NoSessions() string {
 
 const GoneMark = "transcript deleted"
 
-const LowContext = 30
+const (
+	LowContext   = 30
+	NearlyFull   = 15
+	GaugeCells   = 4
+	gaugeColumns = GaugeCells + 2
+)
+
+type Gauge struct {
+	Filled          int
+	Low, NearlyFull bool
+}
+
+func GaugeOf(s session.Session) (Gauge, bool) {
+	left, known := s.ContextLeft()
+	if !known {
+		return Gauge{}, false
+	}
+	used := 100 - left
+	filled := min((used*GaugeCells+50)/100, GaugeCells)
+	if used > 0 {
+		filled = max(filled, 1)
+	}
+	return Gauge{Filled: filled, Low: left < LowContext, NearlyFull: left < NearlyFull}, true
+}
 
 func contextNote(s session.Session) string {
 	left, known := s.ContextLeft()
@@ -202,8 +225,6 @@ func CellsOf(r session.Row, t Tags) Cells {
 		c.Status = "active now"
 	case r.FolderGone:
 		c.Status = "folder removed"
-	default:
-		c.Status = lowContextNote(r.Session)
 	}
 	if session.IsHere(r.Session) {
 		c.Project = ""
@@ -211,7 +232,7 @@ func CellsOf(r session.Row, t Tags) Cells {
 	return c
 }
 
-type Widths struct{ Project, Agent int }
+type Widths struct{ Project, Agent, Gauge int }
 
 func Measure(rows []session.Row, t Tags) Widths {
 	var w Widths
@@ -219,15 +240,18 @@ func Measure(rows []session.Row, t Tags) Widths {
 		c := CellsOf(r, t)
 		w.Project = max(w.Project, displayWidth(c.Project))
 		w.Agent = max(w.Agent, displayWidth(c.Agent))
+		if _, known := GaugeOf(r.Session); known {
+			w.Gauge = gaugeColumns
+		}
 	}
 	w.Project, w.Agent = min(w.Project, columnCap), min(w.Agent, columnCap)
 	return w
 }
 
-type Columns struct{ Project, Agent int }
+type Columns struct{ Project, Agent, Gauge int }
 
 func (c Columns) titleRoom(width int) int {
-	room := width - 3 - AgeWidth - 1
+	room := width - 3 - AgeWidth - 1 - c.Gauge
 	for _, w := range []int{c.Project, c.Agent} {
 		if w > 0 {
 			room -= w + 2

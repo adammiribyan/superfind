@@ -10,7 +10,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 ### Added
 
 - Ctrl-O in the picker goes to the selected session's folder instead of resuming it. With the shell setup, your shell changes to that folder. `pick --run` opens your shell there.
-- The preview says how much context a session has left, such as "12% context left", and a row says it too when less than 30% is left, so you can compact or start fresh before you resume. `--json` has `context_left`.
+- Each row in the picker has a small bar that fills as the session uses its context window. It turns amber when less than 30% is left, and red with a `!` under 15%. The preview says the exact amount, such as "12% context left", and `--json` has `context_left`.
 - Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.
 
 ### Changed
