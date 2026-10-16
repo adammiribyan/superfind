@@ -37,9 +37,18 @@ func TestClaudeContextCountsTheLastReplysInputLikeClaudeCode(t *testing.T) {
 		{"an older model past 200K had 1M", []string{typed, claudeReply("claude-sonnet-4-5", 0, 400_000, 1)}, "60%"},
 		{"compaction leaves its summary", []string{typed, claudeReply("claude-opus-5-5", 0, 960_000, 1),
 			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":960000,"postTokens":30000}}`}, "97%"},
-		{"auto compaction early means a 200K window", []string{typed,
+		{"auto compaction early means a 200K window", []string{typed, claudeReply("claude-opus-5-5", 0, 167_000, 1),
 			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto","preTokens":167000,"postTokens":20000}}`,
 			claudeReply("claude-opus-5-5", 0, 100_000, 1)}, "50%"},
+		{"an early compaction under another model says nothing about this one", []string{typed, claudeReply("claude-haiku-4-5", 0, 167_000, 1),
+			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto","preTokens":167000,"postTokens":20000}}`,
+			claudeReply("claude-opus-5-5", 0, 180_000, 1)}, "82%"},
+		{"an older model seen past 200K keeps 1M through compaction", []string{typed, claudeReply("claude-sonnet-4-5", 0, 400_000, 1),
+			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":400000,"postTokens":30000}}`}, "97%"},
+		{"a subagent's compaction doesn't", []string{typed, claudeReply("claude-opus-5-5", 0, 880_000, 1),
+			`{"type":"system","subtype":"compact_boundary","isSidechain":true,"compactMetadata":{"trigger":"auto","preTokens":167000,"postTokens":20000}}`}, "12%"},
+		{"a compaction before any reply", []string{typed,
+			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":1000,"postTokens":500}}`}, "unknown"},
 		{"no reply", []string{typed}, "unknown"},
 	}
 	for _, c := range cases {
@@ -84,6 +93,40 @@ func TestGrokContextComesFromItsSignals(t *testing.T) {
 	}
 	if got := left(t, readLines(t, Named("grok"), path, line)); got != "63%" {
 		t.Errorf("with signals.json: %s left, want 63%%", got)
+	}
+	signals := filepath.Join(filepath.Dir(path), "signals.json")
+	if err := os.WriteFile(signals, []byte(`{"contextTokensUsed":200001,"contextWindowTokens":200000}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := left(t, readLines(t, Named("grok"), path, line)); got != "0%" {
+		t.Errorf("past its window: %s left, want 0%%", got)
+	}
+	if err := os.WriteFile(signals, []byte(`{"contextTokens`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if tr := readLines(t, Named("grok"), path, line); !tr.Incomplete {
+		t.Error("a half-written signals.json counts as read, so the session is cached without its context")
+	}
+	if err := os.Chmod(signals, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(signals, 0o600)
+	if _, err := os.ReadFile(signals); err == nil {
+		t.Skip("running as a user who can read any file")
+	}
+	if tr := readLines(t, Named("grok"), path, line); !tr.Incomplete {
+		t.Error("an unreadable signals.json counts as read, so the session is cached without its context")
+	}
+}
+
+func TestContextLeftNeverRaisesTheWindowItIsGiven(t *testing.T) {
+	cases := []struct{ used, window, left int }{
+		{200_000, 200_000, 0}, {200_001, 200_000, 0}, {1, 200_000, 100}, {100_000, 200_000, 50}, {995, 1000, 1}, {994, 1000, 1}, {996, 1000, 0},
+	}
+	for _, c := range cases {
+		if got, known := ContextLeft(c.used, c.window); !known || got != c.left {
+			t.Errorf("ContextLeft(%d, %d) = %d, want %d", c.used, c.window, got, c.left)
+		}
 	}
 }
 

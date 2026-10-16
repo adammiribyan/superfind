@@ -27,8 +27,13 @@ func ContextLeft(used, window int) (int, bool) {
 	if window <= 0 || used <= 0 {
 		return 0, false
 	}
-	if used > window && window == olderWindow {
-		window = millionTokens
-	}
 	return ((window-min(used, window))*100 + window/2) / window, true
+}
+
+func noted(set map[string]bool, key string) map[string]bool {
+	if set == nil {
+		set = map[string]bool{}
+	}
+	set[key] = true
+	return set
 }

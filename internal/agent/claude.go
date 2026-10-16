@@ -106,7 +106,8 @@ type parser struct {
 	peers      *Transcript
 	before     Event
 
-	autoCompactedAt int
+	model              string
+	overOlder, smaller map[string]bool
 }
 
 var (
@@ -183,9 +184,10 @@ func (p *parser) feed(raw []byte) bool {
 			p.typed, p.peers = true, nil
 		}
 	case "assistant":
-		if u := l.Message.Usage; u != nil && !l.IsSidechain {
-			if window := claudeWindow(l.Message.Model); window > 0 {
-				t.ContextUsed, t.ContextWindow = u.Input+u.CacheCreate+u.CacheRead, window
+		if u := l.Message.Usage; u != nil && !l.IsSidechain && claudeWindow(l.Message.Model) > 0 {
+			p.model, t.ContextUsed = l.Message.Model, u.Input+u.CacheCreate+u.CacheRead
+			if t.ContextUsed > olderWindow {
+				p.overOlder = noted(p.overOlder, p.model)
 			}
 		}
 		c := decodeContent(l.Message.Content)
@@ -201,13 +203,11 @@ func (p *parser) feed(raw []byte) bool {
 			}
 		}
 	case "system":
-		if l.Subtype == "compact_boundary" {
-			if m := l.CompactMetadata; m.Trigger == "auto" && m.PreTokens > 0 {
-				p.autoCompactedAt = m.PreTokens
+		if l.Subtype == "compact_boundary" && !l.IsSidechain && p.model != "" {
+			if m := l.CompactMetadata; m.Trigger == "auto" && m.PreTokens > 0 && m.PreTokens < smallWindowCompaction {
+				p.smaller = noted(p.smaller, p.model)
 			}
-			if t.ContextWindow > 0 {
-				t.ContextUsed = l.CompactMetadata.PostTokens
-			}
+			t.ContextUsed = l.CompactMetadata.PostTokens
 		}
 	case "custom-title":
 		t.CustomTitle = cmp.Or(l.CustomTitle, t.CustomTitle)
@@ -222,8 +222,14 @@ func (p *parser) feed(raw []byte) bool {
 }
 
 func (p *parser) done() Transcript {
-	if p.autoCompactedAt > 0 && p.autoCompactedAt < smallWindowCompaction && p.t.ContextWindow == millionTokens {
-		p.t.ContextWindow = olderWindow
+	if p.model != "" {
+		p.t.ContextWindow = claudeWindow(p.model)
+		switch {
+		case p.overOlder[p.model]:
+			p.t.ContextWindow = millionTokens
+		case p.smaller[p.model]:
+			p.t.ContextWindow = olderWindow
+		}
 	}
 	if p.relocated != "" {
 		p.t.Cwd = p.relocated
