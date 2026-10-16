@@ -33,7 +33,11 @@ type Session struct {
 	Mtime      float64     `json:"mtime"`
 	ByAgent    bool        `json:"by_agent,omitempty"`
 	Ending     agent.Event `json:"ending,omitempty"`
+	Context    int         `json:"context,omitempty"`
+	Window     int         `json:"window,omitempty"`
 }
+
+func (s Session) ContextLeft() (int, bool) { return agent.ContextLeft(s.Context, s.Window) }
 
 func (s Session) Project() string {
 	root := strings.SplitN(s.Cwd, worktreeMark, 2)[0]

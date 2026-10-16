@@ -858,6 +858,7 @@ func (m picker) rowLine(r session.Row, selected bool, width int, c render.Column
 	if c.Agent > 0 {
 		right += muted.Render(cell(cells.Agent, c.Agent))
 	}
+	right += m.gauge(r, c.Gauge, paint)
 	right += muted.Render(fmt.Sprintf("%*s ", render.AgeWidth, cells.Age))
 	room := max(width-3-lipgloss.Width(right), 1)
 	marked := ""

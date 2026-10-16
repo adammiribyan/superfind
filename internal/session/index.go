@@ -27,7 +27,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/store"
 )
 
-const cacheVersion = 17
+const cacheVersion = 18
 
 const (
 	titleRunes  = 200
@@ -105,6 +105,7 @@ func parse(f found) (parsed, bool, error) {
 		Title:      clipMasked(cmp.Or(f.name, t.CustomTitle, t.AITitle, firstPrompt, t.LastPrompt), titleRunes),
 		LastPrompt: clipMasked(cmp.Or(t.LastPrompt, latestPrompt), promptRunes), Branch: t.Branch, Prompts: max(len(t.Prompts), 1),
 		Words: len(strings.Fields(p.body)), ToolCalls: t.ToolCalls, Mtime: f.mtime, ByAgent: t.ByAgent, Ending: t.Last,
+		Context: t.ContextUsed, Window: t.ContextWindow,
 	}
 	return p, t.Incomplete || unread != nil, err
 }
