@@ -47,13 +47,9 @@ func newGrokReader(path string, start Transcript) (reader, error) {
 	g.t.Cwd = folder
 	if raw, err := readSmall(filepath.Join(dir, "signals.json")); err == nil {
 		var sig grokSignals
-		if json.Unmarshal(raw, &sig) != nil {
-			g.t.Incomplete = true
-		} else if sig.Window > 0 {
+		if json.Unmarshal(raw, &sig) == nil && sig.Window > 0 {
 			g.t.ContextUsed, g.t.ContextWindow = sig.Used, sig.Window
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		g.t.Incomplete = true
 	}
 	raw, err := readSmall(filepath.Join(dir, "summary.json"))
 	if errors.Is(err, fs.ErrNotExist) {

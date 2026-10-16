@@ -108,6 +108,7 @@ type parser struct {
 
 	model              string
 	overOlder, smaller map[string]bool
+	smallerBeforeReply bool
 }
 
 var (
@@ -186,6 +187,9 @@ func (p *parser) feed(raw []byte) bool {
 	case "assistant":
 		if u := l.Message.Usage; u != nil && !l.IsSidechain && claudeWindow(l.Message.Model) > 0 {
 			p.model, t.ContextUsed = l.Message.Model, u.Input+u.CacheCreate+u.CacheRead
+			if p.smallerBeforeReply {
+				p.smaller, p.smallerBeforeReply = noted(p.smaller, p.model), false
+			}
 			if t.ContextUsed > olderWindow {
 				p.overOlder = noted(p.overOlder, p.model)
 			}
@@ -203,11 +207,17 @@ func (p *parser) feed(raw []byte) bool {
 			}
 		}
 	case "system":
-		if l.Subtype == "compact_boundary" && !l.IsSidechain && p.model != "" {
+		if l.Subtype == "compact_boundary" && !l.IsSidechain {
 			if m := l.CompactMetadata; m.Trigger == "auto" && m.PreTokens > 0 && m.PreTokens < smallWindowCompaction {
-				p.smaller = noted(p.smaller, p.model)
+				if p.model == "" {
+					p.smallerBeforeReply = true
+				} else {
+					p.smaller = noted(p.smaller, p.model)
+				}
 			}
-			t.ContextUsed = l.CompactMetadata.PostTokens
+			if p.model != "" {
+				t.ContextUsed = l.CompactMetadata.PostTokens
+			}
 		}
 	case "custom-title":
 		t.CustomTitle = cmp.Or(l.CustomTitle, t.CustomTitle)

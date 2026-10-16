@@ -47,6 +47,9 @@ func TestClaudeContextCountsTheLastReplysInputLikeClaudeCode(t *testing.T) {
 			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":400000,"postTokens":30000}}`}, "97%"},
 		{"a subagent's compaction doesn't", []string{typed, claudeReply("claude-opus-5-5", 0, 880_000, 1),
 			`{"type":"system","subtype":"compact_boundary","isSidechain":true,"compactMetadata":{"trigger":"auto","preTokens":167000,"postTokens":20000}}`}, "12%"},
+		{"an early auto compaction before the first reply still counts", []string{typed,
+			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"auto","preTokens":167000,"postTokens":20000}}`,
+			claudeReply("claude-opus-5-5", 0, 100_000, 1)}, "50%"},
 		{"a compaction before any reply", []string{typed,
 			`{"type":"system","subtype":"compact_boundary","compactMetadata":{"trigger":"manual","preTokens":1000,"postTokens":500}}`}, "unknown"},
 		{"no reply", []string{typed}, "unknown"},
@@ -104,18 +107,9 @@ func TestGrokContextComesFromItsSignals(t *testing.T) {
 	if err := os.WriteFile(signals, []byte(`{"contextTokens`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if tr := readLines(t, Named("grok"), path, line); !tr.Incomplete {
-		t.Error("a half-written signals.json counts as read, so the session is cached without its context")
-	}
-	if err := os.Chmod(signals, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(signals, 0o600)
-	if _, err := os.ReadFile(signals); err == nil {
-		t.Skip("running as a user who can read any file")
-	}
-	if tr := readLines(t, Named("grok"), path, line); !tr.Incomplete {
-		t.Error("an unreadable signals.json counts as read, so the session is cached without its context")
+	tr := readLines(t, Named("grok"), path, line)
+	if got := left(t, tr); got != "unknown" || tr.Incomplete {
+		t.Errorf("a half-written signals.json: %s left, incomplete %v; want unknown and the session still read whole", got, tr.Incomplete)
 	}
 }
 
