@@ -39,7 +39,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/upgrade"
 )
 
-var version = "0.13.1"
+var version = "0.14.0"
 
 const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
 
