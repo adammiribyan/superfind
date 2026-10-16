@@ -3,9 +3,9 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
-## [Unreleased]
+## [0.14.0] - 2026-10-16
 
-> Find Claude sessions whose transcript Claude Code deleted
+> See how much context each session has left
 
 ### Added
 
@@ -355,6 +355,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 - The preview opens on where the session left off, and Tab switches to the recent conversation.
 - Sessions in every `~/.claude*` folder are found. A deleted worktree resumes from its nearest parent folder that still exists.
 
+[0.14.0]: https://github.com/adammiribyan/superfind/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/adammiribyan/superfind/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/adammiribyan/superfind/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/adammiribyan/superfind/compare/v0.11.0...v0.12.0
