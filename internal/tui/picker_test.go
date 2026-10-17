@@ -110,10 +110,10 @@ func TestTheFooterHintsFollowTheState(t *testing.T) {
 		change func(*picker)
 		want   []string
 	}{
-		{"searching", func(*picker) {}, []string{"enter resume", "tab view", "ctrl-r ask"}},
+		{"searching", func(*picker) {}, []string{"enter resume", "tab view", "ctrl-r ask", "ctrl-o go to folder"}},
 		{"no matches", func(m *picker) { m.shown = nil }, []string{"ctrl-r ask", "ctrl-u clear search"}},
 		{"asking", func(m *picker) { m.asking, m.shown = true, nil }, []string{"esc stop asking"}},
-		{"asked", func(m *picker) { m.askedFor = "ledger" }, []string{"enter resume", "tab view", "esc back to search"}},
+		{"asked", func(m *picker) { m.askedFor = "ledger" }, []string{"enter resume", "tab view", "ctrl-o go to folder", "esc back to search"}},
 		{"asked nothing", func(m *picker) { m.askedFor, m.shown = "ledger", nil }, []string{"esc back to search"}},
 		{"no sessions", func(m *picker) { m.all, m.shown = nil, nil }, []string{"esc quit"}},
 		{"asking with no sessions", func(m *picker) { m.all, m.shown, m.asking = nil, nil, true }, []string{"esc stop asking"}},
@@ -262,7 +262,7 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 			1:  " ╭─ Claude sessions ──────────────────────────────────────────────────────╮ │ Ledger migration",
 			2:  " │ Search sessions and conversations                                  8/8 │ │ tmp · active now · 5 prompts",
 			5:  "  Ledger migration  active now                               tmp        1m  │ you",
-			35: "  enter resume · tab view · ctrl-r ask                                      │",
+			35: "  enter resume · tab view · ctrl-r ask · ctrl-o go to folder                │",
 		}},
 		{100, 30, 8, map[int]string{
 			1:  " ╭─ Claude sessions ──────────────────────────────────────────────────────────────────────────────╮",
@@ -270,20 +270,20 @@ func TestThePickerAtEachSplitSize(t *testing.T) {
 			16: " ──────────────────────────────────────────────────────────────────────────────────────────────────",
 			17: " Ledger migration",
 			21: " you",
-			29: "  enter resume · tab view · ctrl-r ask",
+			29: "  enter resume · tab view · ctrl-r ask · ctrl-o go to folder",
 		}},
 		{80, 24, 8, map[int]string{
 			2:  " │ Search sessions and conversations                                      8/8 │",
 			9:  "  Tax rounding                                                   tmp        4h",
 			10: " ──────────────────────────────────────────────────────────────────────────────",
 			15: " you",
-			23: "  enter resume · tab view · ctrl-r ask",
+			23: "  enter resume · tab view · ctrl-r ask · ctrl-o go to folder",
 		}},
 		{80, 20, 12, map[int]string{
 			1:  "  Claude sessions  Search sessions and conversations                     12/12",
 			2:  "  Ledger migration  active now                                   tmp        1m",
 			18: "",
-			19: "  enter resume · tab view · ctrl-r ask",
+			19: "  enter resume · tab view · ctrl-r ask · ctrl-o go to folder",
 		}},
 		{60, 16, 12, map[int]string{
 			1:  "  Claude sessions  Search sessions and conversations 12/12",
@@ -466,6 +466,20 @@ func openPicker(t *testing.T) picker {
 const confirmLine = "Already open. Enter again resumes a copy. Esc cancels."
 
 func screenOf(m picker) string { return ansi.Strip(m.View().Content) }
+
+func TestCtrlOChoosesTheSessionsFolderWithoutAskingAboutAnOpenCopy(t *testing.T) {
+	openedByThisProcess(t, "id-a")
+	m := openPicker(t)
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(picker)
+	var msg tea.Msg
+	if cmd != nil {
+		msg = cmd()
+	}
+	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Path != "a" || !m.folder {
+		t.Fatalf("ctrl-o sent %v and chose %+v with folder=%v, want it to quit choosing a's folder", msg, m.chosen, m.folder)
+	}
+}
 
 func TestEnterOnASessionOpenElsewhereAsksFirstAndEnterAgainResumesACopy(t *testing.T) {
 	openedByThisProcess(t, "id-a")
@@ -693,5 +707,39 @@ func TestACompactPickerGivesTheNoticeALineOnlyWhenThereIsOne(t *testing.T) {
 	}
 	if got := strings.TrimRight(lines[3], " "); got != "  Ledger migration  active now                                   tmp        1m" {
 		t.Errorf("with a notice line 3 reads %q, want the first session", got)
+	}
+}
+
+func TestARowDrawsAContextGaugeBeforeItsAgeAndMarksANearlyFullOne(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	row := func(title string, used int) session.Row {
+		return session.Row{Path: title, Agent: agent.Agents[0], Session: session.Session{Title: title, Cwd: "/tmp",
+			Mtime: session.Now() - 3*86400, Prompts: 5, Context: used, Window: 1_000_000}}
+	}
+	rows := []session.Row{row("Fresh", 100_000), row("Half", 500_000), row("Nearly full", 900_000), row("Unknown", 0)}
+	m := newPicker(rows, nil, "")
+	c := render.Measure(rows, render.TagsFor(rows)).Fit(50)
+	want := map[string]string{
+		"Fresh":       " Fresh                        tmp   ■■■■       3d ",
+		"Half":        " Half                         tmp   ■■■■       3d ",
+		"Nearly full": " Nearly full                  tmp  !■■■■       3d ",
+		"Unknown":     " Unknown                      tmp              3d ",
+	}
+	for _, r := range rows {
+		if got := ansi.Strip(m.rowLine(r, false, 50, c, nil)); got != want[r.Session.Title] {
+			t.Errorf("%s reads %q, want %q", r.Session.Title, got, want[r.Session.Title])
+		}
+	}
+	m.colors = theme{bg: color.RGBA{0xFF, 0xFF, 0xFF, 255}, fg: color.RGBA{0x1F, 0x23, 0x28, 255}}
+	m.colors.settle()
+	fill, track := m.gaugeStyles(render.Gauge{Filled: 1})
+	if fill.Render("■") == track.Render("■") {
+		t.Error("the used part of the gauge looks like the empty part")
+	}
+	plain, _ := m.gaugeStyles(render.Gauge{Filled: 2})
+	nearlyFull, _ := m.gaugeStyles(render.Gauge{Filled: 4, Low: true, NearlyFull: true})
+	if plain.Render("■") == nearlyFull.Render("■") {
+		t.Error("a nearly full gauge has the same color as a fresh one")
 	}
 }

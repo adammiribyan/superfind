@@ -107,6 +107,7 @@ type Transcript struct {
 	Last                             Event
 	Hidden, Incomplete               bool
 	ByAgent, PeerDriven              bool
+	ContextUsed, ContextWindow       int
 	hear                             func(peer bool, t Turn)
 	peer                             bool
 	from                             int

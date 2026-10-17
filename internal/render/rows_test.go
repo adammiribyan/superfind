@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,62 @@ func TestALabeledRowGivesUpItsAgentThenItsProjectBeforeItsTitleGetsUnderSixteenC
 		if got := fit.For(c.cells, c.width); got != c.want {
 			t.Errorf("at width %d with status %q the row keeps %+v, want %+v", c.width, c.cells.Status, got, c.want)
 		}
+	}
+}
+
+func TestTheGaugeFillsAsContextIsUsedAndWarnsNearTheEnd(t *testing.T) {
+	cases := []struct {
+		used   int
+		want   Gauge
+		status string
+	}{
+		{1, Gauge{}, ""},
+		{50_000, Gauge{Filled: 1}, ""},
+		{620_000, Gauge{Filled: 2}, ""},
+		{700_000, Gauge{Filled: 3}, ""},
+		{710_000, Gauge{Filled: 3, Low: true}, "29% context left"},
+		{860_000, Gauge{Filled: 3, Low: true, NearlyFull: true}, "14% context left"},
+		{990_000, Gauge{Filled: 4, Low: true, NearlyFull: true}, "1% context left"},
+	}
+	for _, c := range cases {
+		s := session.Session{Title: "t", Cwd: "/work/shop", Prompts: 2, Context: c.used, Window: 1_000_000}
+		if got, known := GaugeOf(s); !known || got != c.want {
+			t.Errorf("used %d: gauge %+v, want %+v", c.used, got, c.want)
+		}
+		row := session.Row{Agent: &agent.Agent{ID: "claude"}, Session: s}
+		if got := CellsOf(row, Tags{}).Status; got != "" {
+			t.Errorf("used %d: the picker row says %q; the gauge says it instead", c.used, got)
+		}
+		text := RowContext(RowTextOf(row, Tags{}), "")
+		if c.status != "" && !strings.Contains(text, c.status) || c.status == "" && strings.Contains(text, "context left") {
+			t.Errorf("used %d: plain row %q", c.used, text)
+		}
+	}
+	if _, known := GaugeOf(session.Session{}); known {
+		t.Error("a session with no usage has a gauge")
+	}
+}
+
+func TestThePreviewLineSaysHowMuchContextIsLeftBeforeTheBranch(t *testing.T) {
+	r := session.Row{Agent: &agent.Agent{ID: "claude"}, Session: session.Session{Title: "t", Cwd: "/work/shop",
+		Mtime: session.Now() - 3*86400, Branch: "main", Prompts: 2, Context: 880_000, Window: 1_000_000}}
+	if got, want := strings.Join(metaParts(r, Tags{}), " · "), "shop · 3d ago · 12% context left · main · 2 prompts"; got != want {
+		t.Errorf("preview line %q, want %q", got, want)
+	}
+	r.Session.Context = 0
+	if got := strings.Join(metaParts(r, Tags{}), " · "); strings.Contains(got, "context") {
+		t.Errorf("with no usage the preview line says %q", got)
+	}
+}
+
+func TestTheGaugeColumnIsKeptOnlyWhenASessionHasUsage(t *testing.T) {
+	claude := &agent.Agent{ID: "claude"}
+	none := session.Row{Agent: claude, Session: session.Session{Title: "a", Cwd: "/w"}}
+	some := session.Row{Agent: claude, Session: session.Session{Title: "b", Cwd: "/w", Context: 10, Window: 100}}
+	if w := Measure([]session.Row{none}, Tags{}); w.Gauge != 0 {
+		t.Errorf("no usage anywhere: gauge column %d", w.Gauge)
+	}
+	if w := Measure([]session.Row{none, some}, Tags{}); w.Gauge != GaugeCells+2 {
+		t.Errorf("one session with usage: gauge column %d, want %d", w.Gauge, GaugeCells+2)
 	}
 }

@@ -19,6 +19,12 @@ type codexItem struct {
 	Git            *struct {
 		Branch string `json:"branch"`
 	} `json:"git"`
+	Info *struct {
+		Last struct {
+			Total int `json:"total_tokens"`
+		} `json:"last_token_usage"`
+		Window int `json:"model_context_window"`
+	} `json:"info"`
 }
 
 type codexLine struct {
@@ -30,6 +36,8 @@ type codexBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
+
+const codexBaseline = 12000
 
 const (
 	codexRequest = "## My request for Codex:"
@@ -139,9 +147,15 @@ func (c *codexReader) feed(raw []byte) bool {
 	case l.Type == "turn_context":
 		t.Cwd = cmp.Or(item.Cwd, t.Cwd)
 	case l.Type == "event_msg":
-		if item.Type == "turn_aborted" {
+		switch {
+		case item.Type == "turn_aborted":
 			t.Last = Interrupted
+		case item.Type == "token_count" && item.Info != nil && item.Info.Window > codexBaseline:
+			t.ContextUsed = max(item.Info.Last.Total-codexBaseline, 1)
+			t.ContextWindow = item.Info.Window - codexBaseline
 		}
+	case l.Type == "compacted":
+		t.ContextUsed = 0
 	case l.Type == "response_item", len(l.Payload) == 0 && l.Type != "":
 		c.item(item)
 	case l.Type == "" && l.Git != nil:
