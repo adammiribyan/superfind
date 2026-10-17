@@ -41,15 +41,17 @@ elif [ -d "$ref" ]; then
 	is_checkout "$src" || { echo "try: $src isn't a superfind checkout" >&2; exit 2; }
 else
 	case $ref in
+	-*) echo "try: $ref isn't a pull request, branch, or folder" >&2; exit 2 ;;
 	*[!0-9]*) spec=$ref name=$(printf %s "$ref" | tr / -) what="branch $ref" ;;
 	*) spec="pull/$ref/head" name="pr-$ref" what="pull request #$ref" ;;
 	esac
-	git -C "$repo" fetch -q origin "$spec"
-	commit=$(git -C "$repo" rev-parse FETCH_HEAD)
+	git -C "$repo" fetch -q origin "+$spec:refs/superfind-try/$name"
+	commit=$(git -C "$repo" rev-parse "refs/superfind-try/$name")
 	src="$base/src/$name"
 	if [ -d "$src" ]; then
 		git -C "$src" checkout -q --detach "$commit"
 	else
+		git -C "$repo" worktree prune
 		git -C "$repo" worktree add -q --detach "$src" "$commit"
 	fi
 	what="$what at $(git -C "$src" log -1 --format='%h %s')"
