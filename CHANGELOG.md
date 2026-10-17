@@ -3,6 +3,14 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
+## [Unreleased]
+
+> Choose which model ranks your ask searches
+
+### Added
+
+- `SUPERFIND_ASK` chooses who ranks `ask` and the picker's Ctrl-R: `jev` for TypeSafe, or a Claude model such as `haiku`, `sonnet`, or `opus`. Set it in your environment or `~/.config/superfind/env`. Without it, ask uses Jev when you have a TypeSafe key and Haiku otherwise. With a Claude model, the picker doesn't send its top matches to TypeSafe for explanations.
+
 ## [0.14.0] - 2026-10-16
 
 > See how much context each session has left

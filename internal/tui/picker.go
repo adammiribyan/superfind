@@ -670,8 +670,9 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = "No sessions match “" + msg.query + "”"
 		}
 		updated, load := m.loadPreview()
-		key, top := typesafe.Key(), msg.paths[:min(ask.ExplainTop, len(msg.paths))]
-		if key == "" || len(top) == 0 || updated.db == nil {
+		key, model := ask.Ranker()
+		top := msg.paths[:min(ask.ExplainTop, len(msg.paths))]
+		if model != "jev" || key == "" || len(top) == 0 || updated.db == nil {
 			return updated, load
 		}
 		seq, db, query, ctx := msg.seq, updated.db, msg.query, m.asks.ctx
