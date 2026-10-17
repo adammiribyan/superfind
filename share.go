@@ -1,0 +1,378 @@
+package main
+
+import (
+	"bytes"
+	"cmp"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/charmbracelet/x/term"
+
+	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/blame"
+	"github.com/adammiribyan/superfind/internal/config"
+	briefing "github.com/adammiribyan/superfind/internal/handoff"
+	"github.com/adammiribyan/superfind/internal/mask"
+	"github.com/adammiribyan/superfind/internal/session"
+	"github.com/adammiribyan/superfind/internal/share"
+	"github.com/adammiribyan/superfind/internal/show"
+	"github.com/adammiribyan/superfind/internal/store"
+	"github.com/adammiribyan/superfind/internal/telemetry"
+)
+
+func page(tty *os.File, text string) {
+	cmd := exec.Command("/bin/sh", "-c", cmp.Or(os.Getenv("PAGER"), "less"))
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = strings.NewReader(text), tty, tty
+	if cmd.Run() != nil {
+		fmt.Fprint(tty, text)
+	}
+}
+
+func runShare(args []string) {
+	maxBytes, out, yes, target := briefing.DefaultMaxBytes, "", false, ""
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--yes":
+			yes = true
+		case arg == "--out" || arg == "--max-bytes":
+			if i+1 == len(args) {
+				usageError("superfind share: " + arg + " needs a value. See superfind help share.")
+			}
+			i++
+			if arg == "--out" {
+				out = args[i]
+				continue
+			}
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 0 {
+				usageError("superfind share: --max-bytes needs a whole number, like --max-bytes 12000. See superfind help share.")
+			}
+			maxBytes = n
+		case strings.HasPrefix(arg, "-"):
+			usageError("superfind share: there is no " + arg + " option. See superfind help share.")
+		case target != "":
+			usageError("superfind share: one session at a time, not " + arg + " too.")
+		default:
+			target = arg
+		}
+	}
+	if target == "" {
+		usageError("superfind share: which session? Pass its id, or a path that superfind search prints first.")
+	}
+	tty := terminal()
+	if tty == nil && !yes {
+		usageError("superfind share: review a share before it leaves your machine. Run superfind share SESSION --out FILE " +
+			"at a terminal, or pass --yes after reviewing the file.")
+	}
+	r, indexed, _ := findSession("share", target)
+	if !indexed {
+		fail("superfind share: not an indexed session: " + target)
+	}
+	t, err := agent.ReadTranscript(r.Agent, r.Path)
+	if err != nil {
+		fail("superfind share: couldn't read " + field(r.Path) + ": " + err.Error())
+	}
+	s := shareOf(r, t, maxBytes, time.Now())
+	if out == "" {
+		out = slug(s.Manifest.Title) + ".share.md"
+	}
+	taken := "superfind share: " + out + " already exists. Pass another --out FILE."
+	if _, err := os.Lstat(out); err == nil {
+		fail(taken)
+	}
+	var file bytes.Buffer
+	if err := share.Write(&file, s); err != nil {
+		fail("superfind share: " + err.Error())
+	}
+	warning := "Masked " + secrets(s.Manifest.MaskedCount) + " in known formats. Masking can't find customer data, " +
+		"unlabelled credentials, or personal information. You are sharing what you reviewed."
+	if tty != nil && !yes {
+		page(tty, file.String())
+		fmt.Fprintln(stderr, warning)
+		switch confirmed(tty, "Share this? [y/N]") {
+		case 130:
+			exit(130)
+		case 1:
+			fmt.Fprintln(stderr, "superfind share: nothing was written.")
+			return
+		}
+	} else {
+		fmt.Fprintln(stderr, warning)
+	}
+	f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		fail(taken)
+	}
+	if err == nil {
+		_, err = f.Write(file.Bytes())
+		err = cmp.Or(err, f.Close())
+	}
+	if err != nil {
+		fail("superfind share: couldn't write " + out + ": " + err.Error())
+	}
+	telemetry.Record(telemetry.ShareWritten{})
+	fmt.Fprintf(stdout, "Wrote %s, %d bytes. Send it to your colleague. They run:\nsuperfind receive %s\n",
+		out, file.Len(), agent.ShellQuote(filepath.Base(out)))
+}
+
+func shareOf(r session.Row, t agent.Transcript, maxBytes int, now time.Time) share.Share {
+	homes := []string{agent.Home(), agent.Resolve(agent.Home())}
+	for i := range t.Turns {
+		t.Turns[i].Text = share.ScrubHome(t.Turns[i].Text, homes...)
+	}
+	p := briefing.Build(t, briefing.Options{MaxBytes: maxBytes})
+	masked := 0
+	for _, turn := range p.Turns {
+		masked += mask.Count(agent.Printable(t.Turns[turn.Number-1].Text))
+	}
+	branch := agent.Printable(r.Session.Branch)
+	if branch == "HEAD" {
+		branch = ""
+	}
+	sender, set := config.Lookup("SUPERFIND_NAME")
+	if !set {
+		sender = os.Getenv("USER")
+	}
+	m := share.Manifest{Version: share.Version, BundleID: share.NewID(), CreatedAt: now.UTC().Truncate(time.Second),
+		SenderName: sender, Agent: r.Agent.ID, AgentLabel: r.Agent.Label, Title: show.Clean(share.ScrubHome(r.Session.Title, homes...)),
+		SourceSessionID: r.Session.ID, Branch: branch, TurnsTotal: p.Total, TurnsShown: len(p.Turns),
+		MaskedCount: masked, Omissions: share.Omissions}
+	trail, _ := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
+	var made blame.Outcome
+	for _, o := range blame.OutcomesOf(r, trail) {
+		if o.Kind == blame.Made && o.Commit != "" {
+			made = o
+		}
+	}
+	c, err := share.Inspect(r.Session.Cwd)
+	m.RepoSubdir = c.Subdir
+	remotes := c.Remotes
+	switch {
+	case made.Commit != "":
+		m.HeadCommit = made.Commit
+		if w, err := share.Inspect(made.Repo); err == nil {
+			remotes = w.Remotes
+			if share.OnBranch(w.Root, w.Branch, made.Commit) {
+				m.Branch = w.Branch
+			}
+		}
+	case err == nil:
+		m.Branch = cmp.Or(m.Branch, c.Branch)
+		if m.HeadCommit = share.Tip(c.Root, m.Branch); m.HeadCommit == "" && m.Branch != "" && c.Branch == m.Branch {
+			m.HeadCommit = c.Head
+		}
+	}
+	if len(remotes) > 0 {
+		m.RepoRemote = remotes[0]
+	}
+	for _, pr := range trail.PRs {
+		if ref := "https://github.com/" + pr.Repo + "/pull/" + strconv.Itoa(pr.Number); !slices.Contains(m.PRRefs, ref) {
+			m.PRRefs = append(m.PRRefs, ref)
+		}
+	}
+	return share.Share{Manifest: m, Briefing: share.Briefing(r.Agent, m, p)}
+}
+
+var notSlug = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slug(title string) string {
+	s := strings.Trim(notSlug.ReplaceAllString(strings.ToLower(title), "-"), "-")
+	if len(s) > 60 {
+		s = strings.TrimRight(s[:60], "-")
+	}
+	return cmp.Or(s, "session")
+}
+
+func runReceive(args []string) {
+	folder, file, printOnly, force := "", "", false, false
+	var chosen *agent.Agent
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--print-only":
+			printOnly = true
+		case arg == "--force-folder":
+			force = true
+		case arg == "--folder" || arg == "--agent":
+			if i+1 == len(args) {
+				usageError("superfind receive: " + arg + " needs a value. See superfind help receive.")
+			}
+			i++
+			if arg == "--folder" {
+				folder = args[i]
+			} else if chosen = agent.Named(args[i]); chosen == nil {
+				usageError("superfind receive: --agent takes claude, codex, or grok, not " + args[i] + ".")
+			}
+		case strings.HasPrefix(arg, "-"):
+			usageError("superfind receive: there is no " + arg + " option. See superfind help receive.")
+		case file != "":
+			usageError("superfind receive: one file at a time, not " + arg + " too.")
+		default:
+			file = arg
+		}
+	}
+	if file == "" {
+		usageError("superfind receive: which file? Pass the share file a colleague sent you.")
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		fail("superfind receive: couldn't read " + file + ": " + err.Error())
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, share.MaxBytes+1))
+	f.Close()
+	if err != nil {
+		fail("superfind receive: couldn't read " + file + ": " + err.Error())
+	}
+	s, err := share.Parse(raw)
+	if err != nil {
+		advice := "Ask the sender to share it again."
+		if errors.Is(err, share.ErrVersion) {
+			advice = "Run superfind upgrade, or ask the sender to share it again."
+		}
+		fail("superfind receive: can't use " + file + ": " + err.Error() + ". " + advice)
+	}
+	m := s.Manifest
+	if fresh, err := share.Remember(m, time.Now()); err != nil {
+		fmt.Fprintln(stderr, "superfind receive: couldn't record this share in "+store.CacheDir()+": "+err.Error())
+	} else if fresh {
+		telemetry.Record(telemetry.ShareReceived{})
+	}
+	tty := terminal()
+	text := strings.Join(preview(m), "\n") + "\n" + strings.NewReplacer("\r", "", "\v", "", "\f", "").Replace(agent.Printable(s.Briefing))
+	if tty != nil && term.IsTerminal(os.Stdout.Fd()) {
+		output.Flush()
+		page(tty, text)
+	} else {
+		fmt.Fprint(stdout, text)
+		output.Flush()
+	}
+	if printOnly {
+		return
+	}
+	from := agent.Named(m.Agent)
+	a := cmp.Or(chosen, from)
+	if a == nil {
+		fail("superfind receive: this superfind can't start " + field(m.Agent) + ". Pass --agent claude, codex, or grok.")
+	}
+	here, err := share.Open(cmp.Or(folder, "."))
+	if err != nil {
+		fail("superfind receive: can't continue in " + cmp.Or(folder, "this folder") + ": " + err.Error() + ". Pass --folder DIR.")
+	}
+	moved := ""
+	if folder == "" && !force && share.Check(here, m).Stops() {
+		if clone, found := cloneOf(m.RepoRemote); found {
+			here, moved = clone, "This folder isn't a clone of "+m.RepoRemote+", so superfind uses your clone of it."
+		}
+	}
+	report := share.Check(here, m)
+	lines := report.Lines(m)
+	if report.Stops() && !force {
+		fail("superfind receive: " + lines[0] + " Pass --folder with a clone of " + m.RepoRemote + ", or --force-folder to continue here anyway.")
+	}
+	dir := here.Root
+	if sub := filepath.Join(here.Root, m.RepoSubdir); m.RepoSubdir != "" && dirExists(sub) {
+		dir = sub
+	}
+	fmt.Fprintln(stdout, "\nContinuing in "+dir+".")
+	if moved != "" {
+		fmt.Fprintln(stdout, moved)
+	}
+	for _, line := range lines {
+		fmt.Fprintln(stdout, line)
+	}
+	path := here.BriefingPath(m.BundleID)
+	if err := os.WriteFile(path, []byte(s.Briefing), 0o600); err != nil {
+		fail("superfind receive: couldn't save the briefing in " + filepath.Dir(path) + ": " + err.Error())
+	}
+	argv := share.Start(a, share.Prompt(path, cmp.Or(from, a), here))
+	fmt.Fprintln(stdout, "\n"+share.Command(dir, argv))
+	if tty == nil {
+		return
+	}
+	output.Flush()
+	switch confirmed(tty, "Start "+a.Label+" here? [y/N]") {
+	case 130:
+		exit(130)
+	case 1:
+		return
+	}
+	program, err := exec.LookPath(argv[0])
+	if err != nil {
+		fail("superfind receive: " + argv[0] + " isn't on your PATH. Install it, or pass --agent.")
+	}
+	telemetry.Record(telemetry.ShareStarted{})
+	telemetry.Flush()
+	if err := output.Flush(); err != nil {
+		fail("superfind receive: couldn't write the output: " + err.Error())
+	}
+	if err := os.Chdir(dir); err != nil {
+		fail("superfind receive: couldn't go to " + dir + ": " + err.Error())
+	}
+	err = syscall.Exec(program, argv, os.Environ())
+	fail("superfind receive: couldn't run " + argv[0] + ": " + err.Error())
+}
+
+func secrets(n int) string {
+	if n == 1 {
+		return "1 secret"
+	}
+	return strconv.Itoa(n) + " secrets"
+}
+
+func preview(m share.Manifest) []string {
+	lines := []string{
+		"Shared by " + cmp.Or(field(m.SenderName), "someone") + " (self-asserted) on " + m.CreatedAt.UTC().Format("2006-01-02 15:04 UTC"),
+		"Agent: " + field(cmp.Or(m.AgentLabel, m.Agent)),
+		"Title: " + field(m.Title),
+		fmt.Sprintf("Turns: %d of %d shown", m.TurnsShown, m.TurnsTotal),
+	}
+	for _, f := range [][2]string{{"Repository", m.RepoRemote}, {"Branch", m.Branch}, {"Commit", m.HeadCommit}} {
+		if f[1] != "" {
+			lines = append(lines, f[0]+": "+field(f[1]))
+		}
+	}
+	omitted := make([]string, len(m.Omissions))
+	for i, o := range m.Omissions {
+		omitted[i] = field(o)
+	}
+	return append(lines, "Left out: "+strings.Join(omitted, ", "), "Masked: "+secrets(m.MaskedCount), "")
+}
+
+func cloneOf(remote string) (share.Folder, bool) {
+	if remote == "" {
+		return share.Folder{}, false
+	}
+	rows := session.CachedRows()
+	slices.SortFunc(rows, func(a, b session.Row) int { return cmp.Compare(b.Session.Mtime, a.Session.Mtime) })
+	var checked []string
+	for _, r := range rows {
+		dir := r.Session.Cwd
+		if slices.ContainsFunc(checked, func(root string) bool { return dir == root || strings.HasPrefix(dir, root+"/") }) {
+			continue
+		}
+		c, err := share.Inspect(dir)
+		if err != nil {
+			continue
+		}
+		if slices.Contains(c.Remotes, remote) {
+			return share.InCheckout(c), true
+		}
+		checked = append(checked, c.Root)
+	}
+	return share.Folder{}, false
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}

@@ -33,6 +33,20 @@ test("an upgraded event keeps only its allowed props, and a malformed one is dro
   ]);
 });
 
+test("share events keep no props", () => {
+  const events = ["share_written", "share_received", "share_started", "share_opened"].map((name) => ({
+    ...UPGRADED,
+    name,
+    props: { bundle_id: "9f2c0e1a3b4f4b8e9a520c7d6e2b9f11", repo: "https://github.com/o/r" },
+  }));
+  const parsed = parseCheckin(JSON.stringify({ ...GOOD, events }));
+  assert.deepEqual("checkin" in parsed ? parsed.checkin.events : parsed, [
+    { name: "share_written", id: UPGRADED.id, hours_ago: 3, props: {} },
+    { name: "share_received", id: UPGRADED.id, hours_ago: 3, props: {} },
+    { name: "share_started", id: UPGRADED.id, hours_ago: 3, props: {} },
+  ]);
+});
+
 test("a check-in without events is accepted with none", () => {
   const { events, ...rest } = GOOD;
   assert.deepEqual(parseCheckin(JSON.stringify(rest)), {

@@ -35,6 +35,9 @@ type EventRule = (props: Record<string, unknown>) => Event["props"] | undefined;
 export const EVENTS: Record<string, EventRule> = {
   upgraded: ({ method, outcome }) =>
     oneOf(method, METHODS) && oneOf(outcome, OUTCOMES) ? { method, outcome } : undefined,
+  share_written: () => ({}),
+  share_received: () => ({}),
+  share_started: () => ({}),
 };
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

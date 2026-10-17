@@ -9,6 +9,9 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 ### Added
 
+- `superfind share SESSION` writes a session's briefing to a Markdown file you can send to a colleague. At a terminal, you read it before it's written. It masks common secrets, shortens paths in your home folder to `~`, and leaves out the raw transcript, tool output, your folder path, and the resume command.
+- `superfind receive FILE` checks a share file, shows the briefing, and starts your agent with it in your clone of the repository after you say yes, or in any folder if the session wasn't in a repository. It stops in a folder that isn't a clone of the shared repository, and reports how your HEAD, branch, and uncommitted changes compare. `--print-only` shows the share and stops.
+- Check-ins count shares written, received, and started, with nothing else about them.
 - Ctrl-O in the picker goes to the selected session's folder instead of resuming it. With the shell setup, your shell changes to that folder. `pick --run` opens your shell there.
 - Each row in the picker has a small bar that fills as the session uses its context window. It turns amber when less than 30% is left, and red with a `!` under 15%. The preview says the exact amount, such as "12% context left", and `--json` has `context_left`.
 - Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.

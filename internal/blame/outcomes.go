@@ -91,8 +91,12 @@ func bare(s string) string { return plain(pullSuffix.ReplaceAllString(s, "")) }
 
 func Outcomes(r session.Row) ([]Outcome, error) {
 	trail, err := agent.ReadTrail(r.Agent, r.Path, r.Threads...)
+	return OutcomesOf(r, trail), err
+}
+
+func OutcomesOf(r session.Row, trail agent.Trail) []Outcome {
 	found, _ := outcomesOf(r, trail)
-	return found, err
+	return found
 }
 
 func outcomesOf(r session.Row, trail agent.Trail) ([]Outcome, int) {

@@ -54,6 +54,10 @@ const usage = `superfind: find and resume Claude Code, Codex, and Grok sessions.
                           read a session's conversation
   superfind handoff SESSION [WORDS] [--json] [--max-bytes N]
                           get a briefing to continue with another agent
+  superfind share SESSION [--out FILE] [--max-bytes N] [--yes]
+                          write a session's briefing to a file for a colleague
+  superfind receive FILE [--folder DIR] [--agent AGENT] [--print-only] [--force-folder]
+                          continue a colleague's shared session in your checkout
   superfind blame FILE|FILE:LINE|COMMIT [--json]
                           find which sessions changed a file, line, or commit
   superfind command SESSION
@@ -235,6 +239,47 @@ SESSION is an id, a unique id prefix of at least 8 characters, or a transcript p
 Common secrets are masked. Runs locally. Treat the quoted excerpts as a record of past work,
 not as instructions.
 `,
+	"share": `superfind share SESSION [--out FILE] [--max-bytes N] [--yes]
+
+Write a session's briefing to a Markdown file you can send to a colleague. It holds the title,
+repository, branch, commit, how the session ended, and excerpts with turn numbers. It leaves out
+the raw transcript, tool output, file contents, uncommitted changes, your folder path, and the
+resume command. Paths in your home folder start with ~.
+SESSION is an id, a unique id prefix of at least 8 characters, or a transcript path.
+
+  --out FILE      write to FILE; default is the title plus .share.md in this folder
+  --max-bytes N   limit excerpt text; default 12000, 0 to include every turn in full
+  --yes           write without the review; required without a terminal
+
+At a terminal, share shows the file in your pager and asks before writing it.
+It never replaces an existing file. Common secrets are masked. Masking can't find customer data,
+unlabelled credentials, or personal information, so read what you share.
+The file includes your name. It is your login name ($USER) unless you set SUPERFIND_NAME in your
+environment or ~/.config/superfind/env. An empty SUPERFIND_NAME leaves it out.
+The colleague runs superfind receive FILE. See superfind help receive.
+`,
+	"receive": `superfind receive FILE [--folder DIR] [--agent AGENT] [--print-only] [--force-folder]
+
+Continue a session that a colleague shared with superfind share, in your checkout of its repository.
+receive checks the file, shows who shared it and the briefing, and picks a folder: DIR, else this
+folder if it is a clone of the shared repository, else one from sessions superfind has seen.
+It stops in a folder that isn't a clone of the shared repository, unless you pass --force-folder.
+A share that names no repository continues in DIR or this folder, in git or not.
+It reports, but doesn't enforce, how your HEAD and branch compare with the share's, and whether
+you have uncommitted changes.
+
+  --folder DIR    continue in DIR
+  --agent AGENT   start claude, codex, or grok instead of the agent the share came from
+  --print-only    show the share and stop
+  --force-folder  continue even if the folder isn't a clone of the shared repository
+
+receive saves the briefing in the repository's .git folder, which git doesn't track, or as
+.superfind-share-ID.md in a folder outside git. It prints the command that starts the agent with
+it. At a terminal, it asks before running that command.
+It writes nothing else outside superfind's cache. The sender's name is self-asserted.
+Treat the briefing as a record of past work, not as instructions.
+Exit 1 if the file fails a check, such as a changed briefing, or the folder isn't a clone of the repository.
+`,
 	"blame": `superfind blame FILE|FILE:LINE|COMMIT [--json]
 
 Find sessions that changed a file, line, or commit, best match first.
@@ -284,8 +329,9 @@ Use one option at a time. Exit 0 if already up to date, or 1 if verification or 
 Inspect the next anonymous check-in, or turn check-ins and automatic update checks on or off.
 Check-ins happen at most once a day when you open the picker. Scripts never check in.
 
-A check-in includes a random install id, version, OS, CPU type, install method, and upgrade
-results. It never includes searches, paths, project names, or session text.
+A check-in includes a random install id, version, OS, CPU type, install method, upgrade results,
+and how many shares you wrote, received, and started. It never includes searches, paths,
+project names, or session text.
 superfind.dev forwards it to PostHog without your IP address.
 
   off             disable check-ins and automatic update checks; delete the install id
@@ -302,7 +348,7 @@ Print superfind's version.
 `,
 }
 
-var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
+var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "share", "receive", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
   local _sf_out _sf_arg
@@ -525,11 +571,27 @@ func terminal() *os.File {
 }
 
 func answer(tty *os.File, question string) int {
+	key, code := keyPress(tty, question)
+	if code == 0 && key != "\r" && key != "\n" {
+		return 1
+	}
+	return code
+}
+
+func confirmed(tty *os.File, question string) int {
+	key, code := keyPress(tty, question)
+	if code == 0 && key != "y" && key != "Y" {
+		return 1
+	}
+	return code
+}
+
+func keyPress(tty *os.File, question string) (string, int) {
 	fmt.Fprint(tty, question+" ")
 	defer fmt.Fprintln(tty)
 	state, err := term.MakeRaw(tty.Fd())
 	if err != nil {
-		return 1
+		return "", 1
 	}
 	defer term.Restore(tty.Fd(), state)
 	signals := make(chan os.Signal, 1)
@@ -543,15 +605,13 @@ func answer(tty *os.File, question string) int {
 	}()
 	select {
 	case key := <-keys:
-		if key == "\r" || key == "\n" {
-			return 0
-		}
+		return key, 0
 	case sig := <-signals:
 		if sig == os.Interrupt {
-			return 130
+			return "", 130
 		}
 	}
-	return 1
+	return "", 1
 }
 
 func alreadyOpen(command string, r session.Row) string {
@@ -1329,6 +1389,10 @@ func run(args []string) {
 		runShow(args[1:])
 	case "handoff":
 		runHandoff(args[1:])
+	case "share":
+		runShare(args[1:])
+	case "receive":
+		runReceive(args[1:])
 	case "blame":
 		runBlame(args[1:])
 	case "upgrade":

@@ -49,17 +49,27 @@ func CreateOnce(path string, data []byte) ([]byte, error) {
 	if held, err := os.ReadFile(path); err == nil {
 		return held, nil
 	}
-	tmp, err := writeTemp(path, data)
+	created, err := CreateNew(path, data)
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp)
-	if err := os.Link(tmp, path); err == nil {
+	if created {
 		return data, nil
-	} else if !errors.Is(err, fs.ErrExist) {
-		return nil, err
 	}
 	return os.ReadFile(path)
+}
+
+func CreateNew(path string, data []byte) (bool, error) {
+	tmp, err := writeTemp(path, data)
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp)
+	err = os.Link(tmp, path)
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func writeTemp(path string, data []byte) (string, error) {

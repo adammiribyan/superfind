@@ -1377,8 +1377,8 @@ class SuperfindBehavior(unittest.TestCase):
             result = self.run_superfind(*args)
             self.assertEqual((result.returncode, result.stdout), (2, ""), args)
             self.assertIn('"serach"', result.stderr)
-            self.assertIn("init, pick, last, search, ask, preview, show, handoff, command, blame, index, label, upgrade, and telemetry",
-                          result.stderr)
+            self.assertIn("init, pick, last, search, ask, preview, show, handoff, share, receive, command, blame, index, label, "
+                          "upgrade, and telemetry", result.stderr)
 
     def test_pick_refuses_options_it_does_not_understand(self):
         result = self.run_superfind("pick", "--rnu")

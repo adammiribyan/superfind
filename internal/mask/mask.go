@@ -129,10 +129,16 @@ var anySecret, secretGroups = func() (*regexp.Regexp, []int) {
 	return regexp.MustCompile(strings.Join(alternatives, "|")), groups
 }()
 
-func maskedAs(kind string) string { return "[masked " + kind + "]" }
+const marker = "[masked "
+
+func maskedAs(kind string) string { return marker + kind + "]" }
 
 func Secrets(text string) string {
 	return maskNamedSecrets(maskKeys(maskPrivateKeys(text)))
+}
+
+func Count(text string) int {
+	return strings.Count(Secrets(text), marker) - strings.Count(text, marker)
 }
 
 func maskPrivateKeys(text string) string {

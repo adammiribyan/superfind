@@ -118,6 +118,17 @@ superfind blame HEAD
 
 Find the sessions behind a line, file, or commit, best match first. It reads what your agents already recorded, so it works on old commits with no hooks or setup. Run `superfind command ID` to get a session's resume command.
 
+## Share a session
+
+```sh
+superfind share ID
+superfind receive checkout-double-charge.share.md
+```
+
+`share` writes a session's briefing to a Markdown file you can send to a colleague. You read it before it's written. It holds excerpts with common secrets masked, the repository, branch, and commit. It leaves out the raw transcript, tool output, and your folder paths. Masking can't find everything, so read what you share.
+
+Your colleague runs `receive` in their clone of the repository, or in any folder if the session wasn't in a repository. It checks the file, shows the briefing, and starts their agent with it when they say yes.
+
 ## Scripts and agents
 
 ```sh
