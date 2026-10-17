@@ -1,0 +1,63 @@
+#!/bin/sh
+# Build superfind from a pull request, a branch, or a folder, and run it with an
+# index of its own, so your installed superfind and its index stay as they are.
+#
+#   scripts/try                 this checkout, uncommitted changes included
+#   scripts/try 99              pull request #99
+#   scripts/try main            the newest commit on a branch, here main
+#   scripts/try ~/work/tree     that folder, uncommitted changes included
+#
+# It opens the picker, where Enter resumes the session for real. To run another
+# command instead, put it after --:  scripts/try 99 -- search --json retry
+set -eu
+
+module="module github.com/adammiribyan/superfind"
+is_checkout() { [ -f "$1/go.mod" ] && grep -q "^$module\$" "$1/go.mod"; }
+
+repo=${SUPERFIND_REPO:-}
+if [ -z "$repo" ]; then
+	here=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	mine=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)
+	if [ -n "$here" ] && is_checkout "$here"; then repo=$here
+	elif is_checkout "$mine"; then repo=$mine
+	else
+		echo "try: run it inside a superfind checkout, or set SUPERFIND_REPO to one" >&2
+		exit 2
+	fi
+fi
+
+base="${XDG_CACHE_HOME:-$HOME/.cache}/superfind-try"
+ref=""
+if [ $# -gt 0 ] && [ "$1" != "--" ]; then
+	ref=$1
+	shift
+fi
+[ "${1:-}" = "--" ] && shift
+
+if [ -z "$ref" ]; then
+	src=$repo name=$(basename "$repo") what="$repo as it is"
+elif [ -d "$ref" ]; then
+	src=$(cd "$ref" && pwd) name=$(basename "$src") what="$src as it is"
+	is_checkout "$src" || { echo "try: $src isn't a superfind checkout" >&2; exit 2; }
+else
+	case $ref in
+	*[!0-9]*) spec=$ref name=$(printf %s "$ref" | tr / -) what="branch $ref" ;;
+	*) spec="pull/$ref/head" name="pr-$ref" what="pull request #$ref" ;;
+	esac
+	git -C "$repo" fetch -q origin "$spec"
+	commit=$(git -C "$repo" rev-parse FETCH_HEAD)
+	src="$base/src/$name"
+	if [ -d "$src" ]; then
+		git -C "$src" checkout -q --detach "$commit"
+	else
+		git -C "$repo" worktree add -q --detach "$src" "$commit"
+	fi
+	what="$what at $(git -C "$src" log -1 --format='%h %s')"
+fi
+
+bin="$base/bin/$name/superfind"
+(cd "$src" && go build -o "$bin" .)
+echo "superfind from $what" >&2
+echo "index: $base/cache/$name" >&2
+[ $# -eq 0 ] && set -- pick --run
+XDG_CACHE_HOME="$base/cache/$name" XDG_STATE_HOME="$base/state/$name" SUPERFIND_TELEMETRY=off exec "$bin" "$@"
