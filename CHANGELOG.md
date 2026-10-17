@@ -3,6 +3,14 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
+## [Unreleased]
+
+> Choose which model ranks your ask searches
+
+### Added
+
+- `SUPERFIND_ASK` chooses who ranks `ask` and the picker's Ctrl-R: `jev` for TypeSafe, or a Claude model such as `haiku`, `sonnet`, or `opus`. Set it in your environment or `~/.config/superfind/env`. Without it, ask uses Jev when you have a TypeSafe key and Haiku otherwise. With a Claude model, the picker doesn't send its top matches to TypeSafe for explanations.
+
 ## [0.14.0] - 2026-10-16
 
 > See how much context each session has left
@@ -12,8 +20,6 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 - Ctrl-O in the picker goes to the selected session's folder instead of resuming it. With the shell setup, your shell changes to that folder. `pick --run` opens your shell there.
 - Each row in the picker has a small bar that fills as the session uses its context window. It turns amber when less than 30% is left, and red with a `!` under 15%. The preview says the exact amount, such as "12% context left", and `--json` has `context_left`.
 - Search, ask, and the picker find Claude Code sessions whose transcript Claude Code deleted, by the prompts it keeps in `history.jsonl`. They're marked "transcript deleted", and `--json` has `transcript_gone`. `show`, `preview`, and `handoff` print their prompts with times. They can't be resumed, so `command` explains and exits 1, and `last` skips them.
-
-- `SUPERFIND_ASK` chooses who ranks `ask` and the picker's Ctrl-R: `jev` for TypeSafe, or a Claude model such as `haiku`, `sonnet`, or `opus`. Set it in your environment or `~/.config/superfind/env`. Without it, ask uses Jev when you have a TypeSafe key and Haiku otherwise. With a Claude model, the picker doesn't send its top matches to TypeSafe for explanations.
 
 ### Changed
 
