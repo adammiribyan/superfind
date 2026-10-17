@@ -267,6 +267,23 @@ class ScriptsAndAgents(SuperfindBehavior):
         self.assertEqual(filtered["match"], row["match"])
         self.assertNotIn("\x1b", self.run_superfind("search", "--json", "idempotency").stdout)
 
+    def test_search_json_and_the_preview_say_how_much_context_each_agent_has_left(self):
+        reply = line(type="assistant", message={"role": "assistant", "model": "claude-opus-5-5",
+                                                "content": [{"type": "text", "text": "Migrated."}],
+                                                "usage": {"input_tokens": 2, "cache_creation_input_tokens": 9998,
+                                                          "cache_read_input_tokens": 870000, "output_tokens": 4000}})
+        path = self.session(uid(1), user("migrate the ledger", cwd="/work/billing"), reply, title="Ledger migration")
+        count = line(type="event_msg", payload={"type": "token_count", "info": {
+            "last_token_usage": {"total_tokens": 142000}, "model_context_window": 272000}})
+        self.codex_session(uid(2), codex_meta("/work/api"), codex_user("review the ledger migration"), codex_reply("Looks right."), count)
+        chat = self.grok_session(uid(3), "/work/web", GROK_OPENER, line(type="user", content="<user_query>ledger page</user_query>"),
+                                 title="Ledger page")
+        (chat.parent / "signals.json").write_text(json.dumps({"contextTokensUsed": 64000, "contextWindowTokens": 256000}))
+        self.session(uid(4), user("ledger notes", cwd="/work/billing"), claude("Noted."), title="Ledger notes")
+        left = {r["id"]: r["context_left"] for r in self.records("search", "--json", "ledger")}
+        self.assertEqual(left, {uid(1): 12, uid(2): 50, uid(3): 75, uid(4): None})
+        self.assertIn("12% context left", self.superfind("preview", str(path)))
+
     def test_search_json_has_an_empty_match_when_there_are_no_words(self):
         self.checkout()
         self.assertEqual([r["match"] for r in self.records("search", "--json")], [""])

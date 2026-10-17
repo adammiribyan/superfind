@@ -17,7 +17,7 @@ type Agent struct {
 	dotDir   string
 	extraVar string
 	glob     string
-	sidecar  string
+	sidecars []string
 	resume   string
 	history  bool
 	IDOf     func(path string) string
@@ -35,7 +35,7 @@ var Agents = []*Agent{
 		glob: "sessions/*/*/*/rollout-*.jsonl", resume: "codex resume", IDOf: codexID, Names: codexNames,
 		reader: newCodexReader, trail: codexTrail},
 	{ID: "grok", Label: "Grok", homeVar: "GROK_HOME", dotDir: ".grok", extraVar: "SUPERFIND_GROK_DIRS",
-		glob: "sessions/*/*/chat_history.jsonl", sidecar: "summary.json", resume: "grok --resume", IDOf: grokID,
+		glob: "sessions/*/*/chat_history.jsonl", sidecars: []string{"summary.json", "signals.json"}, resume: "grok --resume", IDOf: grokID,
 		reader: newGrokReader, trail: grokTrail},
 }
 
@@ -130,8 +130,8 @@ func (a *Agent) Stat(path string) (FileID, float64, error) {
 		return FileID{}, 0, err
 	}
 	id := FileID{info.ModTime().UnixNano(), info.Size()}
-	if a.sidecar != "" {
-		if side, err := os.Stat(filepath.Join(filepath.Dir(path), a.sidecar)); err == nil {
+	for _, sidecar := range a.sidecars {
+		if side, err := os.Stat(filepath.Join(filepath.Dir(path), sidecar)); err == nil {
 			id.ModNanos += side.ModTime().UnixNano()
 			id.Size += side.Size()
 		}

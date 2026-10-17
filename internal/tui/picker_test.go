@@ -709,3 +709,37 @@ func TestACompactPickerGivesTheNoticeALineOnlyWhenThereIsOne(t *testing.T) {
 		t.Errorf("with a notice line 3 reads %q, want the first session", got)
 	}
 }
+
+func TestARowDrawsAContextGaugeBeforeItsAgeAndMarksANearlyFullOne(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	row := func(title string, used int) session.Row {
+		return session.Row{Path: title, Agent: agent.Agents[0], Session: session.Session{Title: title, Cwd: "/tmp",
+			Mtime: session.Now() - 3*86400, Prompts: 5, Context: used, Window: 1_000_000}}
+	}
+	rows := []session.Row{row("Fresh", 100_000), row("Half", 500_000), row("Nearly full", 900_000), row("Unknown", 0)}
+	m := newPicker(rows, nil, "")
+	c := render.Measure(rows, render.TagsFor(rows)).Fit(50)
+	want := map[string]string{
+		"Fresh":       " Fresh                        tmp   ■■■■       3d ",
+		"Half":        " Half                         tmp   ■■■■       3d ",
+		"Nearly full": " Nearly full                  tmp  !■■■■       3d ",
+		"Unknown":     " Unknown                      tmp              3d ",
+	}
+	for _, r := range rows {
+		if got := ansi.Strip(m.rowLine(r, false, 50, c, nil)); got != want[r.Session.Title] {
+			t.Errorf("%s reads %q, want %q", r.Session.Title, got, want[r.Session.Title])
+		}
+	}
+	m.colors = theme{bg: color.RGBA{0xFF, 0xFF, 0xFF, 255}, fg: color.RGBA{0x1F, 0x23, 0x28, 255}}
+	m.colors.settle()
+	fill, track := m.gaugeStyles(render.Gauge{Filled: 1})
+	if fill.Render("■") == track.Render("■") {
+		t.Error("the used part of the gauge looks like the empty part")
+	}
+	plain, _ := m.gaugeStyles(render.Gauge{Filled: 2})
+	nearlyFull, _ := m.gaugeStyles(render.Gauge{Filled: 4, Low: true, NearlyFull: true})
+	if plain.Render("■") == nearlyFull.Render("■") {
+		t.Error("a nearly full gauge has the same color as a fresh one")
+	}
+}

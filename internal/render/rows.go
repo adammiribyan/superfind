@@ -89,6 +89,46 @@ func NoSessions() string {
 
 const GoneMark = "transcript deleted"
 
+const (
+	LowContext   = 30
+	NearlyFull   = 15
+	GaugeCells   = 4
+	gaugeColumns = GaugeCells + 2
+)
+
+type Gauge struct {
+	Filled          int
+	Low, NearlyFull bool
+}
+
+func GaugeOf(s session.Session) (Gauge, bool) {
+	left, known := s.ContextLeft()
+	if !known {
+		return Gauge{}, false
+	}
+	used := 100 - left
+	filled := min((used*GaugeCells+50)/100, GaugeCells)
+	if used > 0 {
+		filled = max(filled, 1)
+	}
+	return Gauge{Filled: filled, Low: left < LowContext, NearlyFull: left < NearlyFull}, true
+}
+
+func contextNote(s session.Session) string {
+	left, known := s.ContextLeft()
+	if !known {
+		return ""
+	}
+	return fmt.Sprintf("%d%% context left", left)
+}
+
+func lowContextNote(s session.Session) string {
+	if left, known := s.ContextLeft(); known && left < LowContext {
+		return contextNote(s)
+	}
+	return ""
+}
+
 type RowText struct {
 	Title, Waiting string
 	Context        []string
@@ -108,6 +148,9 @@ func RowTextOf(r session.Row, shown Tags) RowText {
 	if agent.TranscriptGone(r.Path) {
 		t.Context = append(t.Context, GoneMark)
 	}
+	if note := lowContextNote(r.Session); note != "" {
+		t.Context = append(t.Context, note)
+	}
 	t.Context = append(t.Context, shown.of(r)...)
 	return t
 }
@@ -119,6 +162,9 @@ func metaParts(r session.Row, shown Tags) []string {
 		parts = append(parts, r.Status)
 	}
 	parts = append(parts, when(r))
+	if note := contextNote(s); note != "" {
+		parts = append(parts, note)
+	}
 	if s.Branch != "" && s.Branch != "HEAD" {
 		parts = append(parts, Flat(s.Branch))
 	}
@@ -186,7 +232,7 @@ func CellsOf(r session.Row, t Tags) Cells {
 	return c
 }
 
-type Widths struct{ Project, Agent int }
+type Widths struct{ Project, Agent, Gauge int }
 
 func Measure(rows []session.Row, t Tags) Widths {
 	var w Widths
@@ -194,15 +240,18 @@ func Measure(rows []session.Row, t Tags) Widths {
 		c := CellsOf(r, t)
 		w.Project = max(w.Project, displayWidth(c.Project))
 		w.Agent = max(w.Agent, displayWidth(c.Agent))
+		if _, known := GaugeOf(r.Session); known {
+			w.Gauge = gaugeColumns
+		}
 	}
 	w.Project, w.Agent = min(w.Project, columnCap), min(w.Agent, columnCap)
 	return w
 }
 
-type Columns struct{ Project, Agent int }
+type Columns struct{ Project, Agent, Gauge int }
 
 func (c Columns) titleRoom(width int) int {
-	room := width - 3 - AgeWidth - 1
+	room := width - 3 - AgeWidth - 1 - c.Gauge
 	for _, w := range []int{c.Project, c.Agent} {
 		if w > 0 {
 			room -= w + 2
