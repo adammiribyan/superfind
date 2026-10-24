@@ -3,9 +3,9 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
-## [Unreleased]
+## [0.16.0] - 2026-10-24
 
-> Jump to sessions open in Rex, and see which ones wait on you
+> Jump to Rex panes and see what waits on you
 
 ### Added
 
