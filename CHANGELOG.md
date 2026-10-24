@@ -3,6 +3,12 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
+## [Unreleased]
+
+### Fixed
+
+- While the picker is open, Rex and tmux name the tab superfind instead of zsh, bash, or fish. The shell setup now runs the picker as its own job. Open a new shell to pick up the change.
+
 ## [0.15.0] - 2026-10-17
 
 > Choose which model ranks your ask searches

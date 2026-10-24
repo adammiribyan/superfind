@@ -307,7 +307,7 @@ Print superfind's version.
 var commandNames = []string{"init", "pick", "last", "search", "ask", "preview", "show", "handoff", "command", "blame", "index", "label", "upgrade", "telemetry"}
 
 const zshSetup = `superfind() {
-  local _sf_out _sf_arg
+  local _sf_out _sf_arg _sf_tmp _sf_rc
   local -a _sf_run
   _sf_run=(command superfind)
   [[ -x %[1]s ]] && _sf_run=(%[1]s)
@@ -319,7 +319,12 @@ const zshSetup = `superfind() {
     "${_sf_run[@]}" "$@"
     return
   fi
-  _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  _sf_tmp=$(mktemp "${TMPDIR:-/tmp}/superfind.XXXXXX") || return
+  "${_sf_run[@]}" "${@:-pick}" >|"$_sf_tmp"
+  _sf_rc=$?
+  _sf_out=$(<"$_sf_tmp")
+  command rm -f -- "$_sf_tmp"
+  (( _sf_rc )) && return $_sf_rc
   [[ -n $_sf_out ]] || return 0
   [[ ${_sf_out#*$'\n'} == 'cd -- '* ]] || print -r -- $'Resuming \e[1m'"${_sf_out%%%%$'\n'*}"$'\e[0m'
   print -s -- "${_sf_out#*$'\n'}"
@@ -329,8 +334,13 @@ const zshSetup = `superfind() {
 sfd() { superfind "$@"; }
 
 _superfind_widget() {
-  local out
-  if out=$(superfind pick); then
+  local out tmp
+  tmp=$(mktemp "${TMPDIR:-/tmp}/superfind.XXXXXX") || return
+  superfind pick >|"$tmp"
+  local rc=$?
+  out=$(<"$tmp")
+  command rm -f -- "$tmp"
+  if (( rc == 0 )); then
     zle -I
     [[ ${out#*$'\n'} == 'cd -- '* ]] || print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -344,7 +354,7 @@ bindkey '^Xc' _superfind_widget
 `
 
 const bashSetup = `superfind() {
-  local _sf_out _sf_arg
+  local _sf_out _sf_arg _sf_tmp _sf_rc
   local -a _sf_run
   _sf_run=(command superfind)
   [[ -x %[1]s ]] && _sf_run=(%[1]s)
@@ -356,7 +366,12 @@ const bashSetup = `superfind() {
     "${_sf_run[@]}" "$@"
     return
   fi
-  _sf_out=$("${_sf_run[@]}" "${@:-pick}") || return
+  _sf_tmp=$(mktemp "${TMPDIR:-/tmp}/superfind.XXXXXX") || return
+  "${_sf_run[@]}" "${@:-pick}" >|"$_sf_tmp"
+  _sf_rc=$?
+  _sf_out=$(<"$_sf_tmp")
+  command rm -f -- "$_sf_tmp"
+  (( _sf_rc )) && return $_sf_rc
   [[ -n $_sf_out ]] || return 0
   [[ ${_sf_out#*$'\n'} == 'cd -- '* ]] || printf 'Resuming \e[1m%%s\e[0m\n' "${_sf_out%%%%$'\n'*}"
   history -s "${_sf_out#*$'\n'}"
@@ -387,7 +402,14 @@ const fishSetup = `function superfind
         $_sf_run $argv
         return
     end
-    set -l _sf_out ($_sf_run $argv); or return
+    set -l _sf_dir /tmp
+    set -q TMPDIR[1]; and set _sf_dir $TMPDIR
+    set -l _sf_tmp (mktemp $_sf_dir/superfind.XXXXXX); or return
+    $_sf_run $argv >$_sf_tmp
+    set -l _sf_rc $status
+    set -l _sf_out (cat -- $_sf_tmp)
+    command rm -f -- $_sf_tmp
+    test $_sf_rc -eq 0; or return $_sf_rc
     set -q _sf_out[1]; or return 0
     set -l _sf_resume (string join \n -- $_sf_out[2..-1] | string collect)
     string match -q -- 'cd -- *' $_sf_resume
