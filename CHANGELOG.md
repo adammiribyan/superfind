@@ -11,6 +11,7 @@ Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessi
 
 - In [Rex](https://www.superlogical.com/rex/docs), Enter in the picker and `superfind last` switch to the Rex pane where the session is already open. This needs Rex's Remote Control setting. Without it, the picker asks before resuming a copy, as before.
 - In Rex, a session whose agent waits for your answer or approval shows "waiting on you" and matches `is:waiting`, with no TypeSafe key. The preview shows what the agent is doing or asking, such as "waiting on you · Approve deploy?". `--json` has `open.rex`, `open.need`, and `open.doing`, and `open.status` can be `waiting`.
+- In Rex, Ctrl-T in the picker resumes the selected session in a new Rex tab in its folder and closes the picker. On a session that's already open, Ctrl-T switches to it like Enter.
 
 ## [0.15.0] - 2026-10-17
 

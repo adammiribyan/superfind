@@ -52,6 +52,7 @@ const (
 	minInput       = 10
 	minStatusTitle = 8
 	selectionShare = 0.24
+	tabLabel       = 40
 )
 
 type theme struct {
@@ -204,16 +205,25 @@ type picker struct {
 	feed        *news.Feed
 	confirming  string
 	inTmux      bool
+	inRex       bool
 	focus       func(open.State) bool
 
 	asks     *asks
 	reported *atomic.Bool
 	chosen   *session.Row
-	folder   bool
+	choice   Choice
 	quitting bool
 	reindex  bool
 	indexing bool
 }
+
+type Choice int
+
+const (
+	Resume Choice = iota
+	Folder
+	Opened
+)
 
 type phase int
 
@@ -256,7 +266,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", focus: Focus,
+		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", inRex: rex.Inside(), focus: Focus,
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
@@ -706,7 +716,11 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "enter":
-			return m.enter(confirming)
+			return m.enter(confirming, false)
+		case "ctrl+t":
+			if m.inRex {
+				return m.enter(confirming, true)
+			}
 		case "ctrl+o":
 			return m.goToFolder()
 		case "up", "ctrl+p":
@@ -777,13 +791,17 @@ func (m picker) shownMessage() string {
 	return m.message
 }
 
-func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
+func (m picker) enter(confirmed, inTab bool) (tea.Model, tea.Cmd) {
 	r := m.focused()
+	if r == nil && inTab {
+		return m, nil
+	}
 	if r == nil {
 		m.quitting = true
 		return m, tea.Quit
 	}
-	if _, err := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd); err != nil {
+	command, err := agent.ResumeCommand(r.Agent, r.Home, r.Path, r.Session.Cwd)
+	if err != nil {
 		m.message = err.Error()
 		return m, nil
 	}
@@ -806,8 +824,22 @@ func (m picker) enter(confirmed bool) (tea.Model, tea.Cmd) {
 		m.shown[m.cursor].Open = chosen.Open
 		m.confirming = r.Path
 		return m, nil
+	case open.NotOpen:
+		if inTab {
+			return m.openTab(chosen, command)
+		}
 	}
 	m.chosen, m.quitting = &chosen, true
+	return m, tea.Quit
+}
+
+func (m picker) openTab(r session.Row, command string) (tea.Model, tea.Cmd) {
+	label := ansi.Truncate(render.Flat(r.Session.Title), tabLabel, "…")
+	if err := rex.OpenTab(rex.Session(), label, agent.SurvivingDir(r.Session.Cwd), command); err != nil {
+		m.message = "Couldn't open a Rex tab: " + render.Flat(err.Error())
+		return m, nil
+	}
+	m.choice, m.quitting = Opened, true
 	return m, tea.Quit
 }
 
@@ -817,7 +849,7 @@ func (m picker) goToFolder() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	chosen := *r
-	m.chosen, m.folder, m.quitting = &chosen, true, true
+	m.chosen, m.choice, m.quitting = &chosen, Folder, true
 	return m, tea.Quit
 }
 
@@ -960,16 +992,23 @@ func (m picker) hints() [][2]string {
 	case m.phase() == asked && len(m.shown) == 0:
 		return [][2]string{{"esc", "back to search"}}
 	case m.phase() == asked:
-		return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-o", "go to folder"}, {"esc", "back to search"}}
+		return m.withNewTab([][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-o", "go to folder"}, {"esc", "back to search"}})
 	case len(m.all) == 0:
 		return [][2]string{{"esc", "quit"}}
 	case len(m.shown) == 0:
 		return [][2]string{{"ctrl-r", "ask"}, {"ctrl-u", "clear search"}}
 	}
-	return [][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}, {"ctrl-o", "go to folder"}}
+	return m.withNewTab([][2]string{{"enter", enter}, {"tab", "view"}, {"ctrl-r", "ask"}, {"ctrl-o", "go to folder"}})
 }
 
-var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "tab": 4, "ctrl-o": 5}
+func (m picker) withNewTab(hints [][2]string) [][2]string {
+	if m.inRex {
+		return append(hints, [2]string{"ctrl-t", "new tab"})
+	}
+	return hints
+}
+
+var hintPriority = map[string]int{"esc": 0, "enter": 1, "ctrl-r": 2, "ctrl-u": 3, "ctrl-t": 4, "tab": 5, "ctrl-o": 6}
 
 func (m picker) footer(width int) string {
 	hints := m.hints()
@@ -1124,7 +1163,7 @@ func pathsOf(rows []session.Row) []string {
 	return paths
 }
 
-func Pick(b news.Build) (*session.Row, bool, error) {
+func Pick(b news.Build) (*session.Row, Choice, error) {
 	problem := ""
 	db, err := session.OpenSearch()
 	if err != nil {
@@ -1132,7 +1171,7 @@ func Pick(b news.Build) (*session.Row, bool, error) {
 	}
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return nil, false, fmt.Errorf("superfind pick needs a terminal: %w", err)
+		return nil, Resume, fmt.Errorf("superfind pick needs a terminal: %w", err)
 	}
 	defer tty.Close()
 	options := []tea.ProgramOption{tea.WithInput(tty), tea.WithOutput(tty)}
@@ -1157,7 +1196,7 @@ func Pick(b news.Build) (*session.Row, bool, error) {
 		tty.WriteString(ansi.ClearProgramStatus)
 	}
 	if err != nil {
-		return nil, false, err
+		return nil, Resume, err
 	}
-	return final.(picker).chosen, final.(picker).folder, nil
+	return final.(picker).chosen, final.(picker).choice, nil
 }

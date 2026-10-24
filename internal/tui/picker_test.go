@@ -121,6 +121,10 @@ func TestTheFooterHintsFollowTheState(t *testing.T) {
 		{"no sessions", func(m *picker) { m.all, m.shown = nil, nil }, []string{"esc quit"}},
 		{"asking with no sessions", func(m *picker) { m.all, m.shown, m.asking = nil, nil, true }, []string{"esc stop asking"}},
 		{"asked with no sessions", func(m *picker) { m.all, m.shown, m.askedFor = nil, nil, "ledger" }, []string{"esc back to search"}},
+		{"in Rex", func(m *picker) { m.inRex = true }, []string{"enter resume", "tab view", "ctrl-r ask", "ctrl-o go to folder", "ctrl-t new tab"}},
+		{"asked in Rex", func(m *picker) { m.inRex, m.askedFor = true, "ledger" },
+			[]string{"enter resume", "tab view", "ctrl-o go to folder", "esc back to search", "ctrl-t new tab"}},
+		{"no matches in Rex", func(m *picker) { m.inRex, m.shown = true, nil }, []string{"ctrl-r ask", "ctrl-u clear search"}},
 	}
 	for _, c := range cases {
 		state := m
@@ -479,8 +483,8 @@ func TestCtrlOChoosesTheSessionsFolderWithoutAskingAboutAnOpenCopy(t *testing.T)
 	if cmd != nil {
 		msg = cmd()
 	}
-	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Path != "a" || !m.folder {
-		t.Fatalf("ctrl-o sent %v and chose %+v with folder=%v, want it to quit choosing a's folder", msg, m.chosen, m.folder)
+	if msg != (tea.QuitMsg{}) || m.chosen == nil || m.chosen.Path != "a" || m.choice != Folder {
+		t.Fatalf("ctrl-o sent %v and chose %+v with choice=%v, want it to quit choosing a's folder", msg, m.chosen, m.choice)
 	}
 }
 
@@ -747,5 +751,29 @@ func TestARowDrawsAContextGaugeBeforeItsAgeAndMarksANearlyFullOne(t *testing.T) 
 	nearlyFull, _ := m.gaugeStyles(render.Gauge{Filled: 4, Low: true, NearlyFull: true})
 	if plain.Render("■") == nearlyFull.Render("■") {
 		t.Error("a nearly full gauge has the same color as a fresh one")
+	}
+}
+
+func TestCtrlTOutsideRexLeavesThePickerAsItWas(t *testing.T) {
+	m := testPicker(t)
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	got := next.(picker)
+	if got.quitting || got.input.Value() != "ledger" || got.message != "" || cmd != nil && cmd() == (tea.QuitMsg{}) {
+		t.Fatalf("ctrl-t outside Rex: quitting=%v input=%q message=%q", got.quitting, got.input.Value(), got.message)
+	}
+}
+
+func TestCtrlTSaysWhyRexCouldNotOpenATabAndStaysOpen(t *testing.T) {
+	m := testPicker(t)
+	bin := t.TempDir()
+	os.WriteFile(filepath.Join(bin, "rex"), []byte("#!/bin/sh\necho 'rex: the app is not running' >&2\nexit 1\n"), 0o755)
+	t.Setenv("PATH", bin+":/usr/bin:/bin")
+	t.Setenv("REX_SERVER", "unix:///nowhere")
+	t.Setenv("REX_SESSION", "session:s")
+	m.inRex = true
+	next, _ := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
+	got := next.(picker)
+	if want := "Couldn't open a Rex tab: rex: the app is not running"; got.quitting || got.message != want {
+		t.Fatalf("ctrl-t when rex fails: quitting=%v message=%q, want it open saying %q", got.quitting, got.message, want)
 	}
 }

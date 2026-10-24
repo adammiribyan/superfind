@@ -1456,6 +1456,7 @@ printf '\\036' >> {self.stub}/rex-calls
 case "$1" in
 do) [ "$2" = -e ] && exec /bin/cat {self.stub}/rex-snapshot
     [ -f {self.stub}/rex-no-remote ] && {{ echo "rex: no app allows remote control" >&2; exit 1; }} ;;
+api) echo '{{"window_id":"window:new","block_ids":["block:new"]}}' ;;
 esac
 exit 0
 """)
@@ -1680,6 +1681,41 @@ exit 0
         self.assertEqual([r["open"] for r in records], [{"pid": int(pid), "status": "waiting", "tmux": records[0]["open"]["tmux"],
                                                          "rex": {"session": "session:there", "window": "window:agent", "block": "block:agent"},
                                                          "need": "permission", "doing": "Approve deploy?"}])
+
+    def test_ctrl_t_in_rex_resumes_the_session_in_a_new_rex_tab_and_hands_the_shell_nothing(self):
+        self.host()
+        self.in_rex()
+        self.pick(None)
+        self.assertIn("ctrl-t new tab", self.screen())
+        self.keys("C-t")
+        self.assertEqual(self.result(), (0, ""))
+        (new_window, select), = [self.rex_calls()]
+        self.assertEqual(new_window[:4], ["api", "call", "-s", "session:here"])
+        self.assertEqual(new_window[4], "session.new_window")
+        self.assertEqual(json.loads(new_window[5]), {
+            "session_id": "session:here", "window_label": "Ledger migration", "focus": True,
+            "layout": {"block": {"flavor": "com.superlogical.terminal.shell",
+                                 "options": {"cwd": "/tmp", "initial_input": f"cd /tmp && claude --resume {uid(1)}\n"}}}})
+        self.assertEqual(select, ["do", "session.select", "session_id=session:here", "window_id=window:new"])
+
+    def test_ctrl_t_on_a_session_open_in_rex_shows_its_pane_instead_of_a_second_copy(self):
+        self.open_elsewhere()
+        self.in_rex(self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}").strip())
+        self.pick(None)
+        self.keys("C-t")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual([call[0] for call in self.rex_calls()], ["focus", "do"])
+
+    def test_ctrl_t_outside_rex_does_nothing_and_the_footer_leaves_it_out(self):
+        self.host()
+        self.pick(None)
+        self.assertNotIn("ctrl-t", self.screen())
+        self.keys("C-t")
+        self.assertIn("Migrated.", self.screen())
+        self.assertFalse(Path(f"{self.out}.code").exists())
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertFalse((self.stub / "rex-calls").exists())
 
     def test_enter_on_a_session_outside_ghostty_asks_first_even_when_a_ghostty_tab_shares_its_terminal(self):
         self.open_elsewhere()

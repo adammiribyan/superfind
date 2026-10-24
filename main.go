@@ -101,7 +101,8 @@ fish requires version 3.1 or later.
 
 Choose a session in the full-screen picker. Type to search, use Up and Down to select,
 and press Enter. Ctrl-R searches by description. Tab switches the preview. Ctrl-O goes to
-the session's folder instead of resuming it. Esc goes back or closes the picker.
+the session's folder instead of resuming it. In Rex, Ctrl-T resumes it in a new Rex tab
+and prints nothing. Esc goes back or closes the picker.
 Search filters work here; see superfind help search.
 
 By default, print the selected title and resume command on separate lines. After Ctrl-O,
@@ -330,7 +331,7 @@ sfd() { superfind "$@"; }
 
 _superfind_widget() {
   local out
-  if out=$(superfind pick); then
+  if out=$(superfind pick) && [[ -n $out ]]; then
     zle -I
     [[ ${out#*$'\n'} == 'cd -- '* ]] || print -r -- $'Resuming \e[1m'"${out%%$'\n'*}"$'\e[0m'
     BUFFER=${out#*$'\n'}
@@ -1356,18 +1357,21 @@ func run(args []string) {
 			}
 			resume = true
 		}
-		chosen, folder, err := tui.Pick(build())
+		chosen, choice, err := tui.Pick(build())
 		if err != nil {
 			fail(err.Error())
+		}
+		if choice == tui.Opened {
+			return
 		}
 		if chosen == nil {
 			exit(1)
 			return
 		}
 		switch {
-		case folder && resume:
+		case choice == tui.Folder && resume:
 			shellIn(sessionFolder(*chosen))
-		case folder:
+		case choice == tui.Folder:
 			fmt.Fprint(stdout, render.Flat(chosen.Session.Title)+"\ncd -- "+agent.ShellQuote(sessionFolder(*chosen))+"\n")
 		case resume:
 			resumeHere(*chosen)
