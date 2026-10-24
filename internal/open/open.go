@@ -152,7 +152,7 @@ func inRex(s State, held map[int]rex.Held) State {
 		if status, known := rexStatus[a.State]; known {
 			s.Status, s.Need = status, a.Need
 		}
-		s.Doing = strings.Join(strings.Fields(mask.Secrets(agent.Printable(a.Doing))), " ")
+		s.Doing = mask.Secrets(strings.Join(strings.Fields(agent.Printable(a.Doing)), " "))
 	}
 	return s
 }

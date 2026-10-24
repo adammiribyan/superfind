@@ -317,6 +317,8 @@ func TestARexPaneAddsWhereTheAgentRunsAndWhatItIsDoing(t *testing.T) {
 		{"a secret and terminal escapes", &rex.Activity{State: "working",
 			Doing: "Exporting \x1b[31mOPENAI_API_KEY=sk-proj-" + strings.Repeat("B", 48) + "\x1b[m\u202e\n now"},
 			State{PID: 7, Status: "busy", Rex: &pane, Doing: "Exporting OPENAI_API_KEY=[masked OpenAI key] now"}},
+		{"secret across lines", &rex.Activity{State: "working", Doing: "Setting PASSWORD=\"hunter2\nhunter3\""},
+			State{PID: 7, Status: "busy", Rex: &pane, Doing: "Setting PASSWORD=\"[masked secret]\""}},
 	}
 	for _, c := range cases {
 		got := inRex(claude, map[int]rex.Held{7: {Pane: pane, Activity: c.activity}})
