@@ -62,6 +62,7 @@ Run `sfd`, or press **Ctrl-X** then **c**. Type to search titles, projects, bran
 | ↑ / ↓ | Select a session |
 | Enter | Resume the selected session |
 | Ctrl-O | Go to the session's folder instead |
+| Ctrl-T | In [Rex](https://www.superlogical.com/rex/docs), resume in a new Rex tab |
 | Ctrl-R | Search by description |
 | Tab | Switch between the last exchange and recent conversation |
 | Esc | Go back or close |
@@ -79,7 +80,7 @@ Use `is:open` to find open sessions. With a TypeSafe key, `is:waiting` and `is:u
 
 A small bar on each row fills as the session uses its context window. It turns amber when less than 30% is left and red under 15%, so you can compact or start fresh before you resume. The preview shows the exact percentage.
 
-If the session is already open, Enter switches to its tmux pane or Ghostty tab. When it can't, it asks before starting a second copy.
+If the session is already open, Enter switches to its tmux pane, Rex pane, or Ghostty tab. When it can't, it asks before starting a second copy.
 
 To pick up where you left off in the current folder, run `superfind last`.
 

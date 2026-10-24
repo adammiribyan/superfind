@@ -217,3 +217,22 @@ func TestAnUppercaseSessionIDMatchesTheProcessHoldingIt(t *testing.T) {
 		t.Fatalf("open = %+v", got)
 	}
 }
+
+func TestAnAgentWaitingInRexIsWaitingOnYou(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	rows := []Row{
+		{Session: Session{ID: "id1", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p1"},
+		{Session: Session{ID: "id2", Cwd: "/w"}, Agent: agent.Named("claude"), Path: "/p2"},
+	}
+	held := map[open.Key]open.State{
+		{Agent: "claude", ID: "id1"}: {PID: 7, Status: "waiting", Need: "permission"},
+		{Agent: "claude", ID: "id2"}: {PID: 8, Status: "busy"},
+	}
+	rows = Annotate(rows, held)
+	if rows[0].Status != WaitingLabel || rows[1].Status != "" {
+		t.Fatalf("statuses = %q, %q, want %q and none", rows[0].Status, rows[1].Status, WaitingLabel)
+	}
+	if _, kept := Narrow("is:waiting", rows); len(kept) != 1 || kept[0].Path != "/p1" {
+		t.Fatalf("is:waiting kept %+v", kept)
+	}
+}

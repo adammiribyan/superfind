@@ -1,0 +1,84 @@
+{
+  "panes": [
+    {
+      "block": "block:01a16c92-b180-735f-b2b5-35dad3c2e2d7",
+      "pid": 1521,
+      "records": [
+        {
+          "app": "claude-code",
+          "effective_app": "claude-code",
+          "owner": {
+            "name": "2.1.310",
+            "pid": 1521
+          },
+          "state": "working",
+          "updated_at": "2026-10-24T16:08:57.040286+02:00"
+        }
+      ],
+      "session": "session:01a16c92-b180-72f5-ae24-c4eaf1eec3e7",
+      "window": "window:01a16c92-b18b-79f2-9d0b-b259961aa85e"
+    },
+    {
+      "block": "block:01a16d8f-0cea-73c4-8228-9567ffe3d848",
+      "pid": 42273,
+      "records": [
+        {
+          "app": "grok-build",
+          "effective_app": "grok-build",
+          "owner": {
+            "name": "grok-1.0.70",
+            "pid": 42273
+          },
+          "state": "idle",
+          "updated_at": "2026-10-24T16:08:58.916414+02:00"
+        }
+      ],
+      "session": "session:01a16c92-b180-72f5-ae24-c4eaf1eec3e7",
+      "window": "window:01a16c92-b18b-79f2-9d0b-b259961aa85e"
+    },
+    {
+      "block": "block:01a16e2c-9d25-7664-8a1f-fc04fbfa6779",
+      "pid": 24154,
+      "records": [
+        {
+          "app": "claude-code",
+          "effective_app": "claude-code",
+          "msg": "Saving a real Rex snapshot sample and creating the build worktree",
+          "owner": {
+            "name": "2.1.310",
+            "pid": 24154
+          },
+          "state": "working",
+          "updated_at": "2026-10-24T16:09:10.676817+02:00"
+        }
+      ],
+      "session": "session:01a16c92-b180-72f5-ae24-c4eaf1eec3e7",
+      "window": "window:01a16e2c-9d42-71e4-93dd-d72dfdc277ba"
+    },
+    {
+      "block": "block:01a16e3c-c835-7ebd-8cb1-ffc66f33e161",
+      "pid": 49503,
+      "records": {},
+      "session": "session:01a16c92-b180-72f5-ae24-c4eaf1eec3e7",
+      "window": "window:01a16e3c-c840-78d5-be65-ec8bd2880a45"
+    },
+    {
+      "block": "block:01a16cde-39bc-78f1-8d1a-af281ffb7878",
+      "pid": 43882,
+      "records": [
+        {
+          "app": "claude-code",
+          "effective_app": "claude-code",
+          "owner": {
+            "name": "2.1.310",
+            "pid": 43882
+          },
+          "state": "done",
+          "updated_at": "2026-10-24T13:25:19.615382+02:00"
+        }
+      ],
+      "session": "session:01a16cdc-9819-7367-8f00-f470612d1171",
+      "window": "window:01a16cdf-81d6-791c-a103-4ea6a5a64560"
+    }
+  ]
+}

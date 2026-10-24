@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/mask"
 	"github.com/adammiribyan/superfind/internal/proc"
+	"github.com/adammiribyan/superfind/internal/rex"
 )
 
 type Pane struct {
@@ -26,15 +28,21 @@ type Pane struct {
 }
 
 type State struct {
-	PID    int      `json:"pid"`
-	Status string   `json:"status"`
-	Tmux   *Pane    `json:"tmux"`
-	TTY    proc.TTY `json:"-"`
+	PID    int       `json:"pid"`
+	Status string    `json:"status"`
+	Tmux   *Pane     `json:"tmux"`
+	Rex    *rex.Pane `json:"rex,omitempty"`
+	Need   string    `json:"need,omitempty"`
+	Doing  string    `json:"doing,omitempty"`
+	TTY    proc.TTY  `json:"-"`
 }
 
 func (s State) Equal(t State) bool {
-	return s.PID == t.PID && s.Status == t.Status && s.TTY == t.TTY && (s.Tmux == t.Tmux || s.Tmux != nil && t.Tmux != nil && *s.Tmux == *t.Tmux)
+	return s.PID == t.PID && s.Status == t.Status && s.Need == t.Need && s.Doing == t.Doing && s.TTY == t.TTY &&
+		samePane(s.Tmux, t.Tmux) && samePane(s.Rex, t.Rex)
 }
+
+func samePane[P comparable](a, b *P) bool { return a == b || a != nil && b != nil && *a == *b }
 
 type Reach int
 
@@ -90,6 +98,8 @@ func Find(places []agent.Place) map[Key]State {
 	}
 	listed := make(chan map[proc.TTY]Pane, 1)
 	go func() { listed <- tmuxPanes() }()
+	snapped := make(chan map[int]rex.Held, 1)
+	go func() { snapped <- rex.Snapshot() }()
 	var claims []claim
 	present := map[string]bool{}
 	for _, p := range places {
@@ -121,7 +131,30 @@ func Find(places []agent.Place) map[Key]State {
 			}
 		}
 	}
+	if len(claims) > 0 {
+		held := <-snapped
+		for i := range claims {
+			claims[i].state = inRex(claims[i].state, held)
+		}
+	}
 	return withPanes(strongest(claims), listed)
+}
+
+var rexStatus = map[string]string{"working": "busy", "blocked": "waiting", "idle": "idle", "done": "idle", "error": "idle"}
+
+func inRex(s State, held map[int]rex.Held) State {
+	h, ok := held[s.PID]
+	if !ok {
+		return s
+	}
+	s.Rex = &h.Pane
+	if a := h.Activity; a != nil {
+		if status, known := rexStatus[a.State]; known {
+			s.Status, s.Need = status, a.Need
+		}
+		s.Doing = mask.Secrets(strings.Join(strings.Fields(agent.Printable(a.Doing)), " "))
+	}
+	return s
 }
 
 func claudeClaims(home string) []claim {
@@ -321,7 +354,7 @@ func idOf(arg string) string {
 }
 
 func strongest(claims []claim) map[Key]claim {
-	rank := map[string]int{"busy": 2, "idle": 1}
+	rank := map[string]int{"waiting": 3, "busy": 2, "idle": 1}
 	best := map[Key]claim{}
 	for _, c := range claims {
 		held, seen := best[c.key]

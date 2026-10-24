@@ -100,6 +100,27 @@ func TestAnOpenSessionSaysSoUnlessItWaitsOnYou(t *testing.T) {
 	}
 }
 
+func TestThePreviewSaysWhatAnAgentInRexIsDoing(t *testing.T) {
+	row := session.Row{Agent: &agent.Agent{ID: "claude"}, Session: session.Session{Title: "a", Cwd: "/work/shop", Mtime: session.Now()}}
+	cases := []struct {
+		open *open.State
+		want string
+	}{
+		{nil, ""},
+		{&open.State{PID: 1, Status: "busy"}, ""},
+		{&open.State{PID: 1, Status: "busy", Doing: "Running tests"}, "working · Running tests" + Reset},
+		{&open.State{PID: 1, Status: "waiting", Need: "permission", Doing: "Approve deploy?"}, "waiting on you · Approve deploy?" + Reset},
+		{&open.State{PID: 1, Status: "idle", Doing: "Done with the migration"}, "idle · Done with the migration" + Reset},
+		{&open.State{PID: 1, Doing: "Thinking"}, "Thinking" + Reset},
+	}
+	for _, c := range cases {
+		row.Open = c.open
+		if got := PreviewHeader(PreviewRequest{Width: 80}, row, Tags{}, nil)[3]; got != c.want {
+			t.Errorf("open %+v: live line %q, want %q", c.open, got, c.want)
+		}
+	}
+}
+
 func TestNarrowListsDropAgentThenProject(t *testing.T) {
 	w := Widths{Project: 14, Agent: 6}
 	cases := map[int]Columns{
