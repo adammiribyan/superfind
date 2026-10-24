@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/adammiribyan/superfind/internal/agent"
+	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/session"
 )
 
@@ -49,7 +50,10 @@ func PreviewHeader(req PreviewRequest, r session.Row, shown Tags, db *sql.DB) []
 	if survivor := agent.SurvivingDir(s.Cwd); survivor != s.Cwd {
 		where = "folder removed · resumes from " + tilde(survivor)
 	}
-	found := OneLine(plainPassage(req.Explained), width)
+	found := OneLine(live(r.Open), width)
+	if found == "" {
+		found = OneLine(plainPassage(req.Explained), width)
+	}
 	if found == "" && db != nil {
 		words, _ := session.Narrow(req.Query, nil)
 		found = session.Snippet(db, req.Path, words, Bold+Accent, Reset)
@@ -64,6 +68,18 @@ func PreviewHeader(req PreviewRequest, r session.Row, shown Tags, db *sql.DB) []
 		header[3] = req.Secondary + found + Reset
 	}
 	return header
+}
+
+var liveWords = map[string]string{"busy": "working", "waiting": session.WaitingLabel, "idle": "idle"}
+
+func live(o *open.State) string {
+	if o == nil || o.Doing == "" {
+		return ""
+	}
+	if word := liveWords[o.Status]; word != "" {
+		return word + " · " + o.Doing
+	}
+	return o.Doing
 }
 
 const recentTurns = 8

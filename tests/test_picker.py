@@ -1450,6 +1450,17 @@ esac
 """)
         (self.stub / "osascript").chmod(0o755)
         self.osascript("error", "")
+        (self.stub / "rex").write_text(f"""#!/bin/sh
+printf '%s\\037' "$@" >> {self.stub}/rex-calls
+printf '\\036' >> {self.stub}/rex-calls
+case "$1" in
+do) [ "$2" = -e ] && exec /bin/cat {self.stub}/rex-snapshot
+    [ -f {self.stub}/rex-no-remote ] && {{ echo "rex: no app allows remote control" >&2; exit 1; }} ;;
+esac
+exit 0
+""")
+        (self.stub / "rex").chmod(0o755)
+        self.rex = {}
         projects = self.home / ".claude" / "projects" / "-tmp"
         projects.mkdir(parents=True)
         transcript = projects / f"{uid(1)}.jsonl"
@@ -1478,7 +1489,7 @@ esac
                "TMUX_TMPDIR": self.sockets, "PWD": "/tmp", "SUPERFIND_TELEMETRY": "off", "SUPERFIND_CHECKIN_URL": "http://127.0.0.1:1/v1/checkin"}
         if inside:
             env["TMUX"] = inside
-        return env
+        return {**env, **self.rex}
 
     def register(self, pid):
         sessions = self.home / ".claude" / "sessions"
@@ -1522,15 +1533,27 @@ esac
         self.register(pid)
         return pane, f"{socket},{server},0"
 
-    def pick(self, inside):
+    def pick(self, inside, query="Ledger migration"):
         env = self.env(inside)
         subprocess.run([str(SUPERFIND), "index"], env=env, capture_output=True, check=True)
         assignments = " ".join(f"{k}='{v}'" for k, v in env.items())
         command = f"env -i {assignments} {SUPERFIND} pick > {self.out}.stdout 2> {self.out}.stderr; echo $? > {self.out}.code; sleep 60"
         self.tmux("respawn-pane", "-k", "-t", "work:0", command)
         self.wait_for("Claude sessions")
-        self.keys("Ledger migration")
+        if query:
+            self.keys(query)
         self.wait_for("Migrated.")
+
+    def in_rex(self, pid=None, records=()):
+        self.rex = {"REX_SERVER": "unix:///nowhere/server.sock", "REX_SESSION": "session:here", "REX_BLOCK": "block:here"}
+        panes = [{"session": "session:there", "window": "window:agent", "block": "block:agent", "pid": int(pid),
+                  "records": list(records) or {}}] if pid else []
+        (self.stub / "rex-snapshot").write_text(json.dumps({"panes": panes}))
+
+    def rex_calls(self):
+        log = self.stub / "rex-calls"
+        calls = [call.split("\x1f")[:-1] for call in log.read_text().split("\x1e")[:-1]] if log.exists() else []
+        return [call for call in calls if call[:2] != ["do", "-e"]]
 
     def screen(self):
         return self.tmux("capture-pane", "-p", "-t", "work:0")
@@ -1618,6 +1641,45 @@ esac
         self.keys("Escape")
         self.assertEqual(self.result(), (1, ""))
         self.assertEqual(self.focused(), "")
+
+    def test_enter_on_a_session_in_a_rex_pane_shows_that_pane_and_hands_the_shell_nothing(self):
+        _, _ = self.open_elsewhere()
+        pid = self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}").strip()
+        self.in_rex(pid)
+        self.pick(None)
+        self.keys("Enter")
+        self.assertEqual(self.result(), (1, ""))
+        self.assertEqual(self.rex_calls(), [["focus", "-s", "session:there", "block:agent"],
+                                            ["do", "session.select", "session_id=session:there", "window_id=window:agent"]])
+        self.assertEqual(self.told(), "")
+
+    def test_enter_asks_first_when_rex_will_not_move_its_view(self):
+        self.open_elsewhere()
+        self.in_rex(self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}").strip())
+        (self.stub / "rex-no-remote").write_text("")
+        self.pick(None)
+        self.keys("Enter")
+        self.wait_for(ASK_FIRST)
+        self.keys("Escape")
+        self.keys("Escape")
+        self.assertEqual(self.result(), (1, ""))
+
+    def test_an_agent_blocked_in_rex_is_waiting_on_you_and_the_preview_says_on_what(self):
+        self.open_elsewhere()
+        pid = self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}").strip()
+        self.in_rex(pid, [{"app": "claude-code", "state": "working", "id": "agent-1", "msg": "Reading files", "owner": {"pid": int(pid)}},
+                          {"app": "claude-code", "state": "blocked", "kind": "permission", "msg": "Approve deploy?",
+                           "owner": {"pid": int(pid)}}])
+        self.pick(None, query="")
+        screen = self.screen()
+        self.assertRegex(screen, r"Ledger migration +waiting on you")
+        self.assertIn("waiting on you · Approve deploy?", screen)
+        self.assertNotIn("Reading files", screen)
+        found = subprocess.run([str(SUPERFIND), "search", "--json", "is:waiting"], env=self.env(), capture_output=True, text=True, check=True)
+        records = [json.loads(line) for line in found.stdout.splitlines()]
+        self.assertEqual([r["open"] for r in records], [{"pid": int(pid), "status": "waiting", "tmux": records[0]["open"]["tmux"],
+                                                         "rex": {"session": "session:there", "window": "window:agent", "block": "block:agent"},
+                                                         "need": "permission", "doing": "Approve deploy?"}])
 
     def test_enter_on_a_session_outside_ghostty_asks_first_even_when_a_ghostty_tab_shares_its_terminal(self):
         self.open_elsewhere()
@@ -1793,6 +1855,14 @@ esac
         self.assertEqual((code, Path(f"{self.out}.stdout").read_text()), (0, ""), screen)
         self.assertIn("Ledger migration is open in another Ghostty tab; switched to it.", screen)
         self.assertEqual(self.focused(), f'{GHOSTTY}focus (first terminal whose tty is "{tty}")\n')
+
+    def test_last_at_a_terminal_on_a_session_in_a_rex_pane_shows_that_pane_and_prints_nothing(self):
+        self.open_elsewhere()
+        self.in_rex(self.tmux("display-message", "-p", "-t", "work:1", "#{pane_pid}").strip())
+        code, screen = self.at_a_terminal(f"{SUPERFIND} last > {self.out}.stdout", None)
+        self.assertEqual((code, Path(f"{self.out}.stdout").read_text()), (0, ""), screen)
+        self.assertIn("Ledger migration is open in a Rex pane; switched to it.", screen)
+        self.assertEqual([call[:2] for call in self.rex_calls()], [["focus", "-s"], ["do", "session.select"]])
 
     @unittest.skipUnless(shutil.which("bash"), "runs the bash shell setup")
     def test_the_shell_setup_does_nothing_after_last_switches_to_a_ghostty_tab(self):

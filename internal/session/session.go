@@ -77,6 +77,9 @@ func Annotate(rows []Row, held map[open.Key]open.State) []Row {
 	for i, r := range out {
 		if state, ok := held[open.KeyOf(r.Agent.ID, r.Session.ID)]; ok {
 			out[i].Open = &state
+			if state.Status == "waiting" {
+				out[i].Status = WaitingLabel
+			}
 		}
 	}
 	return out

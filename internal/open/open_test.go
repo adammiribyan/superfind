@@ -16,6 +16,7 @@ import (
 
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/proc"
+	"github.com/adammiribyan/superfind/internal/rex"
 )
 
 const sessionID = "0f6cab12-3a4b-4c5d-8e9f-001122334455"
@@ -294,5 +295,44 @@ func TestASessionIsReachedInItsPaneThenInGhosttyThenNotAtAll(t *testing.T) {
 		if got != c.want || (asked != nil) != c.asked || asked != nil && asked.PID != 4242 {
 			t.Errorf("%s: reached %d asking Ghostty about %+v, want %d asking=%v", c.name, got, asked, c.want, c.asked)
 		}
+	}
+}
+
+func TestARexPaneAddsWhereTheAgentRunsAndWhatItIsDoing(t *testing.T) {
+	pane := rex.Pane{Session: "session:s", Window: "window:w", Block: "block:b"}
+	claude := State{PID: 7, Status: "idle"}
+	cases := []struct {
+		name     string
+		activity *rex.Activity
+		want     State
+	}{
+		{"no status records", nil, State{PID: 7, Status: "idle", Rex: &pane}},
+		{"working", &rex.Activity{State: "working", Doing: "Running tests"},
+			State{PID: 7, Status: "busy", Rex: &pane, Doing: "Running tests"}},
+		{"blocked", &rex.Activity{State: "blocked", Need: "permission", Doing: "Approve deploy?"},
+			State{PID: 7, Status: "waiting", Rex: &pane, Need: "permission", Doing: "Approve deploy?"}},
+		{"done", &rex.Activity{State: "done"}, State{PID: 7, Status: "idle", Rex: &pane}},
+		{"error", &rex.Activity{State: "error"}, State{PID: 7, Status: "idle", Rex: &pane}},
+		{"a state Rex adds later keeps Claude's", &rex.Activity{State: "napping"}, State{PID: 7, Status: "idle", Rex: &pane}},
+		{"a secret and terminal escapes", &rex.Activity{State: "working",
+			Doing: "Exporting \x1b[31mOPENAI_API_KEY=sk-proj-" + strings.Repeat("B", 48) + "\x1b[m\u202e\n now"},
+			State{PID: 7, Status: "busy", Rex: &pane, Doing: "Exporting OPENAI_API_KEY=[masked OpenAI key] now"}},
+	}
+	for _, c := range cases {
+		got := inRex(claude, map[int]rex.Held{7: {Pane: pane, Activity: c.activity}})
+		if !got.Equal(c.want) {
+			t.Errorf("%s: got %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	if got := inRex(claude, map[int]rex.Held{8: {Pane: pane}}); !got.Equal(claude) {
+		t.Errorf("another pid's pane changed the state: %+v", got)
+	}
+}
+
+func TestAnAgentWaitingOnYouOutranksABusyCopy(t *testing.T) {
+	key := KeyOf("claude", sessionID)
+	got := strongest([]claim{{key, State{PID: 1, Status: "busy"}, proc.TTY{}}, {key, State{PID: 2, Status: "waiting"}, proc.TTY{}}})
+	if got[key].state.PID != 2 {
+		t.Fatalf("strongest chose %+v, want the waiting agent", got[key].state)
 	}
 }

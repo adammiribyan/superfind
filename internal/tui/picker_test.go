@@ -21,6 +21,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/rex"
 	"github.com/adammiribyan/superfind/internal/session"
 )
 
@@ -30,6 +31,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("PATH", empty)
+	os.Unsetenv("REX_SERVER")
+	os.Unsetenv("REX_SESSION")
 	code := m.Run()
 	os.Remove(empty)
 	os.Exit(code)
@@ -580,6 +583,7 @@ func TestEnterOnASessionThatClosedSinceTheLastLookResumesIt(t *testing.T) {
 
 func TestEnterKeepsTheLastKnownPaneOnlyForTheSameProcess(t *testing.T) {
 	pane := &open.Pane{ID: "%3", Session: "work", Window: 1}
+	inRex := &rex.Pane{Session: "session:s", Window: "window:w", Block: "block:b"}
 	other := &open.Pane{ID: "%9", Session: "play", Window: 2}
 	cases := []struct {
 		name          string
@@ -591,6 +595,8 @@ func TestEnterKeepsTheLastKnownPaneOnlyForTheSameProcess(t *testing.T) {
 		{"tmux did not answer the fresh look", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242}, &open.State{PID: 4242, Tmux: pane}},
 		{"another process has it open now", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4343}, &open.State{PID: 4343}},
 		{"moved to another pane", &open.State{PID: 4242, Tmux: pane}, &open.State{PID: 4242, Tmux: other}, &open.State{PID: 4242, Tmux: other}},
+		{"Rex did not answer the fresh look", &open.State{PID: 4242, Rex: inRex}, &open.State{PID: 4242, Status: "busy"},
+			&open.State{PID: 4242, Status: "busy", Rex: inRex}},
 	}
 	for _, c := range cases {
 		got := freshest(c.cached, c.fresh)

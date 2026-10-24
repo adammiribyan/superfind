@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/adammiribyan/superfind/internal/news"
 	"github.com/adammiribyan/superfind/internal/open"
 	"github.com/adammiribyan/superfind/internal/render"
+	"github.com/adammiribyan/superfind/internal/rex"
 	"github.com/adammiribyan/superfind/internal/session"
 	"github.com/adammiribyan/superfind/internal/store"
 	"github.com/adammiribyan/superfind/internal/typesafe"
@@ -254,7 +256,7 @@ func newPicker(rows []session.Row, db *sql.DB, problem string) picker {
 	m := picker{
 		rows: session.RecentFirst(session.Annotate(rows, held)), db: db, held: held,
 		input: in, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot)), bodies: map[bodyKey][]string{}, loading: map[bodyKey]bool{},
-		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", focus: ghostty.Focus,
+		asks: &asks{}, reported: &atomic.Bool{}, inTmux: os.Getenv("TMUX") != "", focus: Focus,
 	}
 	m.populate()
 	m.problem, m.dbProblem = problem, problem
@@ -746,10 +748,15 @@ func (m picker) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 const confirmCopy = "Already open. Enter again resumes a copy. Esc cancels."
 
+func Focus(s open.State) bool {
+	return s.Rex != nil && rex.Focus(*s.Rex) || ghostty.Focus(s)
+}
+
 func freshest(cached, fresh *open.State) *open.State {
-	if fresh != nil && fresh.Tmux == nil && cached != nil && cached.PID == fresh.PID {
+	if fresh != nil && cached != nil && cached.PID == fresh.PID {
 		kept := *fresh
-		kept.Tmux = cached.Tmux
+		kept.Tmux = cmp.Or(kept.Tmux, cached.Tmux)
+		kept.Rex = cmp.Or(kept.Rex, cached.Rex)
 		return &kept
 	}
 	return fresh

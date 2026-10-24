@@ -24,7 +24,6 @@ import (
 	"github.com/adammiribyan/superfind/internal/agent"
 	"github.com/adammiribyan/superfind/internal/ask"
 	"github.com/adammiribyan/superfind/internal/blame"
-	"github.com/adammiribyan/superfind/internal/ghostty"
 	briefing "github.com/adammiribyan/superfind/internal/handoff"
 	"github.com/adammiribyan/superfind/internal/news"
 	"github.com/adammiribyan/superfind/internal/open"
@@ -111,10 +110,11 @@ the second line is cd -- FOLDER. The shell setup from superfind init runs that c
   --run           resume directly, for example from a desktop keyboard shortcut.
                   Ctrl-O opens your shell in the session's folder.
 
-If the session is already open, Enter switches to its tmux pane or Ghostty tab when possible.
+If the session is already open, Enter switches to its tmux pane, Rex pane, or Ghostty tab
+when possible.
 Otherwise, Enter again resumes a second copy and Esc cancels.
-Exit 1 when cancelled or after switching to a Ghostty tab. With --run, a resumed agent's
-exit code becomes superfind's exit code.
+Exit 1 when cancelled or after switching to a Rex pane or Ghostty tab. With --run,
+a resumed agent's exit code becomes superfind's exit code.
 `,
 	"last": `superfind last [FILTERS] [--json]
 
@@ -125,8 +125,8 @@ Sessions whose transcript Claude Code deleted are skipped.
 
 With shell setup and a terminal, last resumes directly. In scripts or without shell setup,
 it prints the title and resume command on separate lines. An already-open session switches
-to its tmux pane or Ghostty tab when possible. Otherwise, last asks before resuming a copy
-at a terminal, or exits 1 in a script.
+to its tmux pane, Rex pane, or Ghostty tab when possible. Otherwise, last asks before
+resuming a copy at a terminal, or exits 1 in a script.
 
   --json          print one session object instead of resuming
   FILTERS         any search filters; see superfind help search
@@ -501,9 +501,13 @@ func resumeLast(r session.Row) {
 	if r.Open != nil {
 		tty = terminal()
 	}
-	switch lastStep(r.Open, os.Getenv("TMUX") != "", ghostty.Focus, tty != nil) {
+	switch lastStep(r.Open, os.Getenv("TMUX") != "", tui.Focus, tty != nil) {
 	case switchedTab:
-		fmt.Fprintln(stderr, "superfind last: "+title+" is open in another Ghostty tab; switched to it.")
+		where := "in another Ghostty tab"
+		if r.Open.Rex != nil {
+			where = "in a Rex pane"
+		}
+		fmt.Fprintln(stderr, "superfind last: "+title+" is open "+where+"; switched to it.")
 		return
 	case askFirst:
 		if code := answer(tty, title+" is open in another window. Enter resumes a copy; Esc cancels."); code != 0 {
@@ -591,8 +595,11 @@ func shellIn(dir string) {
 }
 
 func openWhere(o open.State) string {
-	if o.Tmux != nil {
+	switch {
+	case o.Tmux != nil:
 		return fmt.Sprintf("in tmux session %s, window %d", render.Flat(o.Tmux.Session), o.Tmux.Window)
+	case o.Rex != nil:
+		return "in a Rex pane"
 	}
 	return "in another window"
 }

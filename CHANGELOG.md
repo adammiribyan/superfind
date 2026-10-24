@@ -3,6 +3,15 @@
 Before 0.9.0, superfind was called hop. Before 0.3.0, it was called claude-sessions.
 
 
+## [Unreleased]
+
+> Jump to sessions open in Rex, and see which ones wait on you
+
+### Added
+
+- In [Rex](https://www.superlogical.com/rex/docs), Enter in the picker and `superfind last` switch to the Rex pane where the session is already open. This needs Rex's Remote Control setting. Without it, the picker asks before resuming a copy, as before.
+- In Rex, a session whose agent waits for your answer or approval shows "waiting on you" and matches `is:waiting`, with no TypeSafe key. The preview shows what the agent is doing or asking, such as "waiting on you · Approve deploy?". `--json` has `open.rex`, `open.need`, and `open.doing`, and `open.status` can be `waiting`.
+
 ## [0.15.0] - 2026-10-17
 
 > Choose which model ranks your ask searches
