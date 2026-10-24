@@ -1453,6 +1453,7 @@ esac
         (self.stub / "rex").write_text(f"""#!/bin/sh
 printf '%s\\037' "$@" >> {self.stub}/rex-calls
 printf '\\036' >> {self.stub}/rex-calls
+[ "$1" = --autostart=false ] && shift
 case "$1" in
 do) [ "$2" = -e ] && exec /bin/cat {self.stub}/rex-snapshot
     [ -f {self.stub}/rex-no-remote ] && {{ echo "rex: no app allows remote control" >&2; exit 1; }} ;;
@@ -1554,7 +1555,8 @@ exit 0
     def rex_calls(self):
         log = self.stub / "rex-calls"
         calls = [call.split("\x1f")[:-1] for call in log.read_text().split("\x1e")[:-1]] if log.exists() else []
-        return [call for call in calls if call[:2] != ["do", "-e"]]
+        self.assertTrue(all(call[:1] == ["--autostart=false"] for call in calls), calls)
+        return [call[1:] for call in calls if call[1:3] != ["do", "-e"]]
 
     def screen(self):
         return self.tmux("capture-pane", "-p", "-t", "work:0")

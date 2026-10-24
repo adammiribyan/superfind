@@ -156,7 +156,7 @@ func failure(err error) error {
 func run(timeout time.Duration, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "rex", args...)
+	cmd := exec.CommandContext(ctx, "rex", append([]string{"--autostart=false"}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = timeout / 10
